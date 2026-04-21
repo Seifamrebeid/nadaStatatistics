@@ -1,0 +1,49 @@
+rules_version = '2';
+
+// Storage security rules.
+// - Enrollment photos (students/{id}/face.jpg, doctors/{id}/face.jpg): readable by any
+//   signed-in user; writable by admins only. The R Plumber backend (service account)
+//   bypasses these rules for its own uploads from the /face endpoints.
+// - Lecture audio + generated PDF reports: readable by signed-in users; the service
+//   account (Python classroom app / R backend) is the only writer.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function role() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && role() == 'admin';
+    }
+
+    match /students/{studentId}/face.jpg {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /doctors/{doctorId}/face.jpg {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /lectures/{lectureId}/audio.wav {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /reports/lectures/{lectureId}.pdf {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

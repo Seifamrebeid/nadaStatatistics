@@ -1,0 +1,122 @@
+rules_version = '2';
+
+// Firestore security rules for the Classroom Emotion Detection System.
+// See instructions/FIREBASE_SCHEMA.md — "Security rules — summary" for the contract.
+//
+// Design notes:
+// - Backend code (R Plumber, Python classroom app) uses the service account and
+//   bypasses these rules. Application code re-enforces role checks — see
+//   backend-r-plumber/R/auth.R. Rules here are belt-and-braces for direct client
+//   access and are deliberately strict.
+// - Doctor ownership of a lecture is matched via users.linked_id, NOT request.auth.uid,
+//   because doctors.doctor_id ≠ Firebase Auth uid.
+// - The `emotions`, `transcripts`, and `notifications` collections are off-limits to
+//   all clients; only the service account writes them.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function role() {
+      return userDoc().role;
+    }
+
+    function linkedId() {
+      return userDoc().linked_id;
+    }
+
+    function isAdmin()   { return isSignedIn() && role() == 'admin'; }
+    function isDoctor()  { return isSignedIn() && role() == 'doctor'; }
+    function isStudent() { return isSignedIn() && role() == 'student'; }
+
+    // users — role lookup table. A user can read their own entry; only the backend writes.
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if false;
+    }
+
+    // admins — metadata only; no client access.
+    match /admins/{id} {
+      allow read, write: if false;
+    }
+
+    // students — admin-only CRUD; students read self; doctors read (backend narrows).
+    match /students/{id} {
+      allow read: if isAdmin()
+                  || (isStudent() && linkedId() == id)
+                  || isDoctor();
+      allow write: if isAdmin();
+    }
+
+    // doctors — admin-only CRUD; authenticated read (backend narrows scope).
+    match /doctors/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // lectures — admin full CRUD; owner doctor CRUD on own; enrolled student read-only.
+    match /lectures/{lectureId} {
+      allow read: if isAdmin()
+                  || (isDoctor() && resource.data.doctor_id == linkedId())
+                  || (isStudent() && linkedId() in resource.data.enrolled_student_ids);
+      allow create: if isAdmin()
+                    || (isDoctor() && request.resource.data.doctor_id == linkedId());
+      allow update, delete: if isAdmin()
+                            || (isDoctor() && resource.data.doctor_id == linkedId());
+    }
+
+    // emotions — Python classroom app (service account) only writes.
+    match /emotions/{id} {
+      allow read: if isAdmin()
+                  || (isStudent() && resource.data.student_id == linkedId())
+                  || (isDoctor()
+                      && get(/databases/$(database)/documents/lectures/$(resource.data.lecture_id)).data.doctor_id == linkedId());
+      allow write: if false;
+    }
+
+    // transcripts — Python classroom app only writes. Parent + segments subcollection.
+    // Students see live captions via onSnapshot on the segments subcollection, so reads
+    // must be permissive for enrolled users of the parent lecture.
+    match /transcripts/{transcriptId} {
+      allow read: if isAdmin()
+                  || (isDoctor()
+                      && get(/databases/$(database)/documents/lectures/$(resource.data.lecture_id)).data.doctor_id == linkedId())
+                  || (isStudent()
+                      && linkedId() in get(/databases/$(database)/documents/lectures/$(resource.data.lecture_id)).data.enrolled_student_ids);
+      allow write: if false;
+
+      match /segments/{segmentId} {
+        // A reader of the parent transcript can read its segments. We re-derive the
+        // parent's lecture_id via get(); this is one extra read per query but the
+        // alternative (denormalising lecture_id onto every segment) adds write cost
+        // for every streamed chunk.
+        allow read: if isAdmin()
+                    || (isDoctor()
+                        && get(/databases/$(database)/documents/lectures/$(get(/databases/$(database)/documents/transcripts/$(transcriptId)).data.lecture_id)).data.doctor_id == linkedId())
+                    || (isStudent()
+                        && linkedId() in get(/databases/$(database)/documents/lectures/$(get(/databases/$(database)/documents/transcripts/$(transcriptId)).data.lecture_id)).data.enrolled_student_ids);
+        allow write: if false;
+      }
+    }
+
+    // notifications — R Plumber (service account) only writes. Doctors read own;
+    // admins read all; students cannot read.
+    match /notifications/{id} {
+      allow read: if isAdmin()
+                  || (isDoctor() && resource.data.sender_doctor_id == linkedId());
+      allow write: if false;
+    }
+
+    // Default-deny everything else.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
