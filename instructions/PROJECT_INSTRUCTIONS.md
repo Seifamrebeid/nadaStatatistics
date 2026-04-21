@@ -44,10 +44,155 @@ Check off each item as you finish it. Do **not** skip phases — each one depend
 
 ---
 
+## 🚀 Quick Start Runbook (what's built today)
+
+Operational guide for running the system as it stands. Phase 2 is complete — Python capture app + Firebase Emulator Suite. Phase 3 (R Plumber backend) and the frontends (Phases 6–7) are not built yet.
+
+### 1. Prerequisites (one-time install per machine)
+
+| Tool | Version | Purpose |
+|---|---|---|
+| Python | **3.11** (NOT 3.12) | Capture app, enrollment utility |
+| Node.js | 20+ | Firebase CLI |
+| Java | 11+ | Firestore + Storage emulators |
+| Firebase CLI | any | `npm install -g firebase-tools` |
+| Git | any | |
+
+Verify:
+```powershell
+py -3.11 --version        # Python 3.11.x
+node --version            # v20+
+java --version            # 11+
+firebase --version        # any
+```
+
+Windows PATH gotcha: if `python` in a fresh PowerShell hits the Microsoft Store alias, disable it at **Settings → Apps → Advanced app settings → App execution aliases → turn off `python.exe` and `python3.exe`**, or use `py -3.11`.
+
+### 2. First-time project setup
+
+Once per clone.
+
+```powershell
+cd classroom-app-python
+
+# Create venv
+py -3.11 -m venv venv
+.\venv\Scripts\Activate.ps1
+
+# Upgrade pip
+python -m pip install --upgrade pip
+
+# Install deps — dlib + face_recognition first (separately) because
+# face_recognition hard-requires `dlib` and we use the prebuilt `dlib-bin`
+# fork to skip the Windows Visual-C++ build headache.
+pip install dlib-bin
+pip install --no-deps face_recognition==1.3.0 face_recognition_models Click Pillow
+pip install -r requirements.txt
+
+# Downgrade moviepy (fer 22.5.1 needs v1)
+pip install "moviepy==1.0.3"
+
+# Create .env from the template
+copy .env.example .env
+```
+
+First run of `capture_app` / `test_video` triggers model downloads on first use:
+- MediaPipe face mesh / hands (~10 MB, bundled)
+- FER weights (small)
+- YOLOv8n (~6 MB, from GitHub)
+- silero-vad JIT (~2 MB, from pytorch hub)
+- Whisper model (75 MB for `tiny`, 480 MB for `small`)
+
+Everything caches to `C:\Users\<you>\.cache\` — subsequent runs are fast.
+
+If PowerShell execution policy blocks `Activate.ps1`:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+### 3. Every-time startup
+
+**3a. Start the Firebase Emulator Suite** (separate PowerShell window, leave running):
+```powershell
+cd firebase-emulator
+firebase emulators:start --import=./seed --export-on-exit=./seed
+```
+Wait for the "All emulators ready!" banner. UI at http://127.0.0.1:4000.
+
+**3b. Enroll yourself** (second PowerShell, venv active):
+```powershell
+cd classroom-app-python
+.\venv\Scripts\Activate.ps1
+python enroll_student.py "C:\path\to\selfie.jpg" 231014746 "Your Name" lec_test_001
+```
+Arguments: **image_path · student_id · name · lecture_id**. First run creates both the student doc AND a minimal `lec_test_001` lecture (`status=scheduled`).
+
+**3c. Run the capture app:**
+```powershell
+python capture_app.py
+```
+Pick `1`. OpenCV opens, Whisper loads in background. Quit with `q`.
+
+Observations land in Firestore `emotions` + `data/emotions.csv`. On quit, the app uploads `recordings/{lecture_id}.wav` and POSTs `/finalize` (the latter fails until Phase 3 — non-fatal).
+
+### 4. Standalone visual test (no Firebase)
+
+```powershell
+python test_video.py
+```
+
+Single-face pipeline for tuning. Live debug line every 0.5 s with EAR / smoothed EAR / streak / pitch / gesture / phone. Rock-on gesture = `toilet_request`. EMA-smoothed face box. YOLOv8 phone overlay.
+
+Tune in `.env` and restart:
+```
+EAR_CLOSED_THRESHOLD=0.25
+EAR_CLOSED_FRAMES=8
+HEAD_DOWN_PITCH_DEG=-20
+HEAD_DOWN_FRAMES=10
+GESTURE_HOLD_FRAMES=5
+PROCESS_EVERY_N_FRAMES=30
+```
+
+### 5. Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `ModuleNotFoundError: No module named 'firebase_admin'` | Not in the venv. `.\venv\Scripts\Activate.ps1`. Prompt should show `(venv)`. |
+| `FIREBASE_PROJECT_ID is not set` | No `.env`. `copy .env.example .env`. |
+| Hangs on HTTP requests to huggingface.co at startup | First-time Whisper download. `WHISPER_MODEL_SIZE=tiny` in `.env` → 75 MB instead of 480 MB. Async loading (post-2026-04-22) opens the webcam immediately regardless. |
+| `Could not open camera at index 0` | Try `CAMERA_INDEX=1` in `.env`. |
+| All faces labeled `unknown` | Student not enrolled. Run `enroll_student.py` first. |
+| `dlib` compile errors during pip install | You installed `dlib` not `dlib-bin`. Redo Section 2. |
+| `ModuleNotFoundError: No module named 'moviepy.editor'` | `pip install "moviepy==1.0.3"`. |
+| Sleep detection intermittent | Raise `EAR_CLOSED_THRESHOLD` to `0.28`. Watch `EAR=…/smooth=…` in `test_video.py` debug line. |
+| Toilet gesture triggered by peace sign | Bug fixed — gesture now uses bend-angle curl detection. If you still see it, you're on an older build. |
+| Finalize POST fails | Expected until Phase 3. Non-fatal. |
+
+### 6. What runs where (quick map)
+
+```
+┌─────────────────────────────┐     ┌──────────────────────┐
+│  PowerShell #1 (emulator)   │◄────┤ http://127.0.0.1:4000│  Emulator UI
+│  firebase emulators:start   │     │  (browser)           │  Firestore + Auth + Storage
+└──────────────┬──────────────┘     └──────────────────────┘
+               │ Firestore @ 8080, Auth @ 9099, Storage @ 9199
+               ▼
+┌─────────────────────────────┐
+│ PowerShell #2 (venv)        │
+│  python enroll_student.py   │  Admin-like enrollment (stopgap until R backend)
+│  python capture_app.py      │  Main classroom app
+│  python test_video.py       │  Standalone visual test (no Firebase)
+└─────────────────────────────┘
+```
+
+---
+
 ## 📁 Phase 0 — Project Structure & Planning
 
-- [ ] Create the root project folder: `emotion-detection-system/`
-- [ ] Inside it, create this folder layout:
+**Status: ✅ complete (2026-04-21).**
+
+- [x] Create the root project folder (used `nadaStatatistics/` as the existing workspace root instead of `emotion-detection-system/` — no functional difference).
+- [x] Inside it, create this folder layout:
 
 ```
 emotion-detection-system/
@@ -75,42 +220,38 @@ emotion-detection-system/
 └── README.md
 ```
 
-- [ ] Initialize git: `git init` and create `.gitignore` (ignore `node_modules/`, `venv/`, `*.csv`, `firebase/*.json`, `.env`, `firebase-emulator/seed/`)
-- [ ] Install these tools globally on your machine:
-  - [ ] **R 4.3+ and RStudio** (primary — backend, analysis, Shiny all live here)
-  - [ ] Python 3.10 or 3.11 (NOT 3.12 — `face_recognition` / TensorFlow are wobbly on 3.12). Only used for the classroom capture app.
-  - [ ] Node.js 20+ and npm (for the web and mobile frontends — and the Firebase CLI)
-  - [ ] Java 11+ (required by the Firestore + Storage emulators)
-  - [ ] **Firebase CLI:** `npm install -g firebase-tools` (runs the Emulator Suite)
-  - [ ] Git
-  - [ ] VS Code (recommended)
-  - [ ] Expo CLI: `npm install -g expo-cli`
+- [x] Initialize git: `git init` and create `.gitignore` (ignore `node_modules/`, `venv/`, `*.csv`, `firebase/*.json`, `.env`, `firebase-emulator/seed/`)
+- [x] Install these tools globally on your machine:
+  - [x] **R 4.5.3** installed. RStudio not installed (optional; needed when we get to Phases 3–5).
+  - [x] Python 3.11.9 (venv at `classroom-app-python/venv/`)
+  - [x] Node.js 24.14
+  - [x] Java 26
+  - [x] **Firebase CLI 15.9.1**
+  - [x] Git
+  - [ ] VS Code — user has their own editor; optional
+  - [ ] Expo CLI — deferred to Phase 7
 
 ---
 
 ## 🔥 Phase 1 — Firebase Emulator Suite Setup (do this FIRST, everything depends on it)
+
+**Status: ✅ complete (2026-04-21), except a couple of deferred-on-purpose items (real Firebase project, first admin bootstrap).**
 
 **All development runs against the local Emulator Suite.** Storage, Auth, and Firestore are all on localhost. You do **not** need a paid Firebase plan (the real Storage tier requires billing enabled; the emulator does not) and you do **not** need internet access to develop.
 
 You only need a real Firebase project for its **project ID** (the emulator expects one in config) and for production deployment later. A free Spark-plan project is enough — you will never actually write data to it during development.
 
 ### 1.1 Create the Firebase project shell (for the project ID)
-- [ ] Go to https://console.firebase.google.com and create a new project named `emotion-detection`
-- [ ] Copy the **project ID** (e.g. `emotion-detection-abc12`) — this goes in `firebase.json` and every client config
-- [ ] (Optional, deferred to Phase 10) Enable Firestore / Auth / Storage in the real project. Dev work does not touch them.
+- [ ] Go to https://console.firebase.google.com and create a new project named `emotion-detection` — **deferred**. `.firebaserc` uses placeholder `emotion-detection-dev`; swap when real project is created.
+- [ ] Copy the **project ID** — deferred with the above.
+- [ ] (Optional, deferred to Phase 10) Enable Firestore / Auth / Storage in the real project.
 
 ### 1.2 Install and configure the Emulator Suite
-- [ ] `cd firebase-emulator`
-- [ ] Run `firebase login` (opens browser — sign in with your Google account)
-- [ ] Run `firebase init emulators` — select **Authentication**, **Firestore**, and **Storage**. Accept the default ports:
-  | Service | Port |
-  |---|---|
-  | Auth | 9099 |
-  | Firestore | 8080 |
-  | Storage | 9199 |
-  | Emulator UI | 4000 |
-- [ ] Also init Firestore + Storage **rules** (creates `firestore.rules` and `storage.rules`)
-- [ ] Confirm `firebase.json` roughly looks like:
+- [x] `cd firebase-emulator`
+- [ ] Run `firebase login` — **skipped**, not needed for emulator-only dev.
+- [ ] Run `firebase init emulators` — **skipped**; wrote `firebase.json` / `.firebaserc` / rules files directly (the interactive wizard isn't required).
+- [x] Also init Firestore + Storage **rules** (wrote `firestore.rules` and `storage.rules` directly)
+- [x] Confirm `firebase.json` roughly looks like:
   ```json
   {
     "firestore":   { "rules": "firestore.rules" },
@@ -124,53 +265,62 @@ You only need a real Firebase project for its **project ID** (the emulator expec
     }
   }
   ```
-- [ ] Add `.firebaserc` with your project id:
+- [x] Add `.firebaserc` with your project id (placeholder `emotion-detection-dev`):
   ```json
-  { "projects": { "default": "emotion-detection-abc12" } }
+  { "projects": { "default": "emotion-detection-dev" } }
   ```
 
 ### 1.3 Run the emulator
-- [ ] Start: `firebase emulators:start --import=./seed --export-on-exit=./seed`
-  - `--import` / `--export-on-exit` keeps data between restarts (emulator wipes by default). Put `seed/` in `.gitignore`.
-- [ ] Open the **Emulator UI** at http://localhost:4000 — this is where you manually inspect Firestore docs, Auth users, and Storage files during development.
+- [x] Start: `firebase emulators:start --import=./seed --export-on-exit=./seed`
+  - `seed/` is in `.gitignore`.
+- [x] Open the **Emulator UI** at http://localhost:4000.
 
 ### 1.4 Define schema + bootstrap first admin via the Emulator UI
-- [ ] Create these Firestore collections manually (so the schema is clear):
-  - [ ] `students` — fields: `student_id`, `name`, `email`, `face_photo_url` (Firebase Storage URL of enrollment photo), `face_encoding` (array of 128 floats computed by `face_recognition`), `created_by` (admin uid), `created_at`, `active`
-  - [ ] `doctors` — fields: `doctor_id`, `name`, `email`, `department`, `face_photo_url` (Firebase Storage URL of enrollment photo — used for face sign-in), `face_encoding` (array of 128 floats), `created_by` (admin uid), `created_at`, `active`
-  - [ ] `admins` — fields: `admin_id`, `name`, `email`, `created_at`
-  - [ ] `lectures` — fields: `lecture_id`, `title`, `doctor_id` (owner), `date`, `subject`, `enrolled_student_ids` (array), `status` (`scheduled` | `recording` | `finished`), `audio_url` (Storage URL of the recorded lecture audio, set when the Python classroom app uploads it on finalize), `transcript_id` (FK to `transcripts` collection, set after Whisper completes), `report_pdf_url` (Storage URL of the auto-generated PDF report, set after R renders it), `finalized_at` (timestamp when the Python app called `/finalize`). The Python classroom app sets `status: "recording"` when it starts a capture session and `finished` when it exits.
+- [~] Create these Firestore collections — **schema is documented in `instructions/FIREBASE_SCHEMA.md`**, but actual collections are created lazily by the capture app + `enroll_student.py` (first write creates the collection). Rules are in place for all of them.
+  - [x] `students` — written by `enroll_student.py`
+  - [ ] `doctors` — Phase 3 (admin CRUD)
+  - [ ] `admins` — Phase 3 (admin CRUD)
+  - [x] `lectures` — written by `enroll_student.py` / `capture_app.py`
+  - [x] `emotions` — written by `firebase_writer.flush_buffer` on the heavy path
   - [ ] `emotions` — fields: `student_id`, `lecture_id`, `timestamp`, `emotion` (FER label), `confidence`, `state` (`"awake"` \| `"sleeping"`), `sleep_reason` (`null` \| `"head_down"` \| `"eyes_closed"` \| `"both"`), `gesture` (`"none"` \| `"hand_raised"` \| `"toilet_request"` \| `"thumbs_up"` \| `"thumbs_down"` \| `"pointing"` \| ...), `engagement_score`. **Written by the Python classroom app, never by clients.** The collection keeps its name `emotions` for continuity even though it now records emotion + state + gesture per observation.
-  - [ ] `users` — fields: `uid` (Firebase Auth uid), `role` (`student` | `doctor` | `admin`), `linked_id` (id in the corresponding role collection). This is the **lookup table** the backend uses to resolve role on every request — create a matching entry whenever a student, doctor, or admin is created.
-  - [ ] `notifications` — audit log of emails sent via Brevo. Fields: `notification_id`, `sender_doctor_id`, `lecture_id` (optional), `recipient_student_ids` (array), `recipient_emails` (array — snapshot of addresses at send time), `subject`, `body`, `sent_at`, `status` (`"sent"` \| `"failed"`), `brevo_message_id` (Brevo's response id, for debugging). **Only doctors write to this collection** (via the backend); admins can read for audit.
-  - [ ] `transcripts` — Whisper-generated transcripts of recorded lectures. One doc per lecture. Fields: `transcript_id`, `lecture_id` (FK), `language` (e.g. `"en"`, `"ar"`), `started_at`, `last_updated_at`, `segment_count`, `completed` (`false` while streaming during the lecture, `true` after the classroom app exits).
-  - [ ] `transcripts/{id}/segments` — **subcollection** with one doc per finalized segment: `{start, end, text, created_at, chunk_index}`. **Written live** by the Python classroom app every few seconds as Whisper completes each chunk; the student / doctor / admin web & mobile apps subscribe via `onSnapshot` to show rolling captions in real time. **Subcollection is mandatory** (not an inline array) because (a) Firestore real-time listeners work on queries, (b) a 60-minute lecture can produce hundreds of segments and exceed the 1 MB single-doc limit.
-- [ ] Storage runs in the emulator at `http://localhost:9199`. Paths in use:
-  - [ ] `students/{student_id}/face.jpg` — enrollment photo uploaded by admin; URL saved on the student doc
-  - [ ] `doctors/{doctor_id}/face.jpg` — enrollment photo uploaded by admin; URL saved on the doctor doc
-  - [ ] `lectures/{lecture_id}/audio.wav` — full lecture audio recorded by the Python classroom app (uploaded on finalize; used as Whisper input)
-  - [ ] `reports/lectures/{lecture_id}.pdf` — auto-generated per-lecture PDF report (rendered by R from `rmarkdown` after finalize)
-  The enrollment photos are the encodings used for face sign-in (see Phase 3's `/api/auth/face-login`).
-- [ ] **Bootstrap the first admin via the Emulator UI:**
-  - [ ] Go to http://localhost:4000 → Authentication → Add user (email + password)
-  - [ ] Copy the generated UID
-  - [ ] Go to Firestore → `admins` → add a document with a matching `admin_id`
-  - [ ] Go to Firestore → `users` → add a document with `uid = <that uid>`, `role: "admin"`, `linked_id: <admin_id>`
-  - [ ] Everyone else is created through the app by an admin
-- [ ] Write `firestore.rules` so that:
-  - [ ] Only admins can write to `students`, `doctors`, `admins`
-  - [ ] Doctors can write to `lectures` they own (match via `users.linked_id`, **not** directly against `request.auth.uid`, because doctors.doctor_id ≠ uid)
-  - [ ] Students can only read lectures they are enrolled in and their own `emotions` rows
-  - [ ] Nobody except the service account can write to `emotions` — that's the Python classroom app's job
-  - [ ] Nobody except the service account can write to `notifications` — the R Plumber backend is the only writer, and it re-checks that the caller is a doctor in code
-  - [ ] Server (service account) bypasses these rules — both the R Plumber backend **and** the Python classroom app use the service account and must re-check permissions in code
-- [ ] Write `storage.rules` so that only authenticated admins (or the service account) can write `students/{id}/face.jpg`; everyone authenticated can read.
-- [ ] **For dev — no service account key is needed.** The `firebase-admin` SDK in both Python and R auto-bypasses auth when pointed at the emulator via env vars (below). Don't generate a real service account key until you're deploying to prod.
-- [ ] Register a Web app in the real Firebase project (Project Settings → General → Your apps) and copy the `firebaseConfig` object — you'll use it in React / React Native **but with emulator connectors that override the URLs for dev**.
+  - [ ] `users` — Phase 3 (created alongside doctors/students/admins by the R backend)
+  - [ ] `notifications` — Phase 3
+  - [x] `transcripts` — parent doc created by `firebase_writer.create_transcript_doc` when streaming starts
+  - [x] `transcripts/{id}/segments` — written live by `StreamTranscriber._publish`
+- [x] Storage paths in use:
+  - [ ] `students/{student_id}/face.jpg` — not uploaded by `enroll_student.py` (stopgap only saves the encoding); Phase 6 admin UI will upload the raw image too
+  - [ ] `doctors/{doctor_id}/face.jpg` — Phase 3 admin CRUD
+  - [x] `lectures/{lecture_id}/audio.wav` — uploaded by `firebase_writer.upload_audio` on capture-app exit
+  - [ ] `reports/lectures/{lecture_id}.pdf` — Phase 3 (R renders)
+- [ ] **Bootstrap the first admin via the Emulator UI:** — **deferred** until Phase 3 (R backend uses the admin). For capture-app testing, the admin isn't needed; `enroll_student.py` is the stopgap.
+- [x] Write `firestore.rules` — lockdown complete; service account bypasses; role-based reads via `users.linked_id`.
+- [x] Write `storage.rules` — face photos admin-only writable + anyone-authenticated readable; service account bypasses.
+- [x] **For dev — no service account key needed.** `_EmulatorCredential` wrapper in `firebase_writer.init_firebase()` uses `AnonymousCredentials` when `FIRESTORE_EMULATOR_HOST` is set.
+- [ ] Register a Web app in the real Firebase project — deferred to Phase 10 / when frontends are built.
 
 ---
 
 ## 🐍 Phase 2 — Python Classroom Capture App
+
+**Status: ✅ complete (2026-04-22). All modules implemented; capture app + test script running against the emulator. Per-phase deviations documented in §2.11 below.**
+
+| § | Area | Status |
+|---|---|---|
+| 2.1 | Setup (venv, requirements, .env) | ✅ done |
+| 2.2 | `face_id.py` (detect + identify) | ✅ done |
+| 2.3 | `emotion.py` (FER wrapper) | ✅ done; uses `face_rectangles=` to skip FER's Haar cascade |
+| 2.4 | `sleep_detector.py` (EAR + head pose) | ✅ done; EMA smoothing + streak counter added |
+| 2.5 | `gesture_detector.py` (MediaPipe Hands) | ✅ done; toilet → rock-on; bend-angle curl detection |
+| 2.6 | `engagement.py` (scoring + reducer) | ✅ done; smoke-tested |
+| 2.7 | `firebase_writer.py` (firestore + CSV + Storage) | ✅ done; `_EmulatorCredential` wrapper for emulator mode |
+| 2.7a | `audio_recorder.py` (sounddevice) | ✅ done |
+| 2.7b | `stream_transcribe.py` (faster-whisper + silero-vad) | ✅ done; loads model in background so webcam opens immediately |
+| 2.8 | `capture_app.py` main loop | ✅ done; multi-face `FaceTrack` with IoU matching + every-frame sleep/gesture |
+| 2.9 | Distribution (PyInstaller) | ⏳ deferred until a stable build is needed |
+| 2.10 | `encode_face.py` / `match_face.py` CLIs | ✅ done; shelled out to by Phase 3 R backend when it exists |
+| +    | `phone_detector.py` (YOLOv8 cell-phone) | ✅ added — not in spec; see §2.11 |
+| +    | `enroll_student.py` | ✅ added — stopgap until Phase 3; see §2.11 |
+| +    | `test_video.py` | ✅ added — standalone Firebase-free pipeline tester |
 
 Python is the **classroom-side capture application**. It runs on the classroom PC that has the camera. It is **not** a server and not a microservice — it's a standalone desktop program the doctor (or IT staff) launches before a lecture starts.
 
@@ -457,9 +607,53 @@ The R Plumber backend needs to (a) compute a 128-d encoding from an uploaded enr
   - [ ] Exits 0 on match, non-zero on no-match or error
 - [ ] Both scripts should be **small, side-effect-free, and fast** — they're called once per enrollment and once per face-login attempt. No Firebase writes from these scripts; R handles persistence.
 
+### 2.11 Phase 2 implementation notes (what actually got built vs. this spec)
+
+Phase 2 is **complete** as of 2026-04-22. A handful of deliberate deviations and additions during implementation — documented here so future phases can rely on the actual shape of the code.
+
+**Dependency swaps**
+- `dlib==19.24.2` → `dlib-bin>=19.24.6`. Prebuilt wheel; skips the Visual-C++ Build Tools headache on Windows. Same `dlib` module at runtime.
+- `face_recognition==1.3.0` installed with `--no-deps` + its runtime deps (`face_recognition_models`, `Click`, `Pillow`) installed separately, because pip otherwise re-resolves `dlib==19.24.2` from source.
+- `moviepy==1.0.3` pinned. `fer==22.5.1` imports `moviepy.editor`, removed in moviepy v2.
+- `ultralytics>=8.4` added for YOLOv8n cell-phone detection (see "Feature additions" below).
+
+**Feature additions (not in the original spec)**
+- `phone_detector.py` — YOLOv8 nano cell-phone detection on the heavy path. Per-track `on_phone` flag; renders `!! ON PHONE !!` warning in the label stack. Hands whose bbox overlaps a phone box are excluded from gesture classification (so the phone-holding hand can't simultaneously "hand_raise").
+- `enroll_student.py` — stopgap CLI to create a `students/{id}` doc with the face_encoding and optionally create / update a lecture. Needed because the R backend (Phase 3) that normally owns `POST /api/students/<id>/face` doesn't exist yet. Auto-creates a minimal lecture if the target `lecture_id` doesn't exist.
+- `test_video.py` — standalone Firebase-free pipeline runner for tuning + debugging. Runs sleep + gesture every frame, prints live EAR / smoothed EAR / streak / pitch / gesture diagnostic.
+
+**Algorithm changes**
+- **Toilet gesture** changed from ASL T-handshape to **index + pinkie extended** (rock-on / ILY). The T requires the thumb tucked precisely between the index and middle MCPs — unreliable in practice and awkward for non-signers. Rock-on is easier to hold and disambiguates cleanly from peace / pointing.
+- **Finger curl detection** rewritten to use the **MCP→PIP→TIP bend angle** (rotation-invariant). The old "tip closer to wrist than MCP" heuristic was fooled by 2D projection of hands pointing away from the camera, causing peace signs to read as fully curled → false `toilet_request`.
+- **`SleepHistory`** rewritten to EMA-smooth EAR + pitch (α=0.35) before thresholding, and track a consecutive-frame *streak* counter that only resets when the smoothed value rises above threshold. The old "all last N frames below threshold" rule broke on single-frame landmark jitter, causing intermittent detections.
+- **FER emotion** now called with `face_rectangles=[(x, y, w, h)]` + the full BGR frame — FER's internal Haar cascade fails on tight crops and would return the `{"neutral", 0.0}` fallthrough forever.
+- **Multi-face tracker** (`FaceTrack` class in `capture_app.py`) — per-track state (EMA-smoothed box, student_id, sleep + gesture history, last emotion, on-phone flag). MediaPipe mesh faces are matched to existing tracks by IoU every frame; face_recognition attaches `student_id` on the heavy path. Replaces the previous per-`student_id` dict which only worked when identification ran every frame.
+- **Sleep + gesture classification moved to every-frame cadence** in `capture_app.py` (were heavy-path-only). Reaction time improves from ~1 Hz to ~30 Hz. Face mesh + hands run every frame anyway, so the added cost is cheap Python math.
+- **EMA box smoothing** on the MediaPipe-derived bounding box (α=0.45). Eliminates the ~1-Hz snapping from the old face_recognition-only box.
+- **Observations are only saved for identified students** (`student_id != "unknown"`). The old code flooded the `emotions` collection with `"unknown"` rows during enrollment onboarding.
+- **Async Whisper load**: `StreamTranscriber.start()` launches a background thread that loads the model + enters `_run()`. The OpenCV window opens immediately; `feed()` drops audio until the model is ready. Pre-fix, the ~15-minute first-run download blocked the main thread.
+- **TF/Keras deprecation chatter silenced** at the top of both entry scripts (`TF_CPP_MIN_LOG_LEVEL=3`, `logging.getLogger("tensorflow").setLevel(ERROR)`, plus `warnings.filterwarnings` for `DeprecationWarning` / `FutureWarning`). Must run before `import tensorflow` / `import fer`.
+- **Deprecation-safe Firestore `.where`** — uses `filter=FieldFilter(...)` kwarg instead of positional args.
+
+**Default thresholds in `.env.example` (tuned for every-frame cadence, ~30 fps)**
+- `EAR_CLOSED_THRESHOLD=0.25` (was 0.20 — too strict for most face shapes)
+- `EAR_CLOSED_FRAMES=15` at 30 fps ≈ 0.5 sec
+- `HEAD_DOWN_FRAMES=15`, `GESTURE_HOLD_FRAMES=8`
+- `WHISPER_MODEL_SIZE` remains `small` in `.env.example`; `tiny` is the fastest-first-run option when demoing.
+
+**Known limitations / gaps**
+- `POST /api/lectures/<id>/finalize` fails with ConnectionError — R Plumber backend is Phase 3. Non-fatal.
+- `students/{id}/face.jpg` Storage upload is not performed by `enroll_student.py` (only the encoding + metadata doc). When the admin UI exists in Phase 6, it will upload the raw image too.
+- Face sign-in endpoint (`POST /api/auth/face-login`) doesn't exist yet — Phase 3.
+- The 4-class reducer in `engagement.py` uses a documented but heuristic mapping (e.g. `surprise → confused`). Change here must be mirrored in `backend-r-plumber/R/engagement.R` per the Phase 9 parity test.
+
+Operational runbook for running the current system: see `HOW_TO_RUN.md` at the repo root.
+
 ---
 
 ## ⚡ Phase 3 — R Plumber Backend (the main API)
+
+**Status: ⏳ not started.** R 4.5.3 is installed; RStudio is not. The capture app's `POST /finalize` call fails with ConnectionError — this is expected until Phase 3 lands; non-fatal.
 
 The backend that both the React web app and the React Native app talk to is written in **R using [Plumber](https://www.rplumber.io/)**. It handles auth, role resolution, CRUD for students/doctors/lectures, and analytics. **It does not do any detection** — the Python classroom app handles capture and writes `emotions` rows directly to Firestore. R only *reads* emotions for analytics.
 
@@ -676,6 +870,8 @@ The Python classroom app computes engagement at write time, but R also needs the
 
 ## 📊 Phase 4 — R Statistical Analysis
 
+**Status: ⏳ not started.**
+
 ### 4.1 Setup
 - [ ] `cd r-analysis`
 - [ ] Open RStudio, set working directory to this folder
@@ -705,6 +901,8 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
 
 ## 📈 Phase 5 — Shiny Dashboard
 
+**Status: ⏳ not started.**
+
 - [ ] Create `app.R` inside `r-analysis/shiny/`
 - [ ] Use `shinydashboard` layout with these tabs:
   - [ ] **Overview** — total students, total lectures, avg engagement score (KPI cards)
@@ -721,6 +919,8 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
 ---
 
 ## ⚛️ Phase 6 — React Web Frontend
+
+**Status: ⏳ not started.**
 
 ### 6.1 Setup
 - [ ] `cd web-react`
@@ -821,6 +1021,8 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
 
 ## 📱 Phase 7 — React Native Mobile App
 
+**Status: ⏳ not started.**
+
 ### 7.1 Setup
 - [ ] `cd mobile-react-native`
 - [ ] `npx create-expo-app . --template blank`
@@ -903,6 +1105,8 @@ No push notifications. No FCM. Doctors initiate messages from the web or mobile 
 
 ## 🔌 Phase 8 — Full Integration (Connect Everything)
 
+**Status: ⏳ not started.** Depends on Phases 3, 6, 7.
+
 Data flow confirmation — make sure this whole chain works end-to-end:
 
 - [ ] **Admin (web or mobile)** → uploads student face photo → **R Plumber `POST /api/students/<id>/face`** → computes encoding → saves to Firestore `students.face_encoding`. Same flow for doctor enrollment via `POST /api/doctors/<id>/face`.
@@ -948,6 +1152,8 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
 
 ## 🧪 Phase 9 — Testing
 
+**Status: ⏳ not started.** Only inline smoke tests so far (engagement, sleep_detector, gesture_detector). Proper `pytest` suite pending.
+
 - [ ] **Python classroom app:** write `pytest` tests for `face_id.py` (feed in two test images, assert the right student_id is returned), `emotion.py`, and `engagement.py`. The OpenCV loop itself is hard to unit-test — smoke-test it manually.
 - [ ] **R Plumber backend:** use `testthat` + `plumber::pr_run` in a background process (or the `httptest2` package) to hit every endpoint. Test each role guard explicitly (admin can, doctor cannot, student cannot — and vice versa). Include tests for:
   - [ ] `POST /api/students/<id>/face` and `POST /api/doctors/<id>/face` — submit a fixture image, confirm a `face_encoding` array is saved
@@ -974,6 +1180,8 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
 
 ## 🚀 Phase 10 — Deployment (flip from Emulator to real Firebase)
 
+**Status: ⏳ not started.**
+
 **The switch from dev to prod is env-vars-only if the clients were built emulator-aware.** No code changes.
 
 - [ ] **Flip off emulator mode:**
@@ -996,7 +1204,9 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
 
 ## 📝 Phase 11 — Documentation & Submission
 
-- [ ] Write the main `README.md` with: overview, architecture diagram, setup instructions, screenshots
+**Status: 🟡 partially done.** `README.md` + Quick Start Runbook (top of this file) + Phase 2 build notes (§2.11) are written. Architecture diagram + screenshots + demo video pending.
+
+- [~] Write the main `README.md` with: overview, architecture diagram, setup instructions, screenshots — README points into this file; expand with screenshots when frontends exist.
 - [ ] Create an **architecture diagram** showing the data flow (use draw.io or Excalidraw)
 - [ ] Record a **demo video** (5 min) showing: live detection → Firebase writing → R dashboard → mobile app
 - [ ] Write the **project report** covering: objectives, methodology, results, statistical findings, conclusion

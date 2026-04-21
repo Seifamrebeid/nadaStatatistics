@@ -21,10 +21,7 @@ instructions/           # Project spec
 
 ## Getting started (dev)
 
-1. Install prerequisites: R 4.3+, Python 3.11 (NOT 3.12), Node 20+, Java 11+, Firebase CLI (`npm i -g firebase-tools`), Expo CLI.
-2. Start the Firebase Emulator Suite: `cd firebase-emulator && firebase emulators:start --import=./seed --export-on-exit=./seed`
-3. Bootstrap the first admin — see `firebase-emulator/README.md`.
-4. Each subsystem has its own setup notes in the phase sections of `instructions/PROJECT_INSTRUCTIONS.md`.
+See the **Quick Start Runbook** at the top of [`instructions/PROJECT_INSTRUCTIONS.md`](./instructions/PROJECT_INSTRUCTIONS.md) for step-by-step prerequisites, venv setup, enrollment, capture app, and troubleshooting. Phase 2 build deltas vs spec are in §2.11 of the same file.
 
 ## Dev vs prod
 
