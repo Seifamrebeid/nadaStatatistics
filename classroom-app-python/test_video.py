@@ -49,7 +49,7 @@ from gesture_detector import (
     gesture_diagnostic,
     init_hands,
 )
-from phone_detector import detect_phones, phone_near_face
+from phone_detector import detect_phones, hand_on_phone, phone_near_face
 
 
 _LINE_H = 18
@@ -179,9 +179,12 @@ def main():
                 top, right, bottom, left = last_box
                 face_center = ((left + right) / 2, (top + bottom) / 2)
             if hand_res.multi_hand_landmarks and face_center is not None:
-                # Use the hand whose wrist is closest to the face center.
+                # Skip any hand that's holding a phone — it can't simultaneously
+                # hand_raise / thumbs / etc.
                 best_hand, best_d = None, float("inf")
                 for hl in hand_res.multi_hand_landmarks:
+                    if hand_on_phone(hl, last_phone_boxes, w, h):
+                        continue
                     hc = (hl.landmark[0].x * w, hl.landmark[0].y * h)
                     d = ((hc[0] - face_center[0]) ** 2 + (hc[1] - face_center[1]) ** 2) ** 0.5
                     if d < best_d:

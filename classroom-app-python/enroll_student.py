@@ -75,10 +75,25 @@ def main() -> int:
 
     if lecture_id is not None:
         from google.cloud.firestore import ArrayUnion
-        db.collection("lectures").document(lecture_id).update({
-            "enrolled_student_ids": ArrayUnion([student_id]),
-        })
-        print(f"Added {student_id} to lectures/{lecture_id}.enrolled_student_ids.")
+        lec_ref = db.collection("lectures").document(lecture_id)
+        snap = lec_ref.get()
+        if not snap.exists:
+            # Create a minimal scheduled lecture so capture_app can find it.
+            lec_ref.set({
+                "lecture_id": lecture_id,
+                "title": f"Test Lecture {lecture_id}",
+                "doctor_id": "doc_test",
+                "date": datetime.now(timezone.utc),
+                "subject": "Test",
+                "status": "scheduled",
+                "enrolled_student_ids": [student_id],
+            })
+            print(f"Created new lecture {lecture_id} (status=scheduled) with {student_id} enrolled.")
+        else:
+            lec_ref.update({
+                "enrolled_student_ids": ArrayUnion([student_id]),
+            })
+            print(f"Added {student_id} to lectures/{lecture_id}.enrolled_student_ids.")
 
     print(f"Done. {student_id} is ready for recognition by capture_app.py.")
     return 0

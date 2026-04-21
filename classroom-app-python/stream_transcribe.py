@@ -70,6 +70,9 @@ class StreamTranscriber:
     def _load_models(self) -> bool:
         try:
             cpu_threads = max(1, (os.cpu_count() or 4) - 2)
+            print(f"[StreamTranscriber] loading Whisper '{self.model_size}' model"
+                  " (first run downloads ~75 MB for tiny / ~480 MB for small)...",
+                  flush=True)
             self._model = WhisperModel(
                 self.model_size,
                 device="cpu",
@@ -78,23 +81,39 @@ class StreamTranscriber:
                 num_workers=1,
             )
             self._vad = load_silero_vad()
+            print("[StreamTranscriber] Whisper + VAD ready — live captions active.",
+                  flush=True)
             return True
-        except Exception:
+        except Exception as e:
             # Per spec: skip silently on model download / init failure.
+            print(f"[StreamTranscriber] model load failed ({e}); transcription disabled.",
+                  flush=True)
             self._model = None
             self._vad = None
             return False
 
     def start(self, lecture_id: str, language: Optional[str] = None) -> None:
+        """Non-blocking. Webcam capture starts immediately; Whisper loads in a
+        background thread. `feed()` drops audio until the model is ready."""
+        self._stop.clear()
+        lang = language or self.language or "ar"
+        # Run model load + processing loop on the same worker thread — load
+        # happens first, then _run() enters its main loop.
+        self._worker = threading.Thread(
+            target=self._load_and_run, args=(lecture_id, lang), daemon=True,
+        )
+        self._worker.start()
+
+    def _load_and_run(self, lecture_id: str, language: str) -> None:
         if not self._load_models():
             return
-        self._transcript_id = create_transcript_doc(
-            lecture_id, language or self.language or "ar"
-        )
+        try:
+            self._transcript_id = create_transcript_doc(lecture_id, language)
+        except Exception as e:
+            print(f"[StreamTranscriber] transcript doc create failed: {e}", flush=True)
+            return
         self._lecture_start = time.time()
-        self._stop.clear()
-        self._worker = threading.Thread(target=self._run, daemon=True)
-        self._worker.start()
+        self._run()
 
     def feed(self, pcm_int16: np.ndarray) -> None:
         if self._model is None or pcm_int16.dtype != np.int16:

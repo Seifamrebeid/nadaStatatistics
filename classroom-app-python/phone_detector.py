@@ -86,3 +86,28 @@ def phone_near_face(phone_box: Tuple[int, int, int, int],
     px, py = _center(phone_box)
     dist = ((fx - px) ** 2 + (fy - py) ** 2) ** 0.5
     return dist < max_multiple * face_w
+
+
+def hand_on_phone(hand_landmarks, phone_boxes: List[Tuple[int, int, int, int]],
+                  w: int, h: int, min_overlap: float = 0.25) -> bool:
+    """True when the hand's bounding box overlaps a phone box by at least
+    `min_overlap` of the hand's own area — i.e. the hand is holding / using
+    that phone, so it can't simultaneously perform a gesture.
+    """
+    if not phone_boxes:
+        return False
+    xs = [lm.x * w for lm in hand_landmarks.landmark]
+    ys = [lm.y * h for lm in hand_landmarks.landmark]
+    hx1, hx2 = min(xs), max(xs)
+    hy1, hy2 = min(ys), max(ys)
+    hand_area = max(1.0, (hx2 - hx1) * (hy2 - hy1))
+    for (px1, py1, px2, py2) in phone_boxes:
+        ix1 = max(hx1, px1)
+        iy1 = max(hy1, py1)
+        ix2 = min(hx2, px2)
+        iy2 = min(hy2, py2)
+        if ix2 > ix1 and iy2 > iy1:
+            inter = (ix2 - ix1) * (iy2 - iy1)
+            if inter / hand_area >= min_overlap:
+                return True
+    return False

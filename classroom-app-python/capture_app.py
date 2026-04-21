@@ -58,7 +58,7 @@ from gesture_detector import (
 )
 from audio_recorder import AudioRecorder
 from stream_transcribe import StreamTranscriber
-from phone_detector import detect_phones, phone_near_face
+from phone_detector import detect_phones, hand_on_phone, phone_near_face
 
 
 _LINE_H = 18
@@ -273,11 +273,17 @@ def main() -> int:
                 face_centers.append(((l + r) / 2.0, (t + b) / 2.0))
                 tids_in_order.append(tid)
 
-            hand_centers: List[Tuple[float, float]] = []
+            # Filter out hands occupied by a phone — a hand holding a phone
+            # can't simultaneously hand_raise / thumbs_up / etc.
+            free_hands: List = []
+            free_hand_centers: List[Tuple[float, float]] = []
             if hand_res.multi_hand_landmarks:
                 for hl in hand_res.multi_hand_landmarks:
-                    hand_centers.append((hl.landmark[0].x * w, hl.landmark[0].y * h))
-            hand_attr = assign_hand_to_face(hand_centers, face_centers)
+                    if hand_on_phone(hl, last_phone_boxes, w, h):
+                        continue
+                    free_hands.append(hl)
+                    free_hand_centers.append((hl.landmark[0].x * w, hl.landmark[0].y * h))
+            hand_attr = assign_hand_to_face(free_hand_centers, face_centers)
 
             for face_idx, hand_idx in hand_attr.items():
                 tid = tids_in_order[face_idx]
@@ -285,7 +291,7 @@ def main() -> int:
                 raw_g = "none"
                 if hand_idx is not None:
                     raw_g = classify_gesture(
-                        hand_res.multi_hand_landmarks[hand_idx],
+                        free_hands[hand_idx],
                         face_ref=face_centers[face_idx],
                     )
                 tr.last_gesture = tr.gesture_hist.push(raw_g)
