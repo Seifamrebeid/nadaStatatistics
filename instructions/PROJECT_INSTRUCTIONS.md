@@ -48,14 +48,15 @@ Check off each item as you finish it. Do **not** skip phases — each one depend
 
 ## 🚀 Quick Start Runbook (what's built today)
 
-Operational guide for running the system as it stands. Phase 2 is complete — Python capture app + Firebase Emulator Suite. Phase 3 (R Plumber backend) and the frontends (Phases 6–7) are not built yet.
+Operational guide for running the system as it stands. **Built & working:** Firebase emulator, Python classroom capture app, R Plumber backend (41 routes), R analysis scripts + Shiny dashboard, web-admin app. **Not yet built:** web-student, web-doctor, and all three mobile apps.
 
 ### 1. Prerequisites (one-time install per machine)
 
 | Tool | Version | Purpose |
 |---|---|---|
 | Python | **3.11** (NOT 3.12) | Capture app, enrollment utility |
-| Node.js | 20+ | Firebase CLI |
+| R | **4.5.3** (tested) | Plumber backend, Shiny dashboard, analysis scripts |
+| Node.js | 20+ | Firebase CLI, web-admin dev server |
 | Java | 11+ | Firestore + Storage emulators |
 | Firebase CLI | any | `npm install -g firebase-tools` |
 | Git | any | |
@@ -63,6 +64,7 @@ Operational guide for running the system as it stands. Phase 2 is complete — P
 Verify:
 ```powershell
 py -3.11 --version        # Python 3.11.x
+& "C:\Program Files\R\R-4.5.3\bin\Rscript.exe" --version   # R 4.5.x
 node --version            # v20+
 java --version            # 11+
 firebase --version        # any
@@ -112,30 +114,70 @@ If PowerShell execution policy blocks `Activate.ps1`:
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
 
+**2b. R backend packages** (one-time — installs to the Windows user library so system-R-lib write-permission isn't required; takes ~10 min on first run):
+```powershell
+& "C:\Program Files\R\R-4.5.3\bin\Rscript.exe" -e '.libPaths(c(\"C:/Users/$env:USERNAME/AppData/Local/R/win-library/4.5\", .libPaths())); install.packages(c(\"plumber\",\"jsonlite\",\"httr\",\"uuid\",\"dplyr\",\"readr\",\"lubridate\",\"openssl\",\"jose\",\"logger\",\"rmarkdown\",\"knitr\",\"writexl\",\"ggplot2\",\"scales\",\"future\",\"promises\",\"tinytex\",\"shiny\",\"shinydashboard\",\"tidyr\",\"cluster\",\"factoextra\",\"DT\",\"plotly\",\"svglite\"), lib=\"C:/Users/$env:USERNAME/AppData/Local/R/win-library/4.5\", repos=\"https://cloud.r-project.org\")'
+```
+
+**2c. web-admin npm deps** (one-time):
+```powershell
+cd E:\Projects\nadaStatatistics\web-admin
+npm install --no-audit --no-fund
+```
+
+**2d. Seed the first admin** (one-time after each emulator seed reset — backend + emulator must already be running for this to work):
+```powershell
+cd E:\Projects\nadaStatatistics\web-admin
+npm run bootstrap-admin
+```
+Creates `admin@classroom.local` / `admin-password-change-me` and writes `users/<uid>` + `admins/admin_001`.
+
 ### 3. Every-time startup
 
-**3a. Start the Firebase Emulator Suite** (separate PowerShell window, leave running):
+Up to **five** PowerShell windows depending on what you want running. Start them in this order — later windows depend on earlier ones.
+
+**3a. Firebase Emulator Suite** (always required):
 ```powershell
 cd firebase-emulator
 firebase emulators:start --import=./seed --export-on-exit=./seed
 ```
-Wait for the "All emulators ready!" banner. UI at http://127.0.0.1:4000.
+Wait for **"All emulators ready!"**. UI at http://127.0.0.1:4000. Firestore @ 8080 · Auth @ 9099 · Storage @ 9199.
 
-**3b. Enroll yourself** (second PowerShell, venv active):
+**3b. R Plumber backend** (required by web-admin; capture app's `/finalize` goes here too):
+```powershell
+cd backend-r-plumber
+& "C:\Program Files\R\R-4.5.3\bin\Rscript.exe" run_api.R
+```
+Wait for **`Running plumber API at http://0.0.0.0:8000`**. Swagger UI at http://localhost:8000/__docs__/.
+
+**3c. web-admin dev server** (required for the admin UI):
+```powershell
+cd web-admin
+npm run dev
+```
+Opens on http://localhost:5175. Log in with `admin@classroom.local` / `admin-password-change-me` (seeded by §2d).
+
+**3d. Enroll a student via the admin UI** (replaces the old `enroll_student.py` stopgap):
+1. Open http://localhost:5175 → Students → New student
+2. Fill name + email → Create (note the temporary password shown in green)
+3. In the row's actions, click **Upload face** → pick a clean front-facing photo
+4. You should see "Enrolled <name>'s face successfully"
+
+Alternatively (still supported, no backend required): the old CLI `python enroll_student.py <image> <id> <name> <lecture>` still works and is handy if the backend is down.
+
+**3e. Capture app** (venv active):
 ```powershell
 cd classroom-app-python
 .\venv\Scripts\Activate.ps1
-python enroll_student.py "C:\path\to\selfie.jpg" 231014746 "Your Name" lec_test_001
-```
-Arguments: **image_path · student_id · name · lecture_id**. First run creates both the student doc AND a minimal `lec_test_001` lecture (`status=scheduled`).
-
-**3c. Run the capture app:**
-```powershell
 python capture_app.py
 ```
-Pick `1`. OpenCV opens, Whisper loads in background. Quit with `q`.
+Pick `1`. OpenCV opens, Whisper loads in the background. Quit with `q`. On quit, `/finalize` is called and the R backend renders a lecture report (HTML in `reports-out/<lecture_id>.html`).
 
-Observations land in Firestore `emotions` + `data/emotions.csv`. On quit, the app uploads `recordings/{lecture_id}.wav` and POSTs `/finalize` (the latter fails until Phase 3 — non-fatal).
+**3f. Shiny dashboard** (optional — standalone analytics, reads `data/emotions.csv` directly; doesn't need the backend):
+```powershell
+cd r-analysis\shiny
+& "C:\Program Files\R\R-4.5.3\bin\Rscript.exe" -e "shiny::runApp('.', port=3838, launch.browser=TRUE)"
+```
 
 ### 4. Standalone visual test (no Firebase)
 
@@ -174,24 +216,37 @@ PROCESS_EVERY_N_FRAMES=30
 | Laughing / talking triggers `yawning` | Raise `MAR_OPEN_THRESHOLD` to `0.55`–`0.60` and/or bump `MAR_OPEN_FRAMES` to `15`. Real yawns are wider and longer than any talk/laugh spike. |
 | Hand near face (e.g. resting chin) triggers `yawning (hand)` | Raise `HAND_ON_MOUTH_FRAMES` to `18`, or increase `min_overlap` in `yawn_detector.hand_over_mouth` from `0.15` to `0.20`. |
 | `OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized` | Torch + MKL-linked numpy/ctranslate2 each bundle their own OpenMP runtime on Windows. Already mitigated — `capture_app.py` and `test_video.py` set `KMP_DUPLICATE_LIB_OK=TRUE` at the top of the script. If you invoke any other entry point, set the same env var before `python`. Anaconda's `(base)` being active on top of the venv can also trigger this — `conda deactivate` first. |
-| Finalize POST fails | Expected until Phase 3. Non-fatal. |
+| Finalize POST fails with `ConnectionError` | R backend (§3b) isn't running. Start it. If backend IS running, confirm port 8000 isn't firewalled. |
+| R `install.packages` fails with `'lib = ... is not writable'` on Windows | System R lib needs admin. Use the user lib: `.libPaths(c("C:/Users/<you>/AppData/Local/R/win-library/4.5", .libPaths()))` before `install.packages`, and add `lib=` to the install call. Script in §2b does this. |
+| Backend boots then exits: `createTcpServer: address already in use` | Another Rscript is already on port 8000. `netstat -ano \| findstr :8000` → `taskkill /PID <pid> /F` → retry. |
+| web-admin login: `EMAIL_NOT_FOUND` or `INVALID_PASSWORD` | Admin account isn't in the emulator (seed reset or first run). Re-run `npm run bootstrap-admin` from §2d. |
+| Report render fails: `pandoc version 1.12.3 or higher is required` | Backend falls back to hand-rolled HTML (no pandoc required). If you see this, you're on an old build of `R/reports.R` — pull the current version. |
+| Report render fails: `package "svglite" is required` | `install.packages("svglite", lib="C:/Users/<you>/AppData/Local/R/win-library/4.5")`. Included in §2b. |
+| `/api/notifications` returns `{"status":"stubbed"}` | `BREVO_API_KEY` is empty in `.Renviron` — emails aren't actually sent. Expected in dev. To wire real sends, sign up at brevo.com, paste the key, restart the backend. |
+| `Objects are not valid as a React child (found: object with keys {})` in the admin UI | R serialized a `NULL` field as `{}` in the JSON response. Already fixed on both sides (backend omits the null key; frontend defensively type-checks the value). If you still see this, hard-refresh the browser (Ctrl+Shift+R). |
 
 ### 6. What runs where (quick map)
 
 ```
 ┌─────────────────────────────┐     ┌──────────────────────┐
-│  PowerShell #1 (emulator)   │◄────┤ http://127.0.0.1:4000│  Emulator UI
+│  Window #1 (emulator)       │◄────┤ http://127.0.0.1:4000│  Emulator UI
 │  firebase emulators:start   │     │  (browser)           │  Firestore + Auth + Storage
 └──────────────┬──────────────┘     └──────────────────────┘
                │ Firestore @ 8080, Auth @ 9099, Storage @ 9199
-               ▼
-┌─────────────────────────────┐
-│ PowerShell #2 (venv)        │
-│  python enroll_student.py   │  Admin-like enrollment (stopgap until R backend)
-│  python capture_app.py      │  Main classroom app
-│  python test_video.py       │  Standalone visual test (no Firebase)
-└─────────────────────────────┘
+     ┌─────────┼──────────┬──────────────────┬─────────────────┐
+     ▼         ▼          ▼                  ▼                 ▼
+┌─────────┐┌─────────┐┌──────────────┐┌──────────────┐┌──────────────┐
+│ #2 R    ││ #3 web- ││ #4 Python    ││ #5 Shiny     ││ browser      │
+│ backend ││  admin  ││  capture app ││  dashboard   ││              │
+│ :8000   ││  :5175  ││  OpenCV win  ││  :3838       ││ 5175, 3838,  │
+│ (req'd  ││  (req'd ││  (classroom  ││  (optional,  ││ 4000, 8000…  │
+│  for    ││  for    ││   PC, runs   ││   reads CSV) ││              │
+│  admin) ││  admin) ││   per        ││              ││              │
+│         ││         ││   lecture)   ││              ││              │
+└─────────┘└─────────┘└──────────────┘└──────────────┘└──────────────┘
 ```
+
+Windows 2 + 3 are what you boot for the admin UI. Window 4 is the classroom capture app — only needed while a lecture is being recorded. Window 5 is optional (Shiny reads the CSV directly and doesn't depend on the backend).
 
 ---
 
@@ -678,10 +733,10 @@ Phase 2 is **complete** as of 2026-04-22. A handful of deliberate deviations and
 - `MAR_OPEN_THRESHOLD=0.50` (closed ≈ 0, talking ≈ 0.1–0.25, wide yawn ≈ 0.5+), `MAR_OPEN_FRAMES=10` (~0.3 s at 30 fps), `HAND_ON_MOUTH_FRAMES=12`
 - `WHISPER_MODEL_SIZE` remains `small` in `.env.example`; `tiny` is the fastest-first-run option when demoing.
 
-**Known limitations / gaps**
-- `POST /api/lectures/<id>/finalize` fails with ConnectionError — R Plumber backend is Phase 3. Non-fatal.
-- `students/{id}/face.jpg` Storage upload is not performed by `enroll_student.py` (only the encoding + metadata doc). When the admin UI exists in Phase 6, it will upload the raw image too.
-- Face sign-in endpoint (`POST /api/auth/face-login`) doesn't exist yet — Phase 3.
+**Known limitations / gaps** (updated 2026-04-22 after Phase 3 landed)
+- ~~`POST /api/lectures/<id>/finalize` fails with ConnectionError~~ → **fixed in Phase 3** (backend auto-renders the HTML report on finalize).
+- ~~Face sign-in endpoint doesn't exist yet~~ → **fixed in Phase 3** (`POST /api/auth/face-login` live; admin 403; custom-token round-trip works against the emulator).
+- `students/{id}/face.jpg` raw-image upload to Storage is still deferred. `web-admin` uploads the photo to the backend and saves the 128-d encoding, but the raw JPEG is not persisted yet. Phase 10 item.
 - The 4-class reducer in `engagement.py` uses a documented but heuristic mapping (e.g. `surprise → confused`). Change here must be mirrored in `backend-r-plumber/R/engagement.R` per the Phase 9 parity test.
 
 Operational runbook for running the current system: see `HOW_TO_RUN.md` at the repo root.
@@ -690,7 +745,7 @@ Operational runbook for running the current system: see `HOW_TO_RUN.md` at the r
 
 ## ⚡ Phase 3 — R Plumber Backend (the main API)
 
-**Status: ⏳ not started.** R 4.5.3 is installed; RStudio is not. The capture app's `POST /finalize` call fails with ConnectionError — this is expected until Phase 3 lands; non-fatal.
+**Status: ✅ complete (2026-04-22). 41 endpoints live-tested end-to-end.** Built in three chunks (A: skeleton + auth + `/finalize`; B: CRUD + face upload + face-login; C: analytics + exports + notifications + reports). Implementation deviations from this spec are in §3.7 below.
 
 The backend that both the React web app and the React Native app talk to is written in **R using [Plumber](https://www.rplumber.io/)**. It handles auth, role resolution, CRUD for students/doctors/lectures, and analytics. **It does not do any detection** — the Python classroom app handles capture and writes `emotions` rows directly to Firestore. R only *reads* emotions for analytics.
 
@@ -910,11 +965,46 @@ The Python classroom app computes engagement at write time, but R also needs the
   ```
 - [ ] **Test checkpoint:** `Rscript run_api.R`. Open `http://localhost:8000/__docs__/` — Plumber's built-in Swagger UI should show every endpoint. Test each one with a valid Firebase ID token in the `Authorization` header. (No Python process needs to be running — the R backend does not talk to Python.)
 
+### 3.7 Phase 3 implementation notes (what actually got built vs. this spec)
+
+Phase 3 is **complete** as of 2026-04-22. Deliberate deviations and additions during implementation — documented so Phases 6/7/8 can build on the real shape of the code.
+
+**Endpoint count:** 41 routes registered. All in a single `plumber.R` (plumber annotations don't cross files cleanly, so consolidation beat the mounting gymnastics). Helpers split into `R/auth.R`, `R/firestore.R`, `R/firebase_auth.R`, `R/face_ops.R`, `R/brevo.R`, `R/engagement.R`, `R/reports.R`, `R/cors.R`, `R/config.R`, `R/helpers.R`.
+
+**Library-path fix**
+- Windows `install.packages` can't write to `C:/Program Files/R/R-4.5.3/library` without admin. Fix baked into `run_api.R` and `load_data.R`: prepend `C:/Users/<you>/AppData/Local/R/win-library/4.5` to `.libPaths()` on boot. Install step in §2b of the Quick Start uses the same path.
+
+**Auth / emulator quirks**
+- `decode_emulator_jwt` accepts a trailing-dot token (alg="none" emits 2 parts via `strsplit`, not 3) — the emulator's own tokens would otherwise be rejected.
+- Emulator ID tokens aren't signature-verified in dev; we trust the claims. Prod path (real-Firebase pubkey fetch + `jose::jwt_decode_sig`) is stubbed and gated on `is_emulator() == FALSE`.
+- Custom tokens (face-login) are minted with `alg="none"` + empty signature — the emulator accepts those directly. Prod-mode signing via the service account is not implemented.
+
+**Temp password on create**
+- Firebase Auth (even the emulator) rejects `signUp` without a password. `POST /api/students` and `POST /api/doctors` now auto-generate a password when the admin omits it and return `temporary_password` in the response so the admin can share it with the new user.
+- **Null-key serialization caveat:** `list(x = NULL)` wrapped in the response serializes to `{}` via default plumber+jsonlite settings, which the React admin tried to render and crashed on. The handlers now conditionally *add* the field instead of assigning NULL (`if (...) out$temporary_password <- password`). Frontends should still defensively type-check the value.
+
+**Firestore REST quirks**
+- `fs_collection_df()` builds the data.frame column-by-column and uses `I(list(...))` for list-valued fields (e.g. `face_encoding` with 128 floats). Naively calling `as.data.frame` on each row would explode the encoding into 128 extra rows.
+- Plumber's default JSON serializer wraps length-1 scalars as arrays (`"role":["admin"]`). Frontends unwrap with a `v = (x) => Array.isArray(x) ? x[0] : x` helper.
+
+**Reports**
+- Spec (§3.4a) called for a `.Rmd` template rendered via `rmarkdown::render`. **Not shipped** in that form — `rmarkdown` requires `pandoc`, which isn't bundled with a bare R install and is a heavy dependency to onboard. Instead, `R/reports.R` emits a **hand-rolled self-contained HTML file** with inline SVG charts (via `svglite`) and embedded tables. Same content as the Rmd (cover, attendance, engagement-over-time, emotion distribution, sleep rate, gesture log) with no pandoc requirement.
+- The `.Rmd` template at `reports/lecture_report.Rmd` is kept as a reference for whenever pandoc is wired in.
+- `svglite` is an extra dependency added to the install list.
+- `/finalize` now *synchronously* renders the report (~1–2s for dev data). The spec's `future`-based async wrapper is deferred — easy to add later without changing the endpoint's contract.
+- Upload to Firebase Storage is deferred to Phase 10 — for now, the generated HTML lives in `reports-out/<lecture_id>.html` and is streamed via `GET /api/lectures/<id>/report-file`.
+
+**Brevo stub mode**
+- When `BREVO_API_KEY` is empty in `.Renviron`, `send_email()` returns `{status: "stubbed"}` without calling the Brevo API. Lets the whole notification flow work end-to-end without a signup. Audit doc is still written to `notifications` either way.
+
+**Port hygiene**
+- Crashed Rscript processes sometimes keep port 8000 bound as a zombie. If boot fails with `createTcpServer: address already in use`, `netstat -ano | findstr :8000` + `taskkill /PID <pid> /F`.
+
 ---
 
 ## 📊 Phase 4 — R Statistical Analysis
 
-**Status: ⏳ not started.**
+**Status: ✅ complete (2026-04-22).** All six scripts + `load_data.R` produce plots in `r-analysis/plots/`. Deviations in §4.4 below.
 
 ### 4.1 Setup
 - [ ] `cd r-analysis`
@@ -941,11 +1031,24 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
 - [ ] `06_cluster_student_subject.R` — cluster student-subject pairs by engagement pattern
 - [ ] **Test checkpoint:** Each script runs without errors and produces a plot saved to `r-analysis/plots/`
 
+### 4.4 Phase 4 implementation notes (what actually got built vs. this spec)
+
+**What's done**
+- `load_data.R` — three loaders (`load_from_csv`, `load_from_api`, `load_from_firestore`) + `attach_doctor_id()` (maps `lecture_id` → `doctor_id` since `emotions` rows don't carry the latter).
+- All six analysis scripts (01–06) produce PNGs in `r-analysis/plots/`.
+- Clustering scripts (05, 06) handle the thin-data case (< 3 groups → render a labelled bar chart instead of fake k-means).
+- `load_data.R` walks up from `getwd()` to find the repo root so scripts work from the repo root, `r-analysis/`, or `r-analysis/shiny/` — no hard-coded relative paths.
+
+**CSV schema drift fix (data layer, not the scripts)**
+- The capture app's `_CSV_COLUMNS` list grew from 9 → 11 columns when yawn detection was added. Old rows on disk had the pre-yawning header; new rows had 11 fields under the old header → readr width-mismatch warnings + occasional NaNs.
+- Fix: header rewritten to the 11-column form; old pre-yawning rows padded with `,False,` for the new `yawning`/`yawn_reason` fields. One-time migration; going forward the writer and reader agree.
+- Lesson: whenever you add a column to `_CSV_COLUMNS` in `firebase_writer.py`, pad any existing CSV rows or the loader will warn.
+
 ---
 
 ## 📈 Phase 5 — Shiny Dashboard
 
-**Status: ⏳ not started.**
+**Status: ✅ complete (2026-04-22).** Boots on port 3838, all 7 tabs render, reactive refresh works. Reads CSV directly — doesn't require the R backend.
 
 - [ ] Create `app.R` inside `r-analysis/shiny/`
 - [ ] Use `shinydashboard` layout with these tabs:
@@ -964,7 +1067,15 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
 
 ## ⚛️ Phase 6 — React Web Frontends (three apps — one per role)
 
-**Status: ⏳ not started.**
+**Status: 🟡 partial (2026-04-22).**
+
+| App | Status |
+|---|---|
+| `web-admin/`  | ✅ complete — full CRUD, analytics, report download, settings, profile, role-mismatch gate. |
+| `web-doctor/` | ⏳ not started. |
+| `web-student/` | ⏳ not started. |
+
+Implementation deviations for `web-admin` are in §6.9 below. `web-doctor` and `web-student` should be built off the **same skeleton** (sections 6.1–6.3 + 6.7) with only the pages (6.4 or 6.5) swapped in.
 
 The web frontend is **three separate Vite + React projects**, not one app with role-based routes. Each app only knows about its own role's pages. A student opening the doctor URL simply gets the doctor login screen — and if they authenticate successfully, the app detects the role mismatch and signs them back out with a message telling them which URL to use.
 
@@ -1129,6 +1240,41 @@ For each of `web-student`, `web-doctor`, `web-admin`:
   - [ ] Sign in with a mismatched role (e.g. admin creds on web-student) → the mismatch gate fires, you're signed back out, the error banner shows the correct app URL
   - [ ] The face-sign-in button is visible on web-student and web-doctor; **absent** on web-admin
   - [ ] Create a doctor from web-admin, sign out, sign in on web-doctor with the new credentials, confirm the new account works
+
+### 6.9 `web-admin` implementation notes (2026-04-22)
+
+The `web-admin` app is the reference implementation that `web-doctor` and `web-student` should clone. Key details of what was actually built:
+
+**Stack**
+- Vite 5 + React 18 + Tailwind 3 + Firebase JS SDK v10 + axios 1.7 + Recharts 2 + React Router 6.
+- `vite.config.js` pins port to 5175 with `strictPort: true`.
+- 277 npm packages installed; lock file (`package-lock.json`) committed.
+
+**Files that matter**
+- `src/appRole.js` — exports `APP_ROLE = "admin"`. Single source of truth for the mismatch gate.
+- `src/firebase.js` — shared across all three web apps; emulator connectors gated by `import.meta.env.DEV`.
+- `src/services/api.js` — axios client with an interceptor that attaches `auth.currentUser.getIdToken()` to every request. **Copy verbatim into web-doctor and web-student.**
+- `src/context/AuthContext.jsx` — runs the role-mismatch gate: after `onAuthStateChanged`, calls `GET /api/me`, compares `role` to `APP_ROLE`, signs the user out if they don't match and surfaces a banner. **Copy verbatim** — the only per-app difference is `APP_ROLE`.
+- `src/components/` — `Layout`, `StatCard`, `Modal`, `CrudTable`. Local to `web-admin`; other apps can copy what they need.
+- `src/pages/` — `Login`, `AdminDashboard`, `AdminDoctors`, `AdminStudents`, `AdminLectures`, `AdminAnalytics`, `AdminSettings`, `Profile`, `NotFound`.
+
+**Response-shape quirk handled in every page**
+- Plumber's default serializer wraps length-1 scalars as arrays (`"role":["admin"]`). Every page uses a `v = (x) => Array.isArray(x) ? x[0] : x` helper and a `normalise(row)` wrapper to flatten results. **`web-doctor` and `web-student` will need the same helper.**
+
+**Admin bootstrap script**
+- `scripts/bootstrap-admin.mjs` — one-shot Node script that hits the Auth-emulator `signUp` endpoint + patches `users/<uid>` and `admins/admin_001`. Run with `npm run bootstrap-admin`. Idempotent: on re-run it signs in, reuses the uid, and re-patches the docs.
+- Default creds: `admin@classroom.local` / `admin-password-change-me` (overridable via `ADMIN_EMAIL`, `ADMIN_PASSWORD` env vars).
+
+**Face upload (Doctors + Students pages)**
+- Each CRUD table row has an "Upload face" link that triggers a hidden `<input type="file">`. On change, wraps the file in `FormData` and `POST`s to `/api/{doctors|students}/<id>/face` — plumber parses multipart via its built-in `multi` parser; backend shells out to `encode_face.py` and saves the 128-d encoding. Works end-to-end against the emulator.
+
+**Temporary-password UX**
+- After create, if the response contains `temporary_password`, it's shown in a green banner inside the create modal so the admin can copy it. See also §3.7 "Temp password on create" for the backend-side quirk.
+
+**Known limitations in `web-admin`**
+- No email/password sanity checks on the client — empty-name creates will 400 from the backend and the error bubbles as an `alert()`. Cosmetic.
+- The analytics page uses Plumber's column-oriented response shape (`{lecture_id: [...], n: [...]}`) — Recharts wants row-oriented, so a `columnsToRows()` helper runs on every response. This is project-wide and should be promoted to a shared util when `web-doctor` lands.
+- Storage upload of face photos is still deferred (spec §1.4 / §3.7). Currently only the 128-d encoding is saved, not the raw JPEG.
 
 ---
 
@@ -1371,7 +1517,7 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
 
 ## 📝 Phase 11 — Documentation & Submission
 
-**Status: 🟡 partially done.** `README.md` + Quick Start Runbook (top of this file) + Phase 2 build notes (§2.11) are written. Architecture diagram + screenshots + demo video pending.
+**Status: 🟡 partially done.** `README.md` + Quick Start Runbook (top of this file) + Phase 2 build notes (§2.11) + Phase 3/4/5/6 build notes (§3.7, §4.4, §6.9) are written. Architecture diagram + screenshots + demo video pending.
 
 - [~] Write the main `README.md` with: overview, architecture diagram, setup instructions, screenshots — README points into this file; expand with screenshots when frontends exist.
 - [ ] Create an **architecture diagram** showing the data flow (use draw.io or Excalidraw)
