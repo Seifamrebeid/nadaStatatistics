@@ -1,13 +1,13 @@
 # Classroom Emotion Detection System — Full Project Instructions
 
-**Stack:** **R (backend API + analysis + Shiny)** · Python (standalone classroom capture app — camera, face recognition, emotion) · React (Web) · React Native (Mobile) · **Firebase Emulator Suite** for dev (Auth + Firestore + Storage, all local) / Firebase cloud for prod · CSV (Backup)
+**Stack:** **R (backend API + analysis + Shiny)** · Python (standalone classroom capture app — camera, face recognition, emotion) · React (Web — **three separate apps, one per role**) · React Native (Mobile — **three separate apps, one per role**) · **Firebase Emulator Suite** for dev (Auth + Firestore + Storage, all local) / Firebase cloud for prod · CSV (Backup)
 
 **Dev vs prod:** Development runs entirely against the **Firebase Emulator Suite** — no real Firebase project is hit during local work. Storage, Auth, and Firestore all run on localhost. For the college-project demo, you can ship on emulators the whole way. For a real deployment, flip env vars to point at a real Firebase project; no code changes required if the Firestore/Auth/Storage wiring is built emulator-aware from day one.
 
 **Architecture at a glance:**
 - A **Python desktop app** runs on the classroom PC during each lecture. It opens the webcam, detects all faces, **identifies which student each face belongs to** (face recognition against enrolled photos), runs emotion analysis on each face, and writes one row per face per interval to Firebase Firestore + the CSV backup.
 - An **R Plumber backend** serves the web/mobile clients. It handles auth, role resolution, **CRUD for students / doctors / lectures**, and analytics. **It does not do any detection** — detection lives entirely in the Python desktop app.
-- The **React web app** and **React Native mobile app** are management + analytics dashboards. Doctor and Admin roles use them for CRUD and viewing. Students get read-only access to their own engagement history. **Neither frontend captures video.**
+- There are **six separate frontend apps** — three React web apps and three React Native mobile apps, one per role (Student, Doctor, Admin). They all talk to the same R Plumber backend and the same Firebase project; each app only ships the pages for its own role. **None of them capture video for detection** (only the Login screen uses the camera, for face sign-in on student + doctor apps). This split replaces the older "one web + one mobile with role-based routes" design — see Phases 6 and 7.
 - Firebase holds the data; CSV is the backup.
 
 **Language policy:** R is the default for the server side. Python is used only where it must be — in practice, only inside the classroom capture app, because OpenCV, `face_recognition`, and the emotion model have no mature R equivalents.
@@ -33,7 +33,9 @@
 | Dashboard / visualizations (Shiny + ggplot2) | **R** | Shiny wins |
 | FCM push notifications | **R** (`httr`) | Both work |
 
-**Roles:** The system has **three user roles** — **Student**, **Doctor** (instructor / professor), and **Admin**. Both the **website (React)** and the **mobile app (React Native)** must support all three roles with **full feature parity** — everything that exists on the web must also exist on mobile, and vice versa. Each role sees a different home screen and has different permissions, enforced by the **R Plumber backend** and Firebase security rules.
+**Roles:** The system has **three user roles** — **Student**, **Doctor** (instructor / professor), and **Admin**. Each role has its **own dedicated React web app and its own dedicated React Native mobile app** — six frontend projects total (`web-student`, `web-doctor`, `web-admin`, `mobile-student`, `mobile-doctor`, `mobile-admin`). Permissions are enforced by the **R Plumber backend** and Firebase security rules — the client-side split is for UX, packaging, and deployment independence, not for security.
+
+**Feature-parity rule (per role):** parity is now enforced **pair-wise per role**, not across all roles. Every feature in `web-student` must exist in `mobile-student` and vice versa; same for doctor; same for admin. Do **not** try to unify features across roles — the whole point of the split is that each role's surface is independent.
 
 **Role permissions (high level):**
 - **Student** — read-only: view own enrolled lectures, view own engagement history, edit own profile. Students do **not** capture video from their own devices — the classroom camera does that. May sign in with **email+password OR face recognition** (same enrollment photo used by the classroom app).
@@ -150,6 +152,9 @@ EAR_CLOSED_FRAMES=8
 HEAD_DOWN_PITCH_DEG=-20
 HEAD_DOWN_FRAMES=10
 GESTURE_HOLD_FRAMES=5
+MAR_OPEN_THRESHOLD=0.50
+MAR_OPEN_FRAMES=10
+HAND_ON_MOUTH_FRAMES=12
 PROCESS_EVERY_N_FRAMES=30
 ```
 
@@ -166,6 +171,9 @@ PROCESS_EVERY_N_FRAMES=30
 | `ModuleNotFoundError: No module named 'moviepy.editor'` | `pip install "moviepy==1.0.3"`. |
 | Sleep detection intermittent | Raise `EAR_CLOSED_THRESHOLD` to `0.28`. Watch `EAR=…/smooth=…` in `test_video.py` debug line. |
 | Toilet gesture triggered by peace sign | Bug fixed — gesture now uses bend-angle curl detection. If you still see it, you're on an older build. |
+| Laughing / talking triggers `yawning` | Raise `MAR_OPEN_THRESHOLD` to `0.55`–`0.60` and/or bump `MAR_OPEN_FRAMES` to `15`. Real yawns are wider and longer than any talk/laugh spike. |
+| Hand near face (e.g. resting chin) triggers `yawning (hand)` | Raise `HAND_ON_MOUTH_FRAMES` to `18`, or increase `min_overlap` in `yawn_detector.hand_over_mouth` from `0.15` to `0.20`. |
+| `OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized` | Torch + MKL-linked numpy/ctranslate2 each bundle their own OpenMP runtime on Windows. Already mitigated — `capture_app.py` and `test_video.py` set `KMP_DUPLICATE_LIB_OK=TRUE` at the top of the script. If you invoke any other entry point, set the same env var before `python`. Anaconda's `(base)` being active on top of the venv can also trigger this — `conda deactivate` first. |
 | Finalize POST fails | Expected until Phase 3. Non-fatal. |
 
 ### 6. What runs where (quick map)
@@ -207,8 +215,12 @@ emotion-detection-system/
 │   ├── R/                  # helpers (auth, firestore, models)
 │   └── tests/              # testthat tests
 ├── r-analysis/             # R analysis scripts + Shiny dashboard
-├── web-react/              # React web frontend (CRUD + analytics, no camera)
-├── mobile-react-native/    # React Native app (CRUD + analytics, no camera)
+├── web-student/            # React web app — student pages only (read-only)
+├── web-doctor/             # React web app — doctor pages (CRUD own lectures + analytics + messaging)
+├── web-admin/              # React web app — admin pages (full CRUD on doctors/students/lectures)
+├── mobile-student/         # React Native app — student screens only
+├── mobile-doctor/          # React Native app — doctor screens
+├── mobile-admin/           # React Native app — admin screens
 ├── firebase-emulator/      # Firebase Emulator Suite config (firebase.json, rules, seed data)
 │   ├── firebase.json       # emulator port config
 │   ├── firestore.rules     # Firestore security rules
@@ -310,6 +322,7 @@ You only need a real Firebase project for its **project ID** (the emulator expec
 | 2.2 | `face_id.py` (detect + identify) | ✅ done |
 | 2.3 | `emotion.py` (FER wrapper) | ✅ done; uses `face_rectangles=` to skip FER's Haar cascade |
 | 2.4 | `sleep_detector.py` (EAR + head pose) | ✅ done; EMA smoothing + streak counter added |
+| 2.4a | `yawn_detector.py` (MAR + hand-over-mouth) | ✅ added — not in original spec; see §2.4a and §2.11 |
 | 2.5 | `gesture_detector.py` (MediaPipe Hands) | ✅ done; toilet → rock-on; bend-angle curl detection |
 | 2.6 | `engagement.py` (scoring + reducer) | ✅ done; smoke-tested |
 | 2.7 | `firebase_writer.py` (firestore + CSV + Storage) | ✅ done; `_EmulatorCredential` wrapper for emulator mode |
@@ -333,8 +346,9 @@ Python is the **classroom-side capture application**. It runs on the classroom P
    b. **Classify emotion** (FER on the face crop).
    c. **Detect sleep state** via MediaPipe Face Mesh — head-pose pitch (chin tucked down → looking down) plus eye-aspect-ratio (eyes closed for ≥N consecutive frames).
    d. **Detect hand gestures** via MediaPipe Hands — hand-raised, toilet-request (ASL T-handshape), thumbs-up/down, pointing. Extensible registry so more gestures can be added later.
-5. **Compute engagement score** from emotion + state + gesture (sleeping overrides emotion → 0; hand_raised adds a small boost).
-6. Write one `emotions` row per identified face per interval with emotion + state + sleep_reason + gesture + engagement_score → Firestore + CSV.
+   e. **Detect yawning** via MediaPipe Face Mesh mouth landmarks + hand-over-mouth overlap — either a sustained wide-open mouth (MAR above threshold for N frames) OR a hand covering the mouth region for N frames counts as a yawn. The hand-covers-mouth case also suppresses gesture classification for that hand, so a polite yawn can't false-trigger `thumbs_up` / `pointing` / etc.
+5. **Compute engagement score** from emotion + state + gesture (sleeping overrides emotion → 0; hand_raised adds a small boost). Yawning is recorded as its own dimension; it does not currently feed into the score.
+6. Write one `emotions` row per identified face per interval with emotion + state + sleep_reason + gesture + engagement_score + yawning + yawn_reason → Firestore + CSV.
 7. Draw labeled boxes on the live video feed showing name + emotion + `[sleeping]` tag + `✋ hand_raised` etc., so the doctor can sanity-check.
 8. On quit, mark the lecture `status: "finished"`.
 
@@ -392,6 +406,11 @@ Python is the **classroom-side capture application**. It runs on the classroom P
   # Gesture-detection thresholds
   GESTURE_HOLD_FRAMES=8            # a gesture must be stable for N frames before being reported
 
+  # Yawn-detection thresholds
+  MAR_OPEN_THRESHOLD=0.50          # mouth-aspect-ratio above this = mouth wide open (yawn candidate)
+  MAR_OPEN_FRAMES=10               # N consecutive frames of wide-open mouth before calling it "yawning"
+  HAND_ON_MOUTH_FRAMES=12          # N consecutive frames of hand overlapping the mouth = polite-yawn signal
+
   # Audio + transcription
   AUDIO_SAMPLE_RATE=16000          # 16 kHz mono is what Whisper expects — no need to go higher
   AUDIO_DEVICE_INDEX=              # blank = default mic; integer = specific device
@@ -432,6 +451,21 @@ Uses **MediaPipe Face Mesh** (478 3D face landmarks per face). Two independent s
   - `("awake", None)` otherwise
 - [ ] **Per-face frame history**: keep a small ring buffer of the last ~30 frames of EAR + pitch per `student_id` so thresholds and consecutive-frame counts are meaningful across the processing interval.
 
+### 2.4a Yawn detection (`yawn_detector.py`)
+Uses **MediaPipe Face Mesh** mouth landmarks (already running for sleep detection — no extra model cost) plus the **MediaPipe Hands** landmarks already consumed by `gesture_detector.py`. Two independent signals can trip the yawn flag:
+
+- [x] **Mouth open** — Mouth Aspect Ratio (MAR) = vertical inner-lip gap (indices 13 ↔ 14) ÷ outer mouth width (indices 61 ↔ 291). Sustained MAR ≥ `MAR_OPEN_THRESHOLD` for ≥ `MAR_OPEN_FRAMES` consecutive frames. Closed mouth ≈ 0, talking ≈ 0.1–0.25, wide yawn ≈ 0.5+ — 0.50 is the default threshold.
+- [x] **Hand covering mouth** — per face we compute a padded mouth bbox (30% x / 50% y pad on the mouth-perimeter hull) and test each detected hand's bbox against it. Overlap ≥ 15% of the mouth area for ≥ `HAND_ON_MOUTH_FRAMES` consecutive frames counts as a polite yawn. Symmetric to `phone_detector.hand_on_phone` but anchored to the mouth.
+- [x] **Classifier** (`classify_yawn(face_landmarks, (w, h), hand_landmarks_list, YawnHistory) -> (yawning, reason, mouth_bbox)`) — returns one of:
+  - `(True, "mouth_open", mouth_bbox)` — MAR path fired
+  - `(True, "hand_covered", mouth_bbox)` — polite-yawn path fired
+  - `(True, "both", mouth_bbox)` — both signals fired
+  - `(False, None, mouth_bbox)` — not yawning
+- [x] **Smoothing** — `YawnHistory` mirrors `SleepHistory`: EMA (α = 0.40) on raw MAR, plus two consecutive-frame streak counters. Single-frame MAR spikes from laughing/talking get washed out; sustained yawns fire reliably.
+- [x] **Gesture-filter side effect** — `capture_app.py` reuses the same `mouth_bbox` + `hand_over_mouth` helpers to exclude hands-on-mouth from the gesture-eligible set (same pattern as the phone-holding filter). Without this, a hand covering a yawning mouth would sometimes register as `pointing` or `thumbs_up` depending on finger pose.
+
+**Why a dedicated module instead of a flag inside `sleep_detector`:** a yawn is not a subtype of sleep — it co-occurs with awake students more often than with sleeping ones. Keeping them in separate modules preserves the `state == "awake"` invariant for the engagement-score formula (Phase 9 R parity test), while still giving the doctor a visible "this person is fading" signal.
+
 ### 2.5 Gesture detection (`gesture_detector.py`)
 Uses **MediaPipe Hands** (21 landmarks per hand, up to 2 hands per frame). Built-in gestures + extensible registry:
 
@@ -471,11 +505,11 @@ Uses **MediaPipe Hands** (21 landmarks per hand, up to 2 hands per frame). Built
 - [ ] `init_firebase()` — initializes `firebase-admin` once. Logic:
   - If `FIRESTORE_EMULATOR_HOST` is set, initialize with `credentials.AnonymousCredentials()` and `projectId=FIREBASE_PROJECT_ID` — no real key needed; the SDK auto-connects to the emulator.
   - Otherwise, load the service account JSON at `FIREBASE_SERVICE_ACCOUNT_JSON` — prod mode.
-- [ ] `save_observation(student_id, lecture_id, emotion, confidence, state, sleep_reason, gesture, engagement_score)` — writes one doc to the `emotions` collection **and** appends the same row to `../data/emotions.csv`. Batch if possible: buffer rows for `SAVE_INTERVAL_SECONDS` and flush as a `WriteBatch`.
+- [ ] `save_observation(student_id, lecture_id, emotion, confidence, state, sleep_reason, gesture, engagement_score, yawning=False, yawn_reason=None)` — writes one doc to the `emotions` collection **and** appends the same row to `../data/emotions.csv`. Batch if possible: buffer rows for `SAVE_INTERVAL_SECONDS` and flush as a `WriteBatch`.
 - [ ] `set_lecture_status(lecture_id, status)` — updates the lecture doc's `status` field.
 - [ ] `upload_audio(lecture_id, wav_path) -> url` — uploads a local `.wav` file to `lectures/{lecture_id}/audio.wav` in Firebase Storage and returns the URL.
 - [ ] `save_transcript(lecture_id, language, segments)` — writes one doc to `transcripts` with `lecture_id`, `language`, and the segments array. Also patches the parent lecture doc with `transcript_id`.
-- [ ] **CSV columns** (keep in sync with the Firestore fields): `student_id, lecture_id, timestamp, emotion, confidence, state, sleep_reason, gesture, engagement_score`.
+- [ ] **CSV columns** (keep in sync with the Firestore fields): `student_id, lecture_id, timestamp, emotion, confidence, state, sleep_reason, gesture, engagement_score, yawning, yawn_reason`.
 
 ### 2.7a Audio recorder (`audio_recorder.py`)
 Captures microphone audio in a background thread while the OpenCV loop runs. The final WAV is used as Whisper input.
@@ -584,7 +618,8 @@ Firestore writer            (adds a doc to transcripts/{id}/segments)
   - [ ] Looking down at your desk flips to `[sleeping: head_down]`
   - [ ] Raising a hand above your head adds `✋ hand_raised` and boosts the engagement score
   - [ ] Making the T-handshape adds `🚽 toilet_request`
-  - [ ] `emotions` rows appear in Firestore + `data/emotions.csv` with the new fields populated
+  - [ ] Holding a wide open mouth for ~0.7 s flips the label to `yawning (mouth)` (amber box); covering your mouth with a hand for ~0.8 s flips it to `yawning (hand)` without falsely triggering a hand gesture
+  - [ ] `emotions` rows appear in Firestore + `data/emotions.csv` with the new fields populated (including `yawning` + `yawn_reason`)
 
 ### 2.9 Distribution
 - [ ] For handing it to a non-developer, bundle with PyInstaller: `pyinstaller --onefile capture_app.py`. This produces a single `.exe` (Windows) or binary. The `.env` and `serviceAccountKey.json` must sit next to the executable.
@@ -619,6 +654,7 @@ Phase 2 is **complete** as of 2026-04-22. A handful of deliberate deviations and
 
 **Feature additions (not in the original spec)**
 - `phone_detector.py` — YOLOv8 nano cell-phone detection on the heavy path. Per-track `on_phone` flag; renders `!! ON PHONE !!` warning in the label stack. Hands whose bbox overlaps a phone box are excluded from gesture classification (so the phone-holding hand can't simultaneously "hand_raise").
+- `yawn_detector.py` — MAR-based open-mouth detection + hand-over-mouth overlap detection, classified through a `YawnHistory` EMA + streak buffer (mirrors `SleepHistory`). Per-track `last_yawning` + `last_yawn_reason` (`"mouth_open"` / `"hand_covered"` / `"both"`); renders an amber label above the face. Hands whose bbox overlaps any face's padded mouth bbox are excluded from gesture classification — same pattern as the phone-holding filter — so a polite yawn can't false-trigger a hand gesture. Persists `yawning` (bool) + `yawn_reason` on every `emotions` row. Full spec: §2.4a.
 - `enroll_student.py` — stopgap CLI to create a `students/{id}` doc with the face_encoding and optionally create / update a lecture. Needed because the R backend (Phase 3) that normally owns `POST /api/students/<id>/face` doesn't exist yet. Auto-creates a minimal lecture if the target `lecture_id` doesn't exist.
 - `test_video.py` — standalone Firebase-free pipeline runner for tuning + debugging. Runs sleep + gesture every frame, prints live EAR / smoothed EAR / streak / pitch / gesture diagnostic.
 
@@ -639,6 +675,7 @@ Phase 2 is **complete** as of 2026-04-22. A handful of deliberate deviations and
 - `EAR_CLOSED_THRESHOLD=0.25` (was 0.20 — too strict for most face shapes)
 - `EAR_CLOSED_FRAMES=15` at 30 fps ≈ 0.5 sec
 - `HEAD_DOWN_FRAMES=15`, `GESTURE_HOLD_FRAMES=8`
+- `MAR_OPEN_THRESHOLD=0.50` (closed ≈ 0, talking ≈ 0.1–0.25, wide yawn ≈ 0.5+), `MAR_OPEN_FRAMES=10` (~0.3 s at 30 fps), `HAND_ON_MOUTH_FRAMES=12`
 - `WHISPER_MODEL_SIZE` remains `small` in `.env.example`; `tiny` is the fastest-first-run option when demoing.
 
 **Known limitations / gaps**
@@ -857,7 +894,14 @@ The Python classroom app computes engagement at write time, but R also needs the
 - [ ] Add a `testthat` test that compares R output with the Python output for a fixed set of inputs (emotion × state × gesture combinations). **If they diverge, engagement numbers in the dashboard won't match what the capture app wrote.**
 
 ### 3.6 Middleware & config
-- [ ] Enable CORS for `http://localhost:5173` (React) and `http://localhost:19006` (Expo) — use `plumber::forward()` hooks or the `plumber` CORS helper.
+- [ ] Enable CORS for **all six frontend dev origins** (three web + three mobile). Pin each web app to a fixed Vite dev port (see Phase 6.1) so the allowlist is deterministic:
+  - `http://localhost:5173` — web-student
+  - `http://localhost:5174` — web-doctor
+  - `http://localhost:5175` — web-admin
+  - `http://localhost:19006` — Expo web preview (if used for any mobile app)
+  - `http://localhost:19007` — second Expo app (pin explicitly via `expo start --port 19007`)
+  - `http://localhost:19008` — third Expo app
+  Mobile apps running on a physical device reach the backend via its LAN IP; the CORS check applies only to browser-origin requests, so for device runs you usually don't hit CORS at all. Document the LAN IP origin (e.g. `http://192.168.1.15:8000`) if you use Expo-web at dev time. Implement with `plumber::forward()` hooks or the `plumber` CORS helper.
 - [ ] Add structured request logging via `logger`
 - [ ] Entry point: `run_api.R`
   ```r
@@ -918,27 +962,55 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
 
 ---
 
-## ⚛️ Phase 6 — React Web Frontend
+## ⚛️ Phase 6 — React Web Frontends (three apps — one per role)
 
 **Status: ⏳ not started.**
 
-### 6.1 Setup
-- [ ] `cd web-react`
+The web frontend is **three separate Vite + React projects**, not one app with role-based routes. Each app only knows about its own role's pages. A student opening the doctor URL simply gets the doctor login screen — and if they authenticate successfully, the app detects the role mismatch and signs them back out with a message telling them which URL to use.
+
+**Why three apps and not one:**
+- Independent deploys — shipping an admin bugfix can't break the student app
+- Smaller bundles per role
+- Cleaner auditing — each app has a narrower attack surface and a single role in its code
+- Distribution: each role gets its own URL (e.g. `students.example.edu`, `doctors.example.edu`, `admin.example.edu`)
+
+**Common scaffold (same in all three apps).** Sections 6.1–6.3 describe the skeleton you replicate into each of `web-student/`, `web-doctor/`, `web-admin/`. Sections 6.4–6.6 describe the per-app pages. Section 6.7 is cross-cutting (login, role-mismatch gate, parity rule).
+
+### 6.1 Per-app setup — run this three times (once per app)
+
+For each of `web-student`, `web-doctor`, `web-admin`:
+
+- [ ] `cd <app-folder>` (e.g. `cd web-student`)
 - [ ] `npm create vite@latest . -- --template react` (use Vite, not Create React App)
 - [ ] Install deps:
   ```bash
-  npm install firebase axios react-router-dom recharts tailwindcss 
+  npm install firebase axios react-router-dom recharts tailwindcss
   npm install -D @types/react
   ```
 - [ ] Set up Tailwind: follow https://tailwindcss.com/docs/guides/vite
-- [ ] Create `src/firebase.js` with your Firebase config (from Phase 1) **and emulator connectors gated by `import.meta.env.DEV`**:
+- [ ] **Pin the dev port** in `vite.config.js` so the R backend's CORS allowlist is deterministic:
+  | App | Dev port |
+  |---|---|
+  | web-student | 5173 |
+  | web-doctor | 5174 |
+  | web-admin | 5175 |
+  ```js
+  // vite.config.js
+  import { defineConfig } from "vite";
+  import react from "@vitejs/plugin-react";
+  export default defineConfig({
+    plugins: [react()],
+    server: { port: 5173, strictPort: true }, // change per app
+  });
+  ```
+- [ ] Create `src/firebase.js` with your Firebase config (from Phase 1) **and emulator connectors gated by `import.meta.env.DEV`** — **this file is byte-identical across the three apps**:
   ```js
   import { initializeApp } from "firebase/app";
   import { getAuth, connectAuthEmulator } from "firebase/auth";
   import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
   import { getStorage, connectStorageEmulator } from "firebase/storage";
 
-  const app = initializeApp({ /* firebaseConfig from Phase 1 */ });
+  const app = initializeApp({ /* firebaseConfig from Phase 1 — same project for all three apps */ });
   export const auth = getAuth(app);
   export const db = getFirestore(app);
   export const storage = getStorage(app);
@@ -950,39 +1022,52 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
   }
   ```
 - [ ] In `.env.development` set `VITE_API_URL=http://localhost:8000` (R Plumber); in `.env.production` point it at the deployed backend.
+- [ ] **Declare the app's role** in `src/appRole.js`. This is the single source of truth for the role-mismatch gate:
+  ```js
+  // src/appRole.js — EACH APP USES A DIFFERENT VALUE
+  export const APP_ROLE = "student";   // "student" | "doctor" | "admin"
+  ```
 
-### 6.2 Folder structure inside `src/`
-- [ ] `components/` — reusable UI (Navbar, Sidebar, EmotionCard, StatCard, RoleGuard, CrudTable)
-- [ ] `pages/`
-  - [ ] `common/` — Login, NotFound, Profile
-  - [ ] `student/` — StudentDashboard, StudentLectures, StudentLiveLecture, StudentHistory (read-only only)
-  - [ ] `doctor/` — DoctorDashboard, DoctorLectures (CRUD of own), DoctorAnalytics, LiveClassroom, DoctorMessages
-  - [ ] `admin/` — AdminDashboard, AdminDoctors (CRUD), AdminStudents (CRUD + face upload), AdminLectures (all), AdminAnalytics, AdminSettings
-- [ ] `services/` — `api.js` (axios wrapper — automatically attaches Firebase ID token) and `firebase.js` (auth helpers)
-- [ ] `hooks/` — `useAuth`, `useRole`, `useEmotions`, `useLectures`
-- [ ] `context/` — `AuthContext.jsx` (holds `{user, role, linkedProfile}`)
-- [ ] `routes/` — `AppRoutes.jsx` that reads `role` from context and mounts the correct route tree per role. Use a `<RoleGuard allow={["admin"]}>` wrapper around admin-only routes.
+### 6.2 Shared folder skeleton inside `src/` (identical structure in all three apps)
 
-### 6.3 Build these pages
+- [ ] `components/` — reusable UI for *this* app only (no cross-role components). Typical: `Navbar`, `Sidebar`, `StatCard`, `CrudTable`, `LoadingSpinner`. Keep the component set minimal — the three apps are small enough that shared generic UI is fine to duplicate.
+- [ ] `pages/` — **only the pages for this app's role** (see 6.4–6.6). No `common/` cross-role folder; `Login`, `NotFound`, `Profile` live at the top of `pages/` in each app.
+- [ ] `services/` — `api.js` (axios wrapper — automatically attaches Firebase ID token) and `firebase.js` (auth helpers — `loginWithEmail`, `loginWithCustomToken`, `logout`)
+- [ ] `hooks/` — `useAuth`, `useLectures`, `useEmotions`, etc. Only hooks this app uses.
+- [ ] `context/` — `AuthContext.jsx` (holds `{user, role, linkedProfile}`, runs the role-mismatch gate — see 6.7)
+- [ ] `routes/` — `AppRoutes.jsx`. Because the app is already role-scoped, this is a **flat** route tree with no role guards inside. The single gate is at the top level, in `AuthContext`.
+- [ ] `appRole.js` — the constant from 6.1.
 
-**Login (shared)** — two modes, toggleable on one page
-- [ ] **Email + password** (all roles) + **Google sign-in** (optional)
-- [ ] **Face sign-in** (student + doctor only; hide for admin login)
-  - [ ] Role picker: "I'm a student / I'm a doctor" before the capture (needed so the backend scopes the match)
-  - [ ] Webcam preview via `navigator.mediaDevices.getUserMedia`, a "Capture" button, then a canvas snapshot
-  - [ ] POST the snapshot + role to `/api/auth/face-login`
-  - [ ] On success, call `signInWithCustomToken(auth, custom_token)` from Firebase JS SDK → redirect to role home
-  - [ ] On failure, show "We couldn't recognize you — try again or use email/password"
-  - [ ] Subtle text under the capture button: "Make sure you're in good light and facing the camera"
-- [ ] After sign-in (either mode), fetch `GET /api/me`, store the role, redirect to the correct role home
+**Do not** build a `<RoleGuard>` component — the whole app is the guard. The only role check is "does the signed-in user's role equal `APP_ROLE`?" and it runs once, in `AuthContext`, right after `GET /api/me`.
 
-**Student pages** (read-only — students never capture video from the browser)
+### 6.3 Shared services (same pattern in all three apps)
+
+- [ ] `services/api.js`:
+  ```js
+  import axios from "axios";
+  import { auth } from "./firebase";
+  const api = axios.create({ baseURL: import.meta.env.VITE_API_URL });
+  api.interceptors.request.use(async (config) => {
+    const token = await auth.currentUser?.getIdToken();
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    return config;
+  });
+  export default api;
+  ```
+- [ ] `context/AuthContext.jsx` — on every Firebase auth-state change: if a user is present, call `GET /api/me`, compare `data.role` to `APP_ROLE`, and if they differ, call `auth.signOut()` + surface a toast/error: `"This is the ${APP_ROLE} portal. You're signed in as a ${data.role} — please use the ${data.role} app."` If they match, store `{user, role, linkedProfile}` in context.
+
+### 6.4 `web-student` pages (read-only — students never capture video from the browser)
+
+- [ ] **Login** — email+password + **face sign-in**. The role picker from the unified design is gone; this app IS the student portal, so the face-login POST sends `role: "student"` implicitly.
 - [ ] **StudentDashboard** — list of enrolled lectures + personal avg engagement snapshot, plus a **"You vs. class average"** comparison card fed by `/api/analytics/student/<self>/comparison`. Shows *only* the student's own number and the anonymized class mean — never individual peers. Show a badge "🔴 Live now" on lectures whose `status == "recording"`.
 - [ ] **StudentLectures** — read-only list of enrolled lectures + schedule; each row links to the lecture's report PDF (`/api/lectures/<id>/report`) and transcript, if available. For a lecture that's currently recording, the row links to **StudentLiveLecture** instead.
 - [ ] **StudentLiveLecture** — opens while a lecture is `status == "recording"`. Subscribes to the `transcripts/{id}/segments` subcollection via Firebase JS SDK `onSnapshot` (ordered by `chunk_index`) and renders a rolling caption panel that auto-scrolls to the newest line. RTL-aware for Arabic. Auto-closes when the transcript doc's `completed` flips to `true`; replaces itself with a "View full transcript + download PDF" summary that points at the finished artifacts. **This is the live-captions experience for students sitting in class (or watching remotely).**
 - [ ] **StudentHistory** — own engagement history chart (Recharts) across all attended lectures, with a dashed overlay line showing the anonymized class average per lecture
+- [ ] **Profile** — view/edit own profile (name only; email and role are read-only)
 
-**Doctor pages** (CRUD for own lectures + analytics + messaging — **no live-detection screen**; the Python classroom app handles capture)
+### 6.5 `web-doctor` pages (CRUD for own lectures + analytics + messaging — **no live-detection screen**; the Python classroom app handles capture)
+
+- [ ] **Login** — email+password + **face sign-in** (sends `role: "doctor"` implicitly)
 - [ ] **DoctorDashboard** — KPI cards: today's lectures, avg engagement across own lectures, which lectures are currently `recording`, live count of raised hands / pending toilet requests in any active lecture
 - [ ] **DoctorLectures** — CRUD form/table for **own** lectures (create, edit, delete, enroll students from a dropdown, view `status`)
 - [ ] **DoctorAnalytics** — per-lecture engagement analytics (own lectures only); embed/link to Shiny dashboard filtered to the doctor. Charts:
@@ -998,33 +1083,73 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
   - [ ] Subject + body text fields
   - [ ] Send → POSTs to `/api/notifications` → shows success/failure toast
   - [ ] "Sent history" tab below the compose form — lists prior notifications from `GET /api/notifications`, with subject, recipient count, timestamp, and status
+- [ ] **Profile** — view/edit own profile
 
-**Admin pages**
+### 6.6 `web-admin` pages (full system control — **no face sign-in in this app at all**)
+
+- [ ] **Login** — email+password **only**. Do not render the face-sign-in UI in this app. Face sign-in is weaker than a password (photo-spoofable) and the admin role has too much power. The "admin face-login 403" mentioned in Phase 3 is enforced here by *absence* on the client as well as by the backend reject.
 - [ ] **AdminDashboard** — system-wide KPI cards from `GET /api/admin/stats` (add system-wide sleep rate and top gestures observed)
-- [ ] **AdminDoctors** — **full CRUD on doctors**. Table with search, create modal, edit modal, delete confirm. Each row shows name, email, department, # of lectures, active/inactive. **Plus a face-photo upload field** on create/edit that POSTs to `/api/doctors/<id>/face`. Without an enrollment photo, the doctor cannot use face sign-in.
-- [ ] **AdminStudents** — **full CRUD on students**. Same table pattern, **plus a face-photo upload field** on create/edit that POSTs to `/api/students/<id>/face` and shows whether enrollment succeeded (face detected in photo). Without an enrollment photo, the classroom app cannot recognize the student **and** the student cannot use face sign-in.
+- [ ] **AdminDoctors** — **full CRUD on doctors**. Table with search, create modal, edit modal, delete confirm. Each row shows name, email, department, # of lectures, active/inactive. **Plus a face-photo upload field** on create/edit that POSTs to `/api/doctors/<id>/face`. Without an enrollment photo, the doctor cannot use face sign-in on the doctor app.
+- [ ] **AdminStudents** — **full CRUD on students**. Same table pattern, **plus a face-photo upload field** on create/edit that POSTs to `/api/students/<id>/face` and shows whether enrollment succeeded (face detected in photo). Without an enrollment photo, the classroom app cannot recognize the student **and** the student cannot use face sign-in on the student app.
 - [ ] **AdminLectures** — read/edit/delete **any** lecture (not just own); can reassign a lecture from one doctor to another
 - [ ] **AdminAnalytics** — system-wide Recharts + link to the full Shiny dashboard (include sleep rate + gesture frequency views). Adds the **engagement heatmap** (all lectures across all doctors) and **Export** buttons mirroring the Doctor page but across the full dataset.
 - [ ] **AdminSettings** — global settings (engagement alert threshold, sleep alert threshold, toilet-request push-notification toggle, CSV backup path, etc.) + API URL switch
+- [ ] **Profile** — view/edit own profile
 
-**Shared**
-- [ ] **Profile** — view/edit own profile (name only; email and role are read-only)
+### 6.7 Cross-cutting — login, role-mismatch gate, and security
 
-### 6.4 Firebase & role enforcement
-- [ ] Use Firebase Auth on the client
-- [ ] Keep **all** Firestore writes on the backend (R Plumber) — the frontend only READS via the API and never writes to Firestore directly. This keeps role checks server-side.
-- [ ] The axios interceptor must attach the current user's Firebase ID token to every request
-- [ ] Even though `<RoleGuard>` hides UI, **never rely on the frontend for security** — the backend re-checks role on every request
-- [ ] **Test checkpoint:** log in as each role (admin, doctor, student) and confirm each sees only their own pages and only their own data. Log in as admin, create a new doctor, log out, log in as that doctor, confirm the new account works.
+- [ ] **Login page** in each app has two modes (student + doctor apps) or one mode (admin app):
+  - [ ] **Email + password** (all three apps) + **Google sign-in** (optional, student + doctor only)
+  - [ ] **Face sign-in** (student + doctor apps only — do NOT ship it in web-admin):
+    - [ ] Webcam preview via `navigator.mediaDevices.getUserMedia`, a "Capture" button, then a canvas snapshot
+    - [ ] POST the snapshot + `role: APP_ROLE` to `/api/auth/face-login`. The role is hardcoded from `appRole.js`, not chosen by the user — so there's no role picker, and the backend can't be tricked into matching against the wrong role pool.
+    - [ ] On success, call `signInWithCustomToken(auth, custom_token)` from Firebase JS SDK → the `AuthContext` role-mismatch gate runs automatically on the resulting auth-state change
+    - [ ] On failure, show "We couldn't recognize you — try again or use email/password"
+    - [ ] Subtle text under the capture button: "Make sure you're in good light and facing the camera"
+- [ ] **Role-mismatch gate** (runs in `AuthContext` after every successful sign-in):
+  ```js
+  const me = await api.get("/api/me");
+  if (me.data.role !== APP_ROLE) {
+    await signOut(auth);
+    throw new Error(`This is the ${APP_ROLE} portal. You're signed in as a ${me.data.role}.`);
+  }
+  ```
+  Surface the error as a prominent banner on the login page with a link to the correct app's URL (read from `import.meta.env.VITE_STUDENT_URL`, `VITE_DOCTOR_URL`, `VITE_ADMIN_URL` — set these in `.env.production` in each app so the message can link out).
+- [ ] **Security** — identical rules to the unified design, restated because they apply *per app*:
+  - [ ] Use Firebase Auth on the client
+  - [ ] Keep **all** Firestore writes on the backend (R Plumber) — the frontend only READS via the API and never writes to Firestore directly. This keeps role checks server-side.
+  - [ ] The axios interceptor must attach the current user's Firebase ID token to every request
+  - [ ] The role-mismatch gate is UX, **not security** — the backend re-checks role on every request. A student who somehow flipped `APP_ROLE` to `"admin"` in devtools and signed in would still get 403s from every admin-only endpoint.
+
+### 6.8 Per-role parity & test checkpoint
+
+- [ ] **Per-role parity rule**: everything in `web-student` must have a counterpart in `mobile-student` and vice versa. Same for doctor. Same for admin. When you add a feature, update both sides of the pair in the same PR.
+- [ ] **Test checkpoint:** boot all three dev servers simultaneously on ports 5173/5174/5175. For each app:
+  - [ ] Sign in with the matching role → land on the correct home → all pages render
+  - [ ] Sign in with a mismatched role (e.g. admin creds on web-student) → the mismatch gate fires, you're signed back out, the error banner shows the correct app URL
+  - [ ] The face-sign-in button is visible on web-student and web-doctor; **absent** on web-admin
+  - [ ] Create a doctor from web-admin, sign out, sign in on web-doctor with the new credentials, confirm the new account works
 
 ---
 
-## 📱 Phase 7 — React Native Mobile App
+## 📱 Phase 7 — React Native Mobile Apps (three apps — one per role)
 
 **Status: ⏳ not started.**
 
-### 7.1 Setup
-- [ ] `cd mobile-react-native`
+Mirrors Phase 6: three independent Expo projects — `mobile-student/`, `mobile-doctor/`, `mobile-admin/`. Each app ships only its own role's screens. Same role-mismatch gate as the web apps; same "face sign-in absent from admin app" rule.
+
+**Why three apps (same reasoning as web):**
+- Each role gets a distinct bundle identifier → they show up as three separate icons on the student/doctor/admin's phone, can be installed independently, and can be distributed to the right people via their own install link or store listing
+- Smaller bundle size per install
+- Independent release cadence — fixing an admin-only bug never touches the student build
+
+Sections 7.1–7.3 are the per-app skeleton (run three times). 7.4–7.6 are the per-app screens. 7.7 is cross-cutting.
+
+### 7.1 Per-app setup — run this three times (once per app)
+
+For each of `mobile-student`, `mobile-doctor`, `mobile-admin`:
+
+- [ ] `cd <app-folder>` (e.g. `cd mobile-student`)
 - [ ] `npx create-expo-app . --template blank`
 - [ ] Install deps:
   ```bash
@@ -1032,8 +1157,17 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
   npm install @react-navigation/native @react-navigation/native-stack @react-navigation/bottom-tabs axios
   npx expo install react-native-screens react-native-safe-area-context
   ```
-  The mobile app does **not** capture video for emotion detection — that's the classroom PC's job. `expo-camera` is used **only on the LoginScreen** for the face sign-in flow (live preview + snapshot). `expo-image-picker` is for admins to upload student/doctor enrollment photos.
-- [ ] Create `firebaseConfig.js` with the same config from Phase 1 **plus emulator connectors**. Because a physical phone cannot reach your dev machine via `localhost`, use the machine's **LAN IP** (e.g. `192.168.1.15`) in the connect calls. The Android emulator's special IP for the host is `10.0.2.2`.
+  None of these apps captures video for emotion detection — that's the classroom PC's job. `expo-camera` is used **only on the LoginScreen** of `mobile-student` and `mobile-doctor` for the face sign-in flow. `expo-image-picker` is used **only in `mobile-admin`** for uploading student/doctor enrollment photos.
+- [ ] **Distinct Expo app identity per app** in `app.json` / `app.config.js`:
+
+  | App | `slug` | `scheme` | `ios.bundleIdentifier` | `android.package` | Dev port |
+  |---|---|---|---|---|---|
+  | mobile-student | `classroom-student` | `classroom-student` | `edu.<college>.emotions.student` | `edu.<college>.emotions.student` | 19006 |
+  | mobile-doctor | `classroom-doctor` | `classroom-doctor` | `edu.<college>.emotions.doctor` | `edu.<college>.emotions.doctor` | 19007 |
+  | mobile-admin | `classroom-admin` | `classroom-admin` | `edu.<college>.emotions.admin` | `edu.<college>.emotions.admin` | 19008 |
+
+  Start each app's dev server with its pinned port: `npx expo start --port 19006` (etc). Pinning matters so the backend's CORS allowlist is deterministic and so you can run all three dev servers at once.
+- [ ] Create `firebaseConfig.js` **byte-identical across all three apps** — same Firebase project. Because a physical phone cannot reach your dev machine via `localhost`, use the machine's **LAN IP** (e.g. `192.168.1.15`) in the connect calls. The Android emulator's special IP for the host is `10.0.2.2`.
   ```js
   import { initializeApp } from "firebase/app";
   import { getAuth, connectAuthEmulator } from "firebase/auth";
@@ -1041,7 +1175,7 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
   import { getStorage, connectStorageEmulator } from "firebase/storage";
 
   const HOST = __DEV__ ? "192.168.1.15" : null; // put your dev machine's LAN IP here
-  const app = initializeApp({ /* firebaseConfig */ });
+  const app = initializeApp({ /* firebaseConfig — same project for all three apps */ });
   export const auth = getAuth(app);
   export const db = getFirestore(app);
   export const storage = getStorage(app);
@@ -1053,53 +1187,73 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
   }
   ```
 - [ ] Also set `API_URL=http://192.168.1.15:8000` (or your LAN IP) in an Expo env / `app.config.js` so the axios client can reach the R Plumber backend from the phone.
+- [ ] **Declare the app's role** in `appRole.js` (same single-source-of-truth pattern as the web apps):
+  ```js
+  export const APP_ROLE = "student";   // "student" | "doctor" | "admin" — one per app
+  ```
 
-**Feature-parity rule:** every page on the React web app must have a matching screen on mobile, and every mobile screen must have a matching page on web. If you add a feature to one platform, add it to the other in the same PR.
+### 7.2 Shared folder skeleton inside `src/` (same structure in all three apps)
 
-### 7.2 Screens (inside `src/screens/`)
+- [ ] `src/screens/` — **only the screens for this app's role** (see 7.4–7.6). `LoginScreen` and `ProfileScreen` live at the top of `src/screens/` in each app.
+- [ ] `src/components/` — small reusable UI for this app (`StatCard`, `Banner`, `CrudList`, …). Don't over-engineer a shared UI library across the three apps.
+- [ ] `src/services/` — `api.js` (axios wrapper, attaches Firebase ID token) and `firebase.js` (auth helpers)
+- [ ] `src/hooks/` — `useAuth`, `useLectures`, etc.
+- [ ] `src/context/AuthContext.js` — runs the role-mismatch gate after login (see 7.7)
+- [ ] `src/navigation/RootNavigator.js` — because the app is already role-scoped, this is a **single** tab bar for that role (see 7.3). No `switch(role)` at the navigator top level.
+- [ ] `appRole.js` — the constant from 7.1.
 
-**Shared**
-- [ ] **LoginScreen** — two modes:
-  - [ ] **Email + password** (all roles)
-  - [ ] **Face sign-in** (student + doctor only; hide the button when the user picks "I'm an admin"): role picker → `expo-camera` live preview → capture → POST to `/api/auth/face-login` → on match, `signInWithCustomToken(auth, token)` from the Firebase JS SDK
-  - [ ] After login (either mode), hits `GET /api/me` and routes to the correct role navigator
-- [ ] **ProfileScreen** — view/edit own profile, logout
+### 7.3 Navigation — one tab bar per app, not a role-switch navigator
 
-**Student screens** (parity with `pages/student/` on web — read-only only)
+Each app's root navigator shows **one** tab set — whichever matches its role.
+
+- [ ] **mobile-student tabs:** Home · Lectures · Live · History · Profile ("Live" opens whichever of their enrolled lectures is currently `recording`, or an empty state if none is live)
+- [ ] **mobile-doctor tabs:** Home · Lectures · Live · Analytics · Messages · Profile
+- [ ] **mobile-admin tabs:** Home · Doctors · Students · Lectures · Profile
+- [ ] Stack navigator inside each tab for detail/edit screens (e.g., AdminDoctors → EditDoctor)
+
+### 7.4 `mobile-student` screens (parity with `web-student` — read-only)
+
+- [ ] **LoginScreen** — email+password + **face sign-in** (sends `role: "student"` implicitly; no role picker because the app IS the student portal). Uses `expo-camera` live preview → capture → POST snapshot to `/api/auth/face-login` → on success `signInWithCustomToken`.
 - [ ] **StudentHomeScreen** — enrolled lectures, personal engagement summary, **"you vs class average" comparison card**, "🔴 Live now" badge on any recording lecture
 - [ ] **StudentLecturesScreen** — list of enrolled lectures; tapping a recording lecture opens **StudentLiveLectureScreen**; tapping a finished one shows download links for the PDF report + transcript
 - [ ] **StudentLiveLectureScreen** — subscribes via Firebase JS SDK `onSnapshot` to the `transcripts/{id}/segments` subcollection, renders an RTL-aware auto-scrolling caption panel, auto-closes when `completed` flips to `true`
 - [ ] **StudentHistoryScreen** — personal engagement history chart with anonymized class-average overlay
+- [ ] **ProfileScreen** — view/edit own profile, logout
 
-**Doctor screens** (parity with `pages/doctor/` on web — CRUD + analytics + messaging, no camera)
+### 7.5 `mobile-doctor` screens (parity with `web-doctor` — CRUD + analytics + messaging, no camera-for-detection)
+
+- [ ] **LoginScreen** — email+password + **face sign-in** (sends `role: "doctor"` implicitly)
 - [ ] **DoctorHomeScreen** — today's lectures, avg engagement, which of own lectures are currently `recording`, live count of raised hands / pending toilet requests
 - [ ] **DoctorLecturesScreen** — CRUD for own lectures
 - [ ] **DoctorAnalyticsScreen** — per-lecture analytics including sleep rate + gesture timeline, engagement heatmap, transcript panel, and Export / Download-PDF buttons (use the native share sheet to save or open the PDF on mobile)
 - [ ] **LiveClassroomScreen** — real-time per-student status (awake/sleeping, current gesture). Read-only.
 - [ ] **DoctorMessagesScreen** — compose + send emails to students in own lectures, with a "Sent history" list from `/api/notifications`
+- [ ] **ProfileScreen** — view/edit own profile, logout
 
-**Admin screens** (parity with `pages/admin/` on web)
+### 7.6 `mobile-admin` screens (parity with `web-admin` — full system control; **no face sign-in**)
+
+- [ ] **LoginScreen** — email+password **only**. Don't ship `expo-camera` imports in this app's LoginScreen — face sign-in is admin-disabled for the same reason as on web-admin.
 - [ ] **AdminHomeScreen** — system-wide KPIs
 - [ ] **AdminDoctorsScreen** — **full CRUD on doctors** (list, create, edit, delete, upload face enrollment photo via `expo-image-picker`)
 - [ ] **AdminStudentsScreen** — **full CRUD on students** (list, create, edit, delete, upload face enrollment photo via `expo-image-picker`)
 - [ ] **AdminLecturesScreen** — manage all lectures
 - [ ] **AdminAnalyticsScreen** — system-wide analytics including the engagement heatmap across all doctors, plus Export buttons
 - [ ] **AdminSettingsScreen** — global settings
+- [ ] **ProfileScreen** — view/edit own profile, logout
 
-### 7.3 Navigation
-- [ ] Build a **role-based root navigator** that swaps the entire tab bar based on the logged-in role:
-  - [ ] **Student tabs:** Home · Lectures · Live · History · Profile — "Live" opens whichever of their enrolled lectures is currently `recording`, or an empty state if none is live
-  - [ ] **Doctor tabs:** Home · Lectures · Live · Analytics · Messages · Profile
-  - [ ] **Admin tabs:** Home · Doctors · Students · Lectures · Profile
-- [ ] Stack navigator inside each tab for detail/edit screens (e.g., AdminDoctors → EditDoctor)
+### 7.7 Cross-cutting — role-mismatch gate, doctor→student email, test checkpoints
 
-### 7.4 Doctor → student email notifications (via Brevo)
-No push notifications. No FCM. Doctors initiate messages from the web or mobile app; the R Plumber backend sends them via Brevo; students receive them as ordinary email in their inbox.
-- [ ] Build `DoctorMessagesScreen` (see 7.2) — a plain form: pick lecture, pick recipients (default = all enrolled), subject, body, Send.
-- [ ] Send → axios POST to `/api/notifications` (the backend handles Brevo).
-- [ ] Show a success toast with the Brevo `messageId`, or an error toast with the returned error text.
-- [ ] Include a "Sent history" list on the same screen (paginated `GET /api/notifications`).
-- [ ] **Test checkpoint:** Run the app, log in as doctor, compose an email to yourself (add your own email to an enrolled student), Send, check your inbox. The message should arrive within a few seconds. Also confirm a new doc appears in Firestore `notifications`.
+- [ ] **Role-mismatch gate** in `AuthContext` (same logic as web — see 6.7): after every successful Firebase sign-in, call `GET /api/me`; if `data.role !== APP_ROLE`, call `signOut(auth)` and show a prominent banner on LoginScreen: `"This is the ${APP_ROLE} app. You're signed in as a ${data.role} — please install the ${data.role} app."` (Unlike the web, you can't auto-redirect on mobile, so the banner just tells the user which app to open / install.)
+- [ ] **Doctor → student email notifications** (implemented in `mobile-doctor` only): no push. No FCM. Plain axios POST to `/api/notifications`; the backend handles Brevo.
+  - [ ] `DoctorMessagesScreen` is a plain form: pick lecture, pick recipients (default = all enrolled), subject, body, Send.
+  - [ ] Success toast with the Brevo `messageId`; error toast with the returned error text.
+  - [ ] "Sent history" list on the same screen (paginated `GET /api/notifications`).
+- [ ] **Per-role parity rule (restated):** every feature in `mobile-student` must exist in `web-student` and vice versa; same for doctor; same for admin. When you add a feature, update both sides of the pair in the same PR.
+- [ ] **Test checkpoint:** run all three Expo dev servers on 19006/19007/19008. For each app:
+  - [ ] Sign in with the matching role → lands on correct home → all screens render
+  - [ ] Sign in with a mismatched role (e.g. student creds on mobile-admin) → mismatch banner, signed back out, gate enforced
+  - [ ] Face-sign-in button visible on mobile-student and mobile-doctor; **absent** on mobile-admin
+  - [ ] Admin → compose an email to yourself (add your own email to an enrolled student), Send from `mobile-doctor`, check your inbox. Message arrives within seconds **and** a new doc appears in Firestore `notifications`.
 
 ---
 
@@ -1107,46 +1261,49 @@ No push notifications. No FCM. Doctors initiate messages from the web or mobile 
 
 **Status: ⏳ not started.** Depends on Phases 3, 6, 7.
 
-Data flow confirmation — make sure this whole chain works end-to-end:
+Data flow confirmation — make sure this whole chain works end-to-end. "Admin / Doctor / Student (web + mobile)" below means the corresponding per-role app (`web-admin` + `mobile-admin`, etc.) — there is no single unified app in this design.
 
-- [ ] **Admin (web or mobile)** → uploads student face photo → **R Plumber `POST /api/students/<id>/face`** → computes encoding → saves to Firestore `students.face_encoding`. Same flow for doctor enrollment via `POST /api/doctors/<id>/face`.
-- [ ] **Student or Doctor** → opens LoginScreen, picks "Sign in with face" → captures photo → **R Plumber `POST /api/auth/face-login`** → matches via `match_face.py` → mints Firebase custom token → frontend calls `signInWithCustomToken` → normal authenticated session
-- [ ] **Doctor (web or mobile)** → creates lecture, enrolls students → **R Plumber `POST /api/lectures`** → Firestore
+- [ ] **Admin (web-admin or mobile-admin)** → uploads student face photo → **R Plumber `POST /api/students/<id>/face`** → computes encoding → saves to Firestore `students.face_encoding`. Same flow for doctor enrollment via `POST /api/doctors/<id>/face`.
+- [ ] **Student (web-student / mobile-student) or Doctor (web-doctor / mobile-doctor)** → opens LoginScreen, taps "Sign in with face" → captures photo → **R Plumber `POST /api/auth/face-login`** (role hardcoded from each app's `APP_ROLE`) → matches via `match_face.py` → mints Firebase custom token → frontend calls `signInWithCustomToken` → role-mismatch gate passes → normal authenticated session
+- [ ] **Doctor (web-doctor / mobile-doctor)** → creates lecture, enrolls students → **R Plumber `POST /api/lectures`** → Firestore
 - [ ] **Python classroom app** (run on classroom PC) → picks the lecture → loads enrolled encodings from Firestore → opens webcam **and starts audio recording + streaming transcription** → for each processed frame: detects faces → identifies students → classifies emotions → writes `emotions` rows **directly** to Firestore + CSV (via `firebase-admin`) → **every few seconds** writes a new segment doc to `transcripts/{lecture_id}/segments` as the doctor speaks
-- [ ] **Students (web or mobile)** during the lecture → subscribe to `transcripts/{lecture_id}/segments` via Firebase JS SDK `onSnapshot` → see live captions with ~1–3 s latency from the doctor's speech
+- [ ] **Students (web-student / mobile-student)** during the lecture → subscribe to `transcripts/{lecture_id}/segments` via Firebase JS SDK `onSnapshot` → see live captions with ~1–3 s latency from the doctor's speech
 - [ ] **Python classroom app** (on quit) → marks the transcript `completed: true` → uploads `audio.wav` to Storage → POSTs `/api/lectures/<id>/finalize` to R Plumber
 - [ ] **R Plumber `/finalize`** → sets `status=finished` → schedules `render_lecture_report(id)` via `future` → renders the `.Rmd` → uploads `reports/lectures/<id>.pdf` to Storage → writes `report_pdf_url` on the lecture doc
 - [ ] **R Shiny** → pulls `emotions` via Firestore helpers or the CSV → renders dashboards
-- [ ] **React web / React Native dashboard (Doctor & Admin)** → polls **R Plumber `/api/analytics/engagement`** for aggregated views
-- [ ] **Student web / mobile** → polls **R Plumber `/api/emotions?student_id=self`** for personal history
-- [ ] **Doctor (web or mobile)** → composes a message on DoctorMessages → **R Plumber `POST /api/notifications`** → Brevo `POST /v3/smtp/email` → **student's inbox**; the send is recorded in the `notifications` Firestore collection for audit
+- [ ] **web-doctor / mobile-doctor and web-admin / mobile-admin** → poll **R Plumber `/api/analytics/engagement`** for aggregated views
+- [ ] **web-student / mobile-student** → polls **R Plumber `/api/emotions?student_id=self`** for personal history
+- [ ] **web-doctor / mobile-doctor** → composes a message on DoctorMessages → **R Plumber `POST /api/notifications`** → Brevo `POST /v3/smtp/email` → **student's inbox**; the send is recorded in the `notifications` Firestore collection for audit
 
 Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face in front of the webcam.
 
-**Role-parity dry-run (required):** exercise all three roles on **both** web and mobile, plus the Python classroom app.
-- [ ] Admin (web + mobile): create a doctor **with a face photo**, create 2 students **including a clean face photo for each**, edit one, soft-delete the other
-- [ ] **Face sign-in (web + mobile):** log out, pick "Sign in with face" as `Doctor`, face the camera → should auto-log in as that doctor. Repeat as one of the students.
-- [ ] **Face sign-in rejection:** try face sign-in as `Admin` — the button should not be offered (or the backend should 403).
-- [ ] Doctor (web + mobile): log in as the doctor the admin just created, create a lecture, enroll the 2 students
-- [ ] Python classroom app: launch it, pick that lecture, confirm both students are recognized by name on the live feed
-- [ ] **Sleep + gesture dry-run** (this round specifically — sit in front of the camera as one of the enrolled students):
+**Role-parity dry-run (required):** exercise all six frontend apps (three web + three mobile) plus the Python classroom app.
+
+- [ ] **Admin (web-admin + mobile-admin):** create a doctor **with a face photo**, create 2 students **including a clean face photo for each**, edit one, soft-delete the other
+- [ ] **Role-mismatch gate (all six apps):** try signing in with the admin's credentials on `web-student`, `web-doctor`, `mobile-student`, `mobile-doctor`. Each should sign the admin back out and show the "wrong portal" banner with a link / hint to `web-admin` / `mobile-admin`. Try the student's creds on each of the other five — same behavior.
+- [ ] **Face sign-in (web-student + web-doctor + mobile-student + mobile-doctor):** log out, tap "Sign in with face" on `web-doctor`, face the camera → should auto-log in as that doctor. Repeat from `mobile-doctor`. Repeat as one of the students from `web-student` and `mobile-student`.
+- [ ] **Face sign-in absent from admin apps:** confirm no face-sign-in button exists in `web-admin` or `mobile-admin` login screens.
+- [ ] **Backend 403 on face-login with `role: "admin"`:** fire a raw `curl` at `/api/auth/face-login` with `role=admin` to confirm the backend still rejects even if someone bypasses the client.
+- [ ] **Doctor (web-doctor + mobile-doctor):** log in as the doctor the admin just created, create a lecture, enroll the 2 students
+- [ ] **Python classroom app:** launch it, pick that lecture, confirm both students are recognized by name on the live feed
+- [ ] **Sleep + gesture dry-run** (sit in front of the camera as one of the enrolled students):
   - [ ] Close your eyes for ~3 seconds — label should flip to `[sleeping: eyes_closed]` and engagement in the next row should be `0`
   - [ ] Look down at your desk for ~3 seconds — label should flip to `[sleeping: head_down]`
   - [ ] Raise a hand above your head — label should show `✋ hand_raised` and engagement score should be boosted
-  - [ ] Make the ASL T-handshape — label should show `🚽 toilet_request` and (if notifications are wired up) the doctor's phone should ping
+  - [ ] Make the rock-on gesture (index + pinkie extended) — label should show `🚽 toilet_request`
   - [ ] Give a thumbs-up / thumbs-down — verify those gestures get logged
 - [ ] Let it record for ~1 minute, quit with `q`
-- [ ] Student (web + mobile): log in as one of the students, open History, confirm the engagement rows from the recording appear with correct `state` / `gesture` values
-- [ ] Doctor (web + mobile): open Analytics for that lecture, confirm engagement chart + sleep rate chart + gesture timeline all render
-- [ ] Doctor (web + mobile): open Messages, compose an email to the enrolled students, Send. Confirm the email arrives in the student inbox(es) within seconds **and** a new doc appears in the Firestore `notifications` collection. Try the same on a student login — the Messages screen should not be reachable. Try on an admin login — sending should also be blocked (admins audit, they don't send).
-- [ ] **Live transcript (while the lecture is running):** open StudentLiveLecture (or StudentLiveLectureScreen on mobile) as an enrolled student **while the Python app is still recording**. Speak in Arabic at the classroom mic; captions should appear on the student's screen within ~1–3 seconds per segment. Confirm new segments keep appearing in the `transcripts/{id}/segments` subcollection (watchable in the Emulator UI).
-- [ ] Finalize chain: after the Python classroom app quits, wait ~1–2 min and confirm:
+- [ ] **Student (web-student + mobile-student):** log in as one of the students, open History, confirm the engagement rows from the recording appear with correct `state` / `gesture` values
+- [ ] **Doctor (web-doctor + mobile-doctor):** open Analytics for that lecture, confirm engagement chart + sleep rate chart + gesture timeline all render
+- [ ] **Doctor (web-doctor + mobile-doctor):** open Messages, compose an email to the enrolled students, Send. Confirm the email arrives in the student inbox(es) within seconds **and** a new doc appears in the Firestore `notifications` collection. Try the same flow on `web-student` / `mobile-student` — the Messages screen simply doesn't exist in those apps. Try on `web-admin` / `mobile-admin` — same: it's not in the admin apps' screen list.
+- [ ] **Live transcript (while the lecture is running):** open StudentLiveLecture in `web-student` (or StudentLiveLectureScreen in `mobile-student`) as an enrolled student **while the Python app is still recording**. Speak in Arabic at the classroom mic; captions should appear on the student's screen within ~1–3 seconds per segment. Confirm new segments keep appearing in the `transcripts/{id}/segments` subcollection (watchable in the Emulator UI).
+- [ ] **Finalize chain:** after the Python classroom app quits, wait ~1–2 min and confirm:
   - [ ] Lecture status is `finished` and `audio_url` is populated
   - [ ] The `transcripts/{id}` doc has `completed: true` and segment count matches what appeared live
   - [ ] `report_pdf_url` is populated and opening it shows a PDF with the attendance table, engagement chart, and transcript excerpt
-- [ ] Doctor (web + mobile): open Analytics for that lecture. Verify the engagement heatmap cell for this lecture is colored, the transcript panel shows the segments, and clicking Export CSV / Export Excel downloads a file that opens correctly.
-- [ ] Student (web + mobile): open StudentDashboard. Verify the "You vs class average" card renders, and that StudentLectures lists the finished lecture with working links to the report PDF + transcript.
-- [ ] Confirm every page on web has a matching screen on mobile and vice versa — if anything is missing on one platform, add it before moving on
+- [ ] **Doctor (web-doctor + mobile-doctor):** open Analytics for that lecture. Verify the engagement heatmap cell for this lecture is colored, the transcript panel shows the segments, and clicking Export CSV / Export Excel downloads a file that opens correctly.
+- [ ] **Student (web-student + mobile-student):** open StudentDashboard. Verify the "You vs class average" card renders, and that StudentLectures lists the finished lecture with working links to the report PDF + transcript.
+- [ ] **Per-role parity audit:** walk through each role pair (student web ↔ student mobile; doctor web ↔ doctor mobile; admin web ↔ admin mobile) and confirm every screen has a counterpart. Do **not** compare across roles — each role is its own self-contained surface.
 
 ---
 
@@ -1187,18 +1344,28 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
 - [ ] **Flip off emulator mode:**
   - [ ] In `classroom-app-python/.env` — clear `FIRESTORE_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`, `FIREBASE_STORAGE_EMULATOR_HOST`, and set `FIREBASE_SERVICE_ACCOUNT_JSON` to the real key path
   - [ ] In `backend-r-plumber/.Renviron` — same three unsets + one set
-  - [ ] In `web-react/.env.production` — nothing to unset; the `import.meta.env.DEV` check in `firebase.js` already skips the emulator connectors in a prod build
-  - [ ] In `mobile-react-native` — same; `__DEV__` is `false` in EAS production builds
+  - [ ] In each of `web-student/.env.production`, `web-doctor/.env.production`, `web-admin/.env.production` — nothing to unset; the `import.meta.env.DEV` check in `firebase.js` already skips the emulator connectors in a prod build. Set `VITE_API_URL` + the cross-app link vars (`VITE_STUDENT_URL`, `VITE_DOCTOR_URL`, `VITE_ADMIN_URL`) to the deployed URLs so the role-mismatch banner can link out.
+  - [ ] In each of `mobile-student`, `mobile-doctor`, `mobile-admin` — same; `__DEV__` is `false` in EAS production builds
 - [ ] **Enable real Firebase services** in the console: Firestore (Production mode), Auth (Email/password + Google), Storage
 - [ ] **Deploy Firestore + Storage rules** from `firebase-emulator/` to the real project: `firebase deploy --only firestore:rules,storage`
 - [ ] **Generate the production service account key** (Project Settings → Service Accounts → Generate) and place at `firebase/serviceAccountKey.json`. Do NOT commit.
 - [ ] **Re-bootstrap the first admin** in the real project (create Auth user, add `admins` doc, add `users` doc) — emulator data does not migrate.
-- [ ] **R Plumber backend** → deploy to Railway or Render via a custom Dockerfile (base image `rocker/r-ver:4.3`, install system libs for `openssl`/`curl`, copy sources, `EXPOSE 8000`, run `Rscript run_api.R`). Shared hosting like shinyapps.io does **not** host Plumber — use Docker on any PaaS.
+- [ ] **R Plumber backend** → deploy to Railway or Render via a custom Dockerfile (base image `rocker/r-ver:4.3`, install system libs for `openssl`/`curl`, copy sources, `EXPOSE 8000`, run `Rscript run_api.R`). Shared hosting like shinyapps.io does **not** host Plumber — use Docker on any PaaS. **Update the CORS allowlist** (from Phase 3.6) to the three deployed web-app origins (e.g. `https://students.example.edu`, `https://doctors.example.edu`, `https://admin.example.edu`) before cutover.
 - [ ] **Python classroom app** → **not** a hosted service. Distribute it as a desktop executable: `pyinstaller --onefile capture_app.py`. Hand the resulting `.exe` plus `serviceAccountKey.json` + `.env` to whoever runs it on the classroom PC. For multiple classrooms, each machine gets its own copy.
-- [ ] **React web** → deploy to Vercel or Netlify
+- [ ] **React web — deploy all three apps as independent Vercel/Netlify projects**, one each for `web-student/`, `web-doctor/`, `web-admin/`. Give each its own domain:
+  - [ ] `students.<college>.edu` → web-student
+  - [ ] `doctors.<college>.edu` → web-doctor
+  - [ ] `admin.<college>.edu` → web-admin
+
+  Each deploy has its own build pipeline and its own `.env.production`. No shared monorepo build is required — the three apps are fully independent.
 - [ ] **Shiny dashboard** → deploy to shinyapps.io (free for 5 apps). Point its data loader at the deployed Plumber URL.
-- [ ] **React Native app** → build with EAS: `eas build --platform android` for an APK you can install
-- [ ] Update all frontend `.env` files with the deployed Plumber backend URL
+- [ ] **React Native — build all three apps independently with EAS**, each with a distinct bundle identifier (EAS will reject two apps sharing one):
+  - [ ] `mobile-student` → `edu.<college>.emotions.student`
+  - [ ] `mobile-doctor` → `edu.<college>.emotions.doctor`
+  - [ ] `mobile-admin` → `edu.<college>.emotions.admin`
+
+  Build command is `eas build --platform android` (or `ios`) run once per app. Each produces its own APK/IPA that the student, doctor, and admin install separately — they appear as three distinct icons on the device. If you later submit to stores, each gets its own store listing.
+- [ ] Update all six frontend `.env` files with the deployed Plumber backend URL and the sibling app URLs (so the role-mismatch banner on each app can show the user where to go).
 
 ---
 
@@ -1259,7 +1426,11 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
 - **Role checks live on the backend.** The frontend hiding a button is UX, not security. Every admin-only endpoint must re-verify `role == "admin"` server-side before touching Firestore.
 - **Don't let admins demote themselves.** Block deleting the last active admin, and block an admin from changing their own role — otherwise you can lock yourself out.
 - **Soft-delete, don't hard-delete.** Deleting a doctor or student should flip `active: false`, not wipe the row — their historical `emotions` data must stay intact for analytics.
-- **Web/mobile drift is the biggest risk** once you have three roles × two platforms. Keep a single shared API contract (the R Plumber endpoints) and add any new feature to both platforms in the same task, not "later."
+- **Six-app drift is the biggest risk** now that each role has its own web *and* its own mobile app. Keep the R Plumber endpoints as the single shared API contract. Parity is per-role pair (web-student ↔ mobile-student, etc.) — add any new feature to both sides of the pair in the same task, not "later." Do **not** try to enforce parity across roles — the whole point of the split is that each role's surface is independent.
+- **Six-app cross-references** — every place an instruction used to say "the web app" or "the mobile app," it now means "the specific role's app." When writing new instructions, name the exact app (e.g. `web-doctor`, `mobile-admin`) so no one has to guess which one you meant.
+- **Role-mismatch gate is UX, not security.** If someone patches `APP_ROLE` in devtools and signs in, the client will happily accept them — but every backend call with their real role's token will get 403s on endpoints that don't match. The real boundary is always server-side.
+- **Distinct bundle identifiers for the three mobile apps** (`edu.<college>.emotions.{student,doctor,admin}`). EAS / App Store / Play Store each refuse to host two apps with the same ID, so pick them up front in each app's `app.config.js` before the first EAS build.
+- **Pin each web app's Vite dev port** (5173 / 5174 / 5175). Without `strictPort: true` in `vite.config.js`, a port collision silently moves the dev server to the next free port, the R backend's CORS allowlist no longer matches, and you spend an hour debugging what looks like an auth bug.
 
 ---
 

@@ -36,6 +36,7 @@ _csv_lock = threading.Lock()
 _CSV_COLUMNS = [
     "student_id", "lecture_id", "timestamp", "emotion", "confidence",
     "state", "sleep_reason", "gesture", "engagement_score",
+    "yawning", "yawn_reason",
 ]
 
 
@@ -113,6 +114,7 @@ def _append_csv_rows(rows: List[Dict[str, Any]]) -> None:
 def save_observation(student_id: str, lecture_id: str, emotion: str,
                      confidence: float, state: str, sleep_reason: Optional[str],
                      gesture: str, engagement_score: float,
+                     yawning: bool = False, yawn_reason: Optional[str] = None,
                      timestamp: Optional[datetime] = None) -> None:
     """Buffer a single observation. Caller flushes every SAVE_INTERVAL_SECONDS."""
     row = {
@@ -125,6 +127,8 @@ def save_observation(student_id: str, lecture_id: str, emotion: str,
         "sleep_reason": sleep_reason,
         "gesture": gesture,
         "engagement_score": float(engagement_score),
+        "yawning": bool(yawning),
+        "yawn_reason": yawn_reason,
     }
     with _buf_lock:
         _buffer.append(row)

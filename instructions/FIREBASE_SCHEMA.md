@@ -157,7 +157,7 @@ Audit log of emails sent doctor → students via **Brevo** (transactional email)
 ### `emotions`
 **Only the Python classroom app writes this collection** (via the Firebase service account). Every other actor reads only.
 
-The collection name is historical — it records **emotion + sleep state + hand gesture** per observation, since all three are computed from the same frame and tied to the same student/lecture/timestamp.
+The collection name is historical — it records **emotion + sleep state + hand gesture + yawn** per observation, since all are computed from the same frame and tied to the same student/lecture/timestamp.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -170,9 +170,11 @@ The collection name is historical — it records **emotion + sleep state + hand 
 | `state` | enum | `"awake"` \| `"sleeping"` — derived from MediaPipe Face Mesh (eye-closure + head pose) |
 | `sleep_reason` | enum / null | `null` when `state == "awake"`; otherwise `"head_down"` \| `"eyes_closed"` \| `"both"` |
 | `gesture` | enum | `"none"` \| `"hand_raised"` \| `"toilet_request"` \| `"thumbs_up"` \| `"thumbs_down"` \| `"pointing"` \| (extensible — the Python gesture registry can add more) |
-| `engagement_score` | float | Computed by the Python app from `emotion + state + gesture`. If `state == "sleeping"` the score is `0`. `hand_raised` adds `+0.2`. Mirrors the R-side `engagement_score()`. |
+| `engagement_score` | float | Computed by the Python app from `emotion + state + gesture`. If `state == "sleeping"` the score is `0`. `hand_raised` adds `+0.2`. Mirrors the R-side `engagement_score()`. Yawning does **not** currently feed into the score — it's a separate dimension. |
+| `yawning` | boolean | `true` when the MAR-based wide-open-mouth signal OR the hand-over-mouth signal has been sustained long enough to classify as a yawn. Co-occurs freely with `state == "awake"` or `"sleeping"`. |
+| `yawn_reason` | enum / null | `null` when `yawning == false`; otherwise `"mouth_open"` (visible wide yawn) \| `"hand_covered"` (polite yawn, hand over mouth) \| `"both"` (both signals tripped). |
 
-`emotion`, `state`, and `gesture` are **independent dimensions** — a sleeping student can still have a facial expression, and a gesture can co-occur with either awake or sleeping. Don't collapse them.
+`emotion`, `state`, `gesture`, and `yawning` are **independent dimensions** — a sleeping student can still have a facial expression, a gesture can co-occur with either awake or sleeping, and a yawn can co-occur with any of them. Don't collapse them.
 
 ---
 
@@ -280,7 +282,7 @@ See `PROJECT_INSTRUCTIONS.md` Phase 1 for the full requirements. Key points:
 - Only admins write to `students`, `doctors`, `admins`
 - Doctors write to `lectures` they own — match via `users.linked_id`, not `request.auth.uid` directly (because `doctors.doctor_id ≠ uid`)
 - Students can read only their enrolled `lectures` and their own `emotions` rows
-- **Nobody** except the service account writes to `emotions` — that path is the Python classroom app's exclusive territory (covers emotion + sleep state + gesture writes, since they share the row)
+- **Nobody** except the service account writes to `emotions` — that path is the Python classroom app's exclusive territory (covers emotion + sleep state + gesture + yawn writes, since they share the row)
 - **Nobody** except the service account writes to `notifications`; the R Plumber backend is the only writer and only after verifying the caller is a doctor who owns the target lecture
 - Service-account-backed code (R Plumber backend, Python classroom app) bypasses these rules — **re-enforce the role check in application code**
 - Storage: `students/{id}/face.jpg` and `doctors/{id}/face.jpg` are writable only by admins; readable by any authenticated user
@@ -378,7 +380,9 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
   "state": "awake",
   "sleep_reason": null,
   "gesture": "hand_raised",
-  "engagement_score": 0.8
+  "engagement_score": 0.8,
+  "yawning": false,
+  "yawn_reason": null
 }
 ```
 
@@ -393,7 +397,9 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
   "state": "sleeping",
   "sleep_reason": "both",
   "gesture": "none",
-  "engagement_score": 0.0
+  "engagement_score": 0.0,
+  "yawning": false,
+  "yawn_reason": null
 }
 ```
 
@@ -408,7 +414,26 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
   "state": "awake",
   "sleep_reason": null,
   "gesture": "toilet_request",
-  "engagement_score": 0.6
+  "engagement_score": 0.6,
+  "yawning": false,
+  "yawn_reason": null
+}
+```
+
+**emotions/<auto-id>** — awake but yawning with a hand over the mouth (polite yawn; note `gesture == "none"` because the yawn-covering hand is filtered out of gesture classification)
+```json
+{
+  "student_id": "stu_045",
+  "lecture_id": "lec_991",
+  "timestamp": "2026-04-22T09:42:18Z",
+  "emotion": "neutral",
+  "confidence": 0.71,
+  "state": "awake",
+  "sleep_reason": null,
+  "gesture": "none",
+  "engagement_score": 0.6,
+  "yawning": true,
+  "yawn_reason": "hand_covered"
 }
 ```
 

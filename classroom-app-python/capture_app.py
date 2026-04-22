@@ -27,6 +27,9 @@ Quit with 'q' in the OpenCV window.
 import os
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+# Windows OpenMP-runtime collision: torch + MKL-linked numpy/ctranslate2 each
+# ship their own libiomp5md.dll. Intel's documented workaround.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import logging, warnings
 logging.getLogger("tensorflow").setLevel(logging.ERROR)
 logging.getLogger("absl").setLevel(logging.ERROR)
@@ -59,6 +62,7 @@ from gesture_detector import (
 from audio_recorder import AudioRecorder
 from stream_transcribe import StreamTranscriber
 from phone_detector import detect_phones, hand_on_phone, phone_near_face
+from yawn_detector import YawnHistory, classify_yawn, hand_over_mouth
 
 
 _LINE_H = 18
@@ -143,10 +147,11 @@ def _draw_stack(frame, box, lines, color) -> None:
 
 class FaceTrack:
     __slots__ = (
-        "track_id", "box", "student_id",
-        "sleep_hist", "gesture_hist",
+        "track_id", "box", "student_id", "name",
+        "sleep_hist", "gesture_hist", "yawn_hist",
         "last_emotion", "last_conf",
         "last_state", "last_reason", "last_gesture", "last_score",
+        "last_yawning", "last_yawn_reason",
         "on_phone", "missed_frames",
     )
 
@@ -154,14 +159,18 @@ class FaceTrack:
         self.track_id = track_id
         self.box = box
         self.student_id = "unknown"
+        self.name = "unknown"
         self.sleep_hist = SleepHistory()
         self.gesture_hist = GestureHistory()
+        self.yawn_hist = YawnHistory()
         self.last_emotion = "neutral"
         self.last_conf = 0.0
         self.last_state = "awake"
         self.last_reason: Optional[str] = None
         self.last_gesture = "none"
         self.last_score = 0.0
+        self.last_yawning = False
+        self.last_yawn_reason: Optional[str] = None
         self.on_phone = False
         self.missed_frames = 0
 
@@ -174,7 +183,7 @@ def main() -> int:
     print(f"\nRecording lecture: {lecture_id} — {lecture_doc.get('title')}")
     firebase_writer.set_lecture_status(lecture_id, "recording")
 
-    enrolled = face_id.load_enrolled_encodings(db, lecture_id)
+    enrolled, names = face_id.load_enrolled_encodings(db, lecture_id)
     print(f"Loaded {len(enrolled)} enrolled face encoding(s).")
 
     mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
@@ -256,7 +265,9 @@ def main() -> int:
                 else:
                     tracks[tid].missed_frames = 0
 
-            # EMA-smooth per-track box + run sleep on every matched track.
+            # EMA-smooth per-track box + run sleep + yawn on every matched track.
+            all_hands = hand_res.multi_hand_landmarks or []
+            mouth_boxes: Dict[int, Tuple[int, int, int, int]] = {}
             for mi, tid in matched.items():
                 tr = tracks[tid]
                 tr.box = _ema_box(raw_boxes[mi], tr.box)
@@ -264,6 +275,12 @@ def main() -> int:
                 state, reason = classify_sleep(lm, (w, h), tr.sleep_hist)
                 tr.last_state = state
                 tr.last_reason = reason
+                yawning, y_reason, mbox = classify_yawn(
+                    lm, (w, h), all_hands, tr.yawn_hist,
+                )
+                tr.last_yawning = yawning
+                tr.last_yawn_reason = y_reason
+                mouth_boxes[tid] = mbox
 
             # Hand attribution (every frame) + gesture classification.
             face_centers: List[Tuple[float, float]] = []
@@ -273,16 +290,19 @@ def main() -> int:
                 face_centers.append(((l + r) / 2.0, (t + b) / 2.0))
                 tids_in_order.append(tid)
 
-            # Filter out hands occupied by a phone — a hand holding a phone
-            # can't simultaneously hand_raise / thumbs_up / etc.
+            # Filter out hands occupied by a phone or covering any face's mouth —
+            # a hand holding a phone / covering a yawning mouth can't
+            # simultaneously hand_raise / thumbs_up / etc.
             free_hands: List = []
             free_hand_centers: List[Tuple[float, float]] = []
-            if hand_res.multi_hand_landmarks:
-                for hl in hand_res.multi_hand_landmarks:
-                    if hand_on_phone(hl, last_phone_boxes, w, h):
-                        continue
-                    free_hands.append(hl)
-                    free_hand_centers.append((hl.landmark[0].x * w, hl.landmark[0].y * h))
+            mouth_box_list = list(mouth_boxes.values())
+            for hl in all_hands:
+                if hand_on_phone(hl, last_phone_boxes, w, h):
+                    continue
+                if any(hand_over_mouth(hl, mbox, w, h) for mbox in mouth_box_list):
+                    continue
+                free_hands.append(hl)
+                free_hand_centers.append((hl.landmark[0].x * w, hl.landmark[0].y * h))
             hand_attr = assign_hand_to_face(free_hand_centers, face_centers)
 
             for face_idx, hand_idx in hand_attr.items():
@@ -307,7 +327,9 @@ def main() -> int:
                             best_iou = iou
                             best_tid = tid
                     if best_tid is not None:
-                        tracks[best_tid].student_id = det["student_id"]
+                        sid = det["student_id"]
+                        tracks[best_tid].student_id = sid
+                        tracks[best_tid].name = names.get(sid, sid)
 
                 phones = detect_phones(frame)
                 last_phone_boxes = [p["box"] for p in phones]
@@ -335,12 +357,16 @@ def main() -> int:
                             sleep_reason=tr.last_reason,
                             gesture=tr.last_gesture,
                             engagement_score=tr.last_score,
+                            yawning=tr.last_yawning,
+                            yawn_reason=tr.last_yawn_reason,
                         )
 
             # ---- Draw everything ----
             for tid, tr in tracks.items():
                 if tr.last_state == "sleeping":
                     color = (0, 0, 255)
+                elif tr.last_yawning:
+                    color = (0, 165, 255)  # amber
                 elif tr.last_gesture == "hand_raised":
                     color = (255, 0, 0)
                 else:
@@ -349,12 +375,21 @@ def main() -> int:
                 if tr.last_state == "sleeping" and tr.last_reason:
                     state_line += f" ({tr.last_reason})"
                 lines = [
-                    f"student: {tr.student_id}",
+                    f"student: {tr.name}",
                     f"emotion: {tr.last_emotion} ({tr.last_conf:.2f})",
                     state_line,
                     f"gesture: {tr.last_gesture}",
                     f"score: {tr.last_score:.2f}",
                 ]
+                if tr.last_yawning:
+                    tag = "yawning"
+                    if tr.last_yawn_reason == "hand_covered":
+                        tag = "yawning (hand)"
+                    elif tr.last_yawn_reason == "both":
+                        tag = "yawning (hand+mouth)"
+                    elif tr.last_yawn_reason == "mouth_open":
+                        tag = "yawning (mouth)"
+                    lines.insert(0, tag)
                 if tr.on_phone:
                     lines.insert(0, "!! ON PHONE !!")
                 _draw_stack(frame, tr.box, lines, color)

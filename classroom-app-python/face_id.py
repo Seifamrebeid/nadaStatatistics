@@ -6,17 +6,18 @@ startup, then on each processed frame returns the list of detected faces along
 with the best-matching student_id (or "unknown").
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import face_recognition
 import numpy as np
 
 
-def load_enrolled_encodings(db, lecture_id: str) -> Dict[str, np.ndarray]:
-    """Return {student_id: np.ndarray(128)} for everyone enrolled in the lecture.
+def load_enrolled_encodings(db, lecture_id: str) -> Tuple[Dict[str, np.ndarray], Dict[str, str]]:
+    """Return ({student_id: encoding}, {student_id: name}) for the lecture's roster.
 
     Students without a face_encoding are skipped (they are invisible to the
     classroom app until admin uploads a photo — documented on the admin UI).
+    Students without a `name` field fall back to their student_id.
     """
     lecture_ref = db.collection("lectures").document(lecture_id).get()
     if not lecture_ref.exists:
@@ -24,6 +25,7 @@ def load_enrolled_encodings(db, lecture_id: str) -> Dict[str, np.ndarray]:
     enrolled_ids = lecture_ref.to_dict().get("enrolled_student_ids", [])
 
     encodings: Dict[str, np.ndarray] = {}
+    names: Dict[str, str] = {}
     for sid in enrolled_ids:
         snap = db.collection("students").document(sid).get()
         if not snap.exists:
@@ -32,7 +34,8 @@ def load_enrolled_encodings(db, lecture_id: str) -> Dict[str, np.ndarray]:
         enc = data.get("face_encoding")
         if enc:
             encodings[sid] = np.asarray(enc, dtype=np.float64)
-    return encodings
+            names[sid] = data.get("name") or sid
+    return encodings, names
 
 
 def detect_and_identify(frame, enrolled: Dict[str, np.ndarray],

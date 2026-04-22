@@ -1,0 +1,118 @@
+---
+title: "Lecture Report"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: readable
+  pdf_document:
+    toc: true
+params:
+  lecture_id: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(lubridate)
+  library(knitr)
+})
+
+# These helpers live in backend-r-plumber/R. The working dir on render is the
+# Rmd's folder (reports/), so step up one level.
+source("../R/config.R")
+source("../R/firestore.R")
+source("../R/helpers.R")
+source("../R/engagement.R")
+
+lecture_id <- params$lecture_id
+lec_doc <- tryCatch(fs_get(sprintf("lectures/%s", lecture_id)), error = function(e) NULL)
+lec <- if (is.null(lec_doc)) list() else fs_unwrap_fields(lec_doc$fields)
+
+# Pull all emotions rows for this lecture.
+all_docs <- fs_list("emotions")
+rows <- lapply(all_docs, function(d) fs_unwrap_fields(d$fields))
+df <- if (length(rows) == 0) {
+  data.frame()
+} else {
+  bind_rows(lapply(rows, function(r) {
+    atomic <- r[vapply(r, function(v) is.null(v) || (is.atomic(v) && length(v) <= 1), logical(1))]
+    atomic[vapply(atomic, is.null, logical(1))] <- NA
+    as.data.frame(atomic, stringsAsFactors = FALSE)
+  }))
+}
+if (nrow(df) > 0) {
+  df <- df |> filter(lecture_id == !!lecture_id) |>
+    mutate(timestamp = lubridate::as_datetime(timestamp),
+           engagement_score = as.numeric(engagement_score))
+}
+```
+
+## Cover
+
+- **Lecture:** `r lec$title %||% lecture_id`
+- **Doctor:** `r lec$doctor_id %||% 'unknown'`
+- **Status:** `r lec$status %||% 'unknown'`
+- **Finalized at:** `r lec$finalized_at %||% 'pending'`
+- **Observations captured:** `r nrow(df)`
+- **Students seen:** `r if (nrow(df) > 0) length(unique(df$student_id)) else 0`
+
+```{r attendance, results = "asis"}
+if (nrow(df) > 0) {
+  att <- df |>
+    group_by(student_id) |>
+    summarise(observations = n(),
+              first_seen = min(timestamp),
+              last_seen  = max(timestamp),
+              mean_engagement = round(mean(engagement_score, na.rm = TRUE), 2),
+              .groups = "drop")
+  cat("## Attendance\n\n")
+  print(knitr::kable(att))
+} else {
+  cat("## Attendance\n\n*(no observations yet)*\n")
+}
+```
+
+```{r engagement_chart, fig.width = 8, fig.height = 3.5}
+if (nrow(df) > 0) {
+  buckets <- df |>
+    mutate(bucket = lubridate::floor_date(timestamp, "30 seconds")) |>
+    group_by(bucket) |>
+    summarise(engagement = mean(engagement_score, na.rm = TRUE), .groups = "drop")
+  ggplot(buckets, aes(x = bucket, y = engagement)) +
+    geom_line(colour = "#2a7ae2", linewidth = 0.8) +
+    geom_point(colour = "#2a7ae2") +
+    labs(title = "Engagement over time (30-sec buckets)",
+         x = "time", y = "mean engagement") +
+    theme_minimal(base_size = 11)
+}
+```
+
+```{r emotion_chart, fig.width = 7, fig.height = 3.5}
+if (nrow(df) > 0) {
+  df |>
+    count(emotion, sort = TRUE) |>
+    ggplot(aes(x = reorder(emotion, -n), y = n, fill = emotion)) +
+    geom_col(show.legend = FALSE) +
+    labs(title = "Emotion distribution", x = NULL, y = "observations") +
+    theme_minimal(base_size = 11)
+}
+```
+
+```{r sleep_and_gestures}
+if (nrow(df) > 0 && "state" %in% names(df)) {
+  sleep_rate <- mean(df$state == "sleeping", na.rm = TRUE)
+  cat(sprintf("## Sleep rate\n\n**%.1f%%** of observations were flagged as sleeping.\n",
+              sleep_rate * 100))
+}
+if (nrow(df) > 0 && "gesture" %in% names(df)) {
+  g <- df |> filter(!gesture %in% c("none", NA)) |>
+    select(timestamp, student_id, gesture)
+  if (nrow(g) > 0) {
+    cat("## Gesture log\n\n")
+    print(knitr::kable(g))
+  }
+}
+```

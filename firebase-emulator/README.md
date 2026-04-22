@@ -13,12 +13,16 @@ Local emulators for Auth, Firestore, and Storage. Everything in dev runs against
 
 ## Project ID
 
-`.firebaserc` is set to `emotion-detection-dev` as a placeholder. **When you create the real Firebase project, replace this value in:**
+`.firebaserc` is set to `emotion-detection-dev` as a placeholder. **When you create the real Firebase project, replace this value in every file below.** All six frontend apps use the same Firebase project, so each of their config files ends up with the same `projectId`:
 - `.firebaserc`
 - `classroom-app-python/.env` (`FIREBASE_PROJECT_ID`)
 - `backend-r-plumber/.Renviron` (`FIREBASE_PROJECT_ID`)
-- `web-react/src/firebase.js` (`firebaseConfig.projectId`)
-- `mobile-react-native/firebaseConfig.js` (`firebaseConfig.projectId`)
+- `web-student/src/firebase.js` (`firebaseConfig.projectId`)
+- `web-doctor/src/firebase.js` (`firebaseConfig.projectId`)
+- `web-admin/src/firebase.js` (`firebaseConfig.projectId`)
+- `mobile-student/firebaseConfig.js` (`firebaseConfig.projectId`)
+- `mobile-doctor/firebaseConfig.js` (`firebaseConfig.projectId`)
+- `mobile-admin/firebaseConfig.js` (`firebaseConfig.projectId`)
 
 The emulator accepts any project id, so the placeholder works for dev; the value only matters when you cut over to a real project.
 

@@ -18,6 +18,9 @@ Quit with 'q'.
 import os
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+# Windows OpenMP-runtime collision: torch + MKL-linked numpy/ctranslate2 each
+# ship their own libiomp5md.dll. Intel's documented workaround.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import logging, warnings
 logging.getLogger("tensorflow").setLevel(logging.ERROR)
 logging.getLogger("absl").setLevel(logging.ERROR)
