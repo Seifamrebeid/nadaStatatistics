@@ -64,6 +64,10 @@ def init_firebase():
         return _db
 
     project_id = _project_id()
+    # Python's storage client expects STORAGE_EMULATOR_HOST; keep support for
+    # FIREBASE_STORAGE_EMULATOR_HOST used elsewhere in this repo.
+    if os.getenv("FIREBASE_STORAGE_EMULATOR_HOST") and not os.getenv("STORAGE_EMULATOR_HOST"):
+        os.environ["STORAGE_EMULATOR_HOST"] = os.getenv("FIREBASE_STORAGE_EMULATOR_HOST", "")
     if os.getenv("FIRESTORE_EMULATOR_HOST"):
         cred = _EmulatorCredential()
     else:

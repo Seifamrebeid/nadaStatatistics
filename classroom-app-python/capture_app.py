@@ -37,22 +37,22 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="google.*")
 
+import importlib
 import sys
 import time
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2
-import mediapipe as mp
 import numpy as np
 import requests
 from dotenv import load_dotenv
-from google.cloud.firestore_v1.base_query import FieldFilter
 
 import firebase_writer
 import face_id
 import emotion as emotion_mod
 from engagement import engagement_score
-from sleep_detector import SleepHistory, classify_sleep
+from sleep_detector import SleepHistory, classify_sleep, init_face_mesh, init_face_mesh
 from gesture_detector import (
     GestureHistory,
     assign_hand_to_face,
@@ -60,9 +60,37 @@ from gesture_detector import (
     init_hands,
 )
 from audio_recorder import AudioRecorder
-from stream_transcribe import StreamTranscriber
-from phone_detector import detect_phones, hand_on_phone, phone_near_face
+# Optional dependency path: if faster-whisper/av is unavailable, keep
+# capture running without live transcription instead of crashing on import.
+try:
+    from stream_transcribe import StreamTranscriber
+except Exception:
+    class StreamTranscriber:  # type: ignore[override]
+        def start(self, lecture_id):
+            print("stream_transcribe unavailable; continuing without transcript.")
+
+        def feed(self, chunk):
+            return None
+
+        def stop(self):
+            return None
+try:
+    from phone_detector import detect_phones, hand_on_phone, phone_near_face
+except Exception:
+    def detect_phones(frame):
+        return []
+
+    def hand_on_phone(hand_landmarks, phone_boxes, w, h):
+        return False
+
+    def phone_near_face(phone_box, face_box):
+        return False
 from yawn_detector import YawnHistory, classify_yawn, hand_over_mouth
+
+try:
+    mp = importlib.import_module("mediapipe")
+except Exception:
+    mp = None
 
 
 _LINE_H = 18
@@ -75,7 +103,7 @@ _MAX_MISSED_FRAMES = 15    # drop a track after this many frames with no mesh ma
 def _pick_lecture(db) -> Tuple[str, dict]:
     lectures = list(
         db.collection("lectures")
-        .where(filter=FieldFilter("status", "in", ["scheduled", "recording"]))
+        .where("status", "in", ["scheduled", "recording"])
         .stream()
     )
     if not lectures:
@@ -176,8 +204,10 @@ class FaceTrack:
 
 
 def main() -> int:
-    load_dotenv()
+    load_dotenv(Path(__file__).with_name(".env"))
     db = firebase_writer.init_firebase()
+
+    use_mediapipe = bool(mp and getattr(mp, "solutions", None))
 
     lecture_id, lecture_doc = _pick_lecture(db)
     print(f"\nRecording lecture: {lecture_id} — {lecture_doc.get('title')}")
@@ -186,14 +216,13 @@ def main() -> int:
     enrolled, names = face_id.load_enrolled_encodings(db, lecture_id)
     print(f"Loaded {len(enrolled)} enrolled face encoding(s).")
 
-    mp_face_mesh = mp.solutions.face_mesh.FaceMesh(
-        static_image_mode=False,
-        max_num_faces=8,
-        refine_landmarks=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    )
-    mp_hands = init_hands(max_num_hands=8)
+    try:
+        mp_face_mesh = init_face_mesh(max_num_faces=8)
+        mp_hands = init_hands(max_num_hands=8)
+    except Exception as e:
+        print(f"MediaPipe init failed ({e}); running face ID + emotion only.")
+        mp_face_mesh = None
+        mp_hands = None
 
     recorder = AudioRecorder()
     transcriber = StreamTranscriber()
@@ -231,122 +260,137 @@ def main() -> int:
             h, w = frame.shape[:2]
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            mesh_res = mp_face_mesh.process(rgb)
-            hand_res = mp_hands.process(rgb)
+            if mp_face_mesh is not None and mp_hands is not None:
+                mesh_res = mp_face_mesh.process(rgb)
+                hand_res = mp_hands.process(rgb)
 
-            # ---- Every frame: match mesh faces to tracks ----
-            mesh_faces = mesh_res.multi_face_landmarks or []
-            raw_boxes = [_landmarks_bbox(f.landmark, w, h) for f in mesh_faces]
+                # ---- Every frame: match mesh faces to tracks ----
+                mesh_faces = mesh_res.multi_face_landmarks or []
+                raw_boxes = [_landmarks_bbox(f.landmark, w, h) for f in mesh_faces]
 
-            matched: Dict[int, int] = {}  # mesh_idx -> track_id
-            used_tids: set = set()
-            for mi, rbox in enumerate(raw_boxes):
-                best_tid, best_iou = None, _MIN_IOU_MATCH
-                for tid, tr in tracks.items():
-                    if tid in used_tids:
-                        continue
-                    iou = _iou(rbox, tr.box)
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_tid = tid
-                if best_tid is None:
-                    best_tid = next_track_id
-                    next_track_id += 1
-                    tracks[best_tid] = FaceTrack(best_tid, rbox)
-                matched[mi] = best_tid
-                used_tids.add(best_tid)
-
-            # Decay unmatched tracks.
-            for tid in list(tracks.keys()):
-                if tid not in used_tids:
-                    tracks[tid].missed_frames += 1
-                    if tracks[tid].missed_frames > _MAX_MISSED_FRAMES:
-                        del tracks[tid]
-                else:
-                    tracks[tid].missed_frames = 0
-
-            # EMA-smooth per-track box + run sleep + yawn on every matched track.
-            all_hands = hand_res.multi_hand_landmarks or []
-            mouth_boxes: Dict[int, Tuple[int, int, int, int]] = {}
-            for mi, tid in matched.items():
-                tr = tracks[tid]
-                tr.box = _ema_box(raw_boxes[mi], tr.box)
-                lm = mesh_faces[mi].landmark
-                state, reason = classify_sleep(lm, (w, h), tr.sleep_hist)
-                tr.last_state = state
-                tr.last_reason = reason
-                yawning, y_reason, mbox = classify_yawn(
-                    lm, (w, h), all_hands, tr.yawn_hist,
-                )
-                tr.last_yawning = yawning
-                tr.last_yawn_reason = y_reason
-                mouth_boxes[tid] = mbox
-
-            # Hand attribution (every frame) + gesture classification.
-            face_centers: List[Tuple[float, float]] = []
-            tids_in_order: List[int] = []
-            for mi, tid in matched.items():
-                t, r, b, l = tracks[tid].box
-                face_centers.append(((l + r) / 2.0, (t + b) / 2.0))
-                tids_in_order.append(tid)
-
-            # Filter out hands occupied by a phone or covering any face's mouth —
-            # a hand holding a phone / covering a yawning mouth can't
-            # simultaneously hand_raise / thumbs_up / etc.
-            free_hands: List = []
-            free_hand_centers: List[Tuple[float, float]] = []
-            mouth_box_list = list(mouth_boxes.values())
-            for hl in all_hands:
-                if hand_on_phone(hl, last_phone_boxes, w, h):
-                    continue
-                if any(hand_over_mouth(hl, mbox, w, h) for mbox in mouth_box_list):
-                    continue
-                free_hands.append(hl)
-                free_hand_centers.append((hl.landmark[0].x * w, hl.landmark[0].y * h))
-            hand_attr = assign_hand_to_face(free_hand_centers, face_centers)
-
-            for face_idx, hand_idx in hand_attr.items():
-                tid = tids_in_order[face_idx]
-                tr = tracks[tid]
-                raw_g = "none"
-                if hand_idx is not None:
-                    raw_g = classify_gesture(
-                        free_hands[hand_idx],
-                        face_ref=face_centers[face_idx],
-                    )
-                tr.last_gesture = tr.gesture_hist.push(raw_g)
-
-            # ---- Heavy path: identify + emotion + phone + save_observation ----
-            if frame_idx % process_every_n == 0:
-                detections = face_id.detect_and_identify(rgb, enrolled, tolerance=tolerance)
-                for det in detections:
-                    best_tid, best_iou = None, _MIN_IOU_ID_MATCH
+                matched: Dict[int, int] = {}  # mesh_idx -> track_id
+                used_tids: set = set()
+                for mi, rbox in enumerate(raw_boxes):
+                    best_tid, best_iou = None, _MIN_IOU_MATCH
                     for tid, tr in tracks.items():
-                        iou = _iou(det["box"], tr.box)
+                        if tid in used_tids:
+                            continue
+                        iou = _iou(rbox, tr.box)
                         if iou > best_iou:
                             best_iou = iou
                             best_tid = tid
-                    if best_tid is not None:
-                        sid = det["student_id"]
-                        tracks[best_tid].student_id = sid
-                        tracks[best_tid].name = names.get(sid, sid)
+                    if best_tid is None:
+                        best_tid = next_track_id
+                        next_track_id += 1
+                        tracks[best_tid] = FaceTrack(best_tid, rbox)
+                    matched[mi] = best_tid
+                    used_tids.add(best_tid)
 
-                phones = detect_phones(frame)
-                last_phone_boxes = [p["box"] for p in phones]
+                # Decay unmatched tracks.
+                for tid in list(tracks.keys()):
+                    if tid not in used_tids:
+                        tracks[tid].missed_frames += 1
+                        if tracks[tid].missed_frames > _MAX_MISSED_FRAMES:
+                            del tracks[tid]
+                    else:
+                        tracks[tid].missed_frames = 0
 
-                for tid, tr in tracks.items():
+                # EMA-smooth per-track box + run sleep + yawn on every matched track.
+                all_hands = hand_res.multi_hand_landmarks or []
+                mouth_boxes: Dict[int, Tuple[int, int, int, int]] = {}
+                for mi, tid in matched.items():
+                    tr = tracks[tid]
+                    tr.box = _ema_box(raw_boxes[mi], tr.box)
+                    lm = mesh_faces[mi].landmark
+                    state, reason = classify_sleep(lm, (w, h), tr.sleep_hist)
+                    tr.last_state = state
+                    tr.last_reason = reason
+                    yawning, y_reason, mbox = classify_yawn(
+                        lm, (w, h), all_hands, tr.yawn_hist,
+                    )
+                    tr.last_yawning = yawning
+                    tr.last_yawn_reason = y_reason
+                    mouth_boxes[tid] = mbox
+
+                # Hand attribution (every frame) + gesture classification.
+                face_centers: List[Tuple[float, float]] = []
+                tids_in_order: List[int] = []
+                for mi, tid in matched.items():
+                    t, r, b, l = tracks[tid].box
+                    face_centers.append(((l + r) / 2.0, (t + b) / 2.0))
+                    tids_in_order.append(tid)
+
+                # Filter out hands occupied by a phone or covering any face's mouth —
+                # a hand holding a phone / covering a yawning mouth can't
+                # simultaneously hand_raise / thumbs_up / etc.
+                free_hands: List = []
+                free_hand_centers: List[Tuple[float, float]] = []
+                mouth_box_list = list(mouth_boxes.values())
+                for hl in all_hands:
+                    if hand_on_phone(hl, last_phone_boxes, w, h):
+                        continue
+                    if any(hand_over_mouth(hl, mbox, w, h) for mbox in mouth_box_list):
+                        continue
+                    free_hands.append(hl)
+                    free_hand_centers.append((hl.landmark[0].x * w, hl.landmark[0].y * h))
+                hand_attr = assign_hand_to_face(free_hand_centers, face_centers)
+
+                for face_idx, hand_idx in hand_attr.items():
+                    tid = tids_in_order[face_idx]
+                    tr = tracks[tid]
+                    raw_g = "none"
+                    if hand_idx is not None:
+                        raw_g = classify_gesture(
+                            free_hands[hand_idx],
+                            face_ref=face_centers[face_idx],
+                        )
+                    tr.last_gesture = tr.gesture_hist.push(raw_g)
+            else:
+                detections = face_id.detect_and_identify(rgb, enrolled, tolerance=tolerance)
+                matched: Dict[int, int] = {}
+                used_tids: set = set()
+                for di, det in enumerate(detections):
+                    rbox = det["box"]
+                    best_tid, best_iou = None, _MIN_IOU_MATCH
+                    for tid, tr in tracks.items():
+                        if tid in used_tids:
+                            continue
+                        iou = _iou(rbox, tr.box)
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_tid = tid
+                    if best_tid is None:
+                        best_tid = next_track_id
+                        next_track_id += 1
+                        tracks[best_tid] = FaceTrack(best_tid, rbox)
+                    tracks[best_tid].box = rbox
+                    tracks[best_tid].missed_frames = 0
+                    matched[di] = best_tid
+                    used_tids.add(best_tid)
+
+                for tid in list(tracks.keys()):
+                    if tid not in used_tids:
+                        tracks[tid].missed_frames += 1
+                        if tracks[tid].missed_frames > _MAX_MISSED_FRAMES:
+                            del tracks[tid]
+
+                for di, tid in matched.items():
+                    tr = tracks[tid]
+                    sid = detections[di]["student_id"]
+                    tr.student_id = sid
+                    tr.name = names.get(sid, sid)
                     top, right, bottom, left = tr.box
                     face_rect = (left, top, right - left, bottom - top)
                     emo = emotion_mod.detect_emotion(frame, face_rect=face_rect)
                     tr.last_emotion = emo["emotion"]
                     tr.last_conf = emo["confidence"]
+                    tr.last_state = "awake"
+                    tr.last_reason = None
+                    tr.last_gesture = "none"
+                    tr.last_yawning = False
+                    tr.last_yawn_reason = None
                     tr.on_phone = any(phone_near_face(pb, tr.box) for pb in last_phone_boxes)
-                    tr.last_score = engagement_score(
-                        tr.last_emotion, tr.last_state, tr.last_gesture,
-                    )
-                    # Skip persisting observations for unidentified tracks —
-                    # otherwise the emotions collection floods with "unknown"
-                    # rows while enrollments are being set up.
+                    tr.last_score = engagement_score(tr.last_emotion, tr.last_state, tr.last_gesture)
                     if tr.student_id != "unknown":
                         firebase_writer.save_observation(
                             student_id=tr.student_id,
@@ -360,6 +404,39 @@ def main() -> int:
                             yawning=tr.last_yawning,
                             yawn_reason=tr.last_yawn_reason,
                         )
+
+            # ---- Heavy path: identify + emotion + phone + save_observation ----
+            if frame_idx % process_every_n == 0:
+                if mp_face_mesh is not None and mp_hands is not None:
+                    phones = detect_phones(frame)
+                    last_phone_boxes = [p["box"] for p in phones]
+
+                    for tid, tr in tracks.items():
+                        top, right, bottom, left = tr.box
+                        face_rect = (left, top, right - left, bottom - top)
+                        emo = emotion_mod.detect_emotion(frame, face_rect=face_rect)
+                        tr.last_emotion = emo["emotion"]
+                        tr.last_conf = emo["confidence"]
+                        tr.on_phone = any(phone_near_face(pb, tr.box) for pb in last_phone_boxes)
+                        tr.last_score = engagement_score(
+                            tr.last_emotion, tr.last_state, tr.last_gesture,
+                        )
+                        # Skip persisting observations for unidentified tracks —
+                        # otherwise the emotions collection floods with "unknown"
+                        # rows while enrollments are being set up.
+                        if tr.student_id != "unknown":
+                            firebase_writer.save_observation(
+                                student_id=tr.student_id,
+                                lecture_id=lecture_id,
+                                emotion=tr.last_emotion,
+                                confidence=tr.last_conf,
+                                state=tr.last_state,
+                                sleep_reason=tr.last_reason,
+                                gesture=tr.last_gesture,
+                                engagement_score=tr.last_score,
+                                yawning=tr.last_yawning,
+                                yawn_reason=tr.last_yawn_reason,
+                            )
 
             # ---- Draw everything ----
             for tid, tr in tracks.items():
@@ -421,8 +498,10 @@ def main() -> int:
         try:
             cap.release()
             cv2.destroyAllWindows()
-            mp_face_mesh.close()
-            mp_hands.close()
+            if mp_face_mesh is not None:
+                mp_face_mesh.close()
+            if mp_hands is not None:
+                mp_hands.close()
         except Exception:
             pass
 

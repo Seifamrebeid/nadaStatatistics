@@ -16,9 +16,14 @@ Thresholds come from environment variables (see `.env.example`). The public
 
 import math
 import os
+import time
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional, Tuple
+from urllib.request import urlretrieve
 
 import cv2
+import mediapipe as mp
 import numpy as np
 
 
@@ -26,6 +31,62 @@ EAR_CLOSED_THRESHOLD = float(os.getenv("EAR_CLOSED_THRESHOLD", "0.20"))
 EAR_CLOSED_FRAMES = int(os.getenv("EAR_CLOSED_FRAMES", "15"))
 HEAD_DOWN_PITCH_DEG = float(os.getenv("HEAD_DOWN_PITCH_DEG", "-20"))
 HEAD_DOWN_FRAMES = int(os.getenv("HEAD_DOWN_FRAMES", "15"))
+_FACE_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+    "face_landmarker/float16/1/face_landmarker.task"
+)
+
+
+def _ensure_face_model() -> Path:
+    model_dir = Path(__file__).with_name("models")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "face_landmarker.task"
+    if not model_path.exists():
+        urlretrieve(_FACE_MODEL_URL, model_path)
+    return model_path
+
+
+class _TaskFaceWrapper:
+    def __init__(self, landmarker):
+        self._landmarker = landmarker
+        self._last_ts = 0
+
+    def process(self, rgb):
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        ts = max(int(time.time() * 1000), self._last_ts + 1)
+        self._last_ts = ts
+        result = self._landmarker.detect_for_video(image, ts)
+        faces = [SimpleNamespace(landmark=list(landmark)) for landmark in (result.face_landmarks or [])]
+        return SimpleNamespace(multi_face_landmarks=faces)
+
+    def close(self):
+        self._landmarker.close()
+
+
+def init_face_mesh(max_num_faces: int = 8):
+    if getattr(mp, "solutions", None):
+        return mp.solutions.face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=max_num_faces,
+            refine_landmarks=False,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+
+    from mediapipe.tasks.python.core.base_options import BaseOptions
+    from mediapipe.tasks.python.vision.core.vision_task_running_mode import VisionTaskRunningMode
+    from mediapipe.tasks.python.vision.face_landmarker import FaceLandmarker, FaceLandmarkerOptions
+
+    model_path = _ensure_face_model()
+    options = FaceLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=str(model_path)),
+        running_mode=VisionTaskRunningMode.VIDEO,
+        num_faces=max_num_faces,
+        min_face_detection_confidence=0.5,
+        min_face_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    return _TaskFaceWrapper(FaceLandmarker.create_from_options(options))
 
 # MediaPipe Face Mesh eye landmark indices (standard 6-point EAR set).
 _LEFT_EYE = (33, 160, 158, 133, 153, 144)

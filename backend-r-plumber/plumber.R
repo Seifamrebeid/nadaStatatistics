@@ -79,17 +79,9 @@ function(req) {
   if (nrow(all) == 0) return(all)
   active <- all[is.na(all$active) | all$active != FALSE, , drop = FALSE]
   switch(user$role %||% "",
-    admin   = active,
-    doctor  = {
-      lectures <- fs_collection_df("lectures")
-      mine <- if (nrow(lectures) == 0) character(0) else {
-        enrolled_lists <- lapply(lectures$enrolled_student_ids, function(v) {
-          if (is.null(v) || length(v) == 0) character(0) else unlist(v)
-        })
-        unique(unlist(enrolled_lists[lectures$doctor_id == user$linked_id]))
-      }
-      active[active$id %in% mine, , drop = FALSE]
-    },
+    admin   = all,
+    # Doctors need the active student roster to enroll students into new lectures.
+    doctor  = active,
     student = active[active$id == user$linked_id, , drop = FALSE],
     active[0, , drop = FALSE]
   )

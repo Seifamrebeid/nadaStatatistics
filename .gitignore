@@ -50,3 +50,5 @@ Thumbs.db
 *.swp
 .claude/
 classroom-app-python/.env.example
+*classroom-app-python/.venv-win
+classroom-app-python/.venv-win/Lib/site-packages/anyio/abc/__init__.py

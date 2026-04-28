@@ -15,23 +15,73 @@ moving through transient poses trigger false positives.
 
 import math
 import os
+import time
 from collections import deque
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Callable, Dict, List, Optional, Tuple
+from urllib.request import urlretrieve
 
 import mediapipe as mp
 
 
 GESTURE_HOLD_FRAMES = int(os.getenv("GESTURE_HOLD_FRAMES", "8"))
+_HAND_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/1/hand_landmarker.task"
+)
+
+
+def _ensure_hand_model() -> Path:
+    model_dir = Path(__file__).with_name("models")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "hand_landmarker.task"
+    if not model_path.exists():
+        urlretrieve(_HAND_MODEL_URL, model_path)
+    return model_path
+
+
+class _TaskHandsWrapper:
+    def __init__(self, landmarker):
+        self._landmarker = landmarker
+        self._last_ts = 0
+
+    def process(self, rgb):
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        ts = max(int(time.time() * 1000), self._last_ts + 1)
+        self._last_ts = ts
+        result = self._landmarker.detect_for_video(image, ts)
+        hands = [SimpleNamespace(landmark=list(landmark)) for landmark in (result.hand_landmarks or [])]
+        return SimpleNamespace(multi_hand_landmarks=hands)
+
+    def close(self):
+        self._landmarker.close()
 
 
 def init_hands(max_num_hands: int = 4):
     """MediaPipe Hands with lightweight settings (model_complexity=0)."""
-    return mp.solutions.hands.Hands(
-        model_complexity=0,
-        max_num_hands=max_num_hands,
-        min_detection_confidence=0.5,
+    if getattr(mp, "solutions", None):
+        return mp.solutions.hands.Hands(
+            model_complexity=0,
+            max_num_hands=max_num_hands,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+
+    from mediapipe.tasks.python.core.base_options import BaseOptions
+    from mediapipe.tasks.python.vision.core.vision_task_running_mode import VisionTaskRunningMode
+    from mediapipe.tasks.python.vision.hand_landmarker import HandLandmarker, HandLandmarkerOptions
+
+    model_path = _ensure_hand_model()
+    options = HandLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=str(model_path)),
+        running_mode=VisionTaskRunningMode.VIDEO,
+        num_hands=max_num_hands,
+        min_hand_detection_confidence=0.5,
+        min_hand_presence_confidence=0.5,
         min_tracking_confidence=0.5,
     )
+    return _TaskHandsWrapper(HandLandmarker.create_from_options(options))
 
 
 def _xy(lm) -> Tuple[float, float]:
