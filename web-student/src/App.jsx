@@ -4,7 +4,7 @@ import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import StudentDashboard from "./pages/StudentDashboard";
 import StudentLectures from "./pages/StudentLectures";
-import StudentEngagement from "./pages/StudentEngagement";
+import StudentHistory from "./pages/StudentHistory";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
@@ -25,7 +25,7 @@ function Gate() {
       <Route element={<Layout />}>
         <Route index element={<StudentDashboard />} />
         <Route path="lectures" element={<StudentLectures />} />
-        <Route path="engagement" element={<StudentEngagement />} />
+        <Route path="history" element={<StudentHistory />} />
         <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="login" element={<Navigate to="/" replace />} />

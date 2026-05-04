@@ -1,13 +1,18 @@
 import { useState } from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
+import {
+  signInWithCustomToken,
+  signInWithEmailAndPassword,
+} from "firebase/auth";
 import { auth } from "../firebase";
 import { useAuth } from "../context/AuthContext";
+import api from "../services/api";
 
 export default function Login() {
   const { mismatchError, setMismatchError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [faceBusy, setFaceBusy] = useState(false);
   const [err, setErr] = useState(null);
 
   async function submit(e) {
@@ -23,6 +28,53 @@ export default function Login() {
       setErr(ex.message.replace(/^Firebase:\s*/, ""));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function signInWithFace() {
+    setErr(null);
+    setMismatchError(null);
+    setFaceBusy(true);
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const video = document.createElement("video");
+      video.srcObject = stream;
+      video.playsInline = true;
+      video.muted = true;
+      await video.play();
+      await new Promise((resolve) => {
+        if (video.readyState >= 2) resolve();
+        else video.onloadedmetadata = () => resolve();
+      });
+
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas
+        .getContext("2d")
+        .drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", 0.92),
+      );
+      if (!blob) throw new Error("Failed to capture face image");
+
+      const fd = new FormData();
+      fd.append("role", "student");
+      fd.append("file", blob, "face.jpg");
+      const { data } = await api.post("/api/auth/face-login", fd);
+      const token = Array.isArray(data.custom_token)
+        ? data.custom_token[0]
+        : data.custom_token;
+      if (!token) throw new Error("No custom token returned");
+      await signInWithCustomToken(auth, token);
+    } catch (ex) {
+      setErr(
+        ex.response?.data?.error || ex.message.replace(/^Firebase:\s*/, ""),
+      );
+    } finally {
+      if (stream) stream.getTracks().forEach((track) => track.stop());
+      setFaceBusy(false);
     }
   }
 
@@ -78,8 +130,17 @@ export default function Login() {
           {busy ? "Signing in…" : "Sign in"}
         </button>
 
+        <button
+          type="button"
+          onClick={signInWithFace}
+          disabled={faceBusy}
+          className="mt-2 w-full border border-brand text-brand hover:bg-brand/10 rounded py-2 disabled:opacity-60"
+        >
+          {faceBusy ? "Scanning face…" : "Sign in with face"}
+        </button>
+
         <p className="text-xs text-slate-500 text-center mt-4">
-          Use email/password for now.
+          Students can sign in with email/password or face recognition.
         </p>
       </form>
     </div>

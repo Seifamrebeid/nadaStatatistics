@@ -3,72 +3,108 @@ import api from "../services/api";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 
-export default function StudentLectures() {
-  const [lectures, setLectures] = useState([]);
-  const [doctorMap, setDoctorMap] = useState({});
-  const [err, setErr] = useState(null);
-
-  useEffect(() => {
-    Promise.all([api.get("/api/lectures"), api.get("/api/doctors")])
-      .then(([l, d]) => {
-        const lectureRows = (Array.isArray(l.data) ? l.data : []).map(
-          normalise,
-        );
-        const doctorRows = (Array.isArray(d.data) ? d.data : []).map(normalise);
-        const map = {};
-        for (const doc of doctorRows) map[doc.id] = doc.name || doc.id;
-        setDoctorMap(map);
-        setLectures(lectureRows);
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
-  }, []);
-
-  return (
-    <div>
-      <h1 className="text-2xl font-semibold mb-4">My lectures</h1>
-      {err && (
-        <div className="mb-4 px-3 py-2 bg-red-100 text-red-900 rounded text-sm">
-          {err}
-        </div>
-      )}
-
-      <div className="bg-white rounded-lg shadow overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="text-left px-4 py-3">Title</th>
-              <th className="text-left px-4 py-3">Doctor</th>
-              <th className="text-left px-4 py-3">Status</th>
-              <th className="text-left px-4 py-3">Lecture ID</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lectures.map((l) => (
-              <tr key={l.id} className="border-t">
-                <td className="px-4 py-3">{l.title || l.id}</td>
-                <td className="px-4 py-3">
-                  {doctorMap[l.doctor_id] || l.doctor_id || "-"}
-                </td>
-                <td className="px-4 py-3">{l.status || "scheduled"}</td>
-                <td className="px-4 py-3 font-mono text-xs">{l.id}</td>
-              </tr>
-            ))}
-            {lectures.length === 0 && (
-              <tr>
-                <td className="px-4 py-4 text-slate-500" colSpan={4}>
-                  No enrolled lectures found.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 function normalise(row) {
   const out = {};
   for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
   return out;
+}
+
+export default function StudentLectures() {
+  const [lectures, setLectures] = useState([]);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    api
+      .get("/api/lectures")
+      .then(({ data }) =>
+        setLectures((Array.isArray(data) ? data : []).map(normalise)),
+      )
+      .catch((e) => setErr(e.response?.data?.error || e.message));
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold">My lectures</h1>
+        <p className="text-sm text-slate-500 mt-1">
+          Your enrolled lectures, reports, and transcript access.
+        </p>
+      </div>
+
+      {err && <div className="text-red-600 p-4 bg-red-50 rounded">{err}</div>}
+
+      <div className="bg-white rounded-lg shadow overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">
+                Title
+              </th>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">
+                Date
+              </th>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">
+                Doctor
+              </th>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">
+                Status
+              </th>
+              <th className="px-6 py-3 text-left text-sm font-medium text-gray-700">
+                Actions
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {lectures.map((lecture) => (
+              <tr key={lecture.id} className="hover:bg-gray-50">
+                <td className="px-6 py-4 text-sm">
+                  {lecture.title || lecture.id}
+                </td>
+                <td className="px-6 py-4 text-sm">
+                  {lecture.scheduled_at
+                    ? new Date(lecture.scheduled_at).toLocaleString()
+                    : "-"}
+                </td>
+                <td className="px-6 py-4 text-sm">
+                  {lecture.doctor_name || lecture.doctor_id || "—"}
+                </td>
+                <td className="px-6 py-4 text-sm">
+                  <span
+                    className={`px-2 py-1 rounded text-xs font-medium ${
+                      lecture.status === "recording"
+                        ? "bg-red-100 text-red-800"
+                        : lecture.status === "finished"
+                          ? "bg-green-100 text-green-800"
+                          : "bg-gray-100 text-gray-800"
+                    }`}
+                  >
+                    {lecture.status || "scheduled"}
+                  </span>
+                </td>
+                <td className="px-6 py-4 text-sm space-x-2">
+                  <button
+                    onClick={() =>
+                      window.open(
+                        `/api/lectures/${lecture.id}/report`,
+                        "_blank",
+                      )
+                    }
+                    className="text-brand hover:underline"
+                  >
+                    Report
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {lectures.length === 0 && (
+        <div className="text-center py-8 text-gray-500">
+          No enrolled lectures yet.
+        </div>
+      )}
+    </div>
+  );
 }

@@ -1,99 +1,143 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import api from "../services/api";
 import StatCard from "../components/StatCard";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 
 export default function StudentDashboard() {
+  const [stats, setStats] = useState(null);
+  const [comparison, setComparison] = useState(null);
   const [lectures, setLectures] = useState([]);
-  const [engagementRows, setEngagementRows] = useState([]);
-  const [sleepRows, setSleepRows] = useState([]);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/lectures"),
-      api.get("/api/analytics/engagement"),
-      api.get("/api/analytics/sleep"),
-    ])
-      .then(([l, e, s]) => {
-        setLectures((Array.isArray(l.data) ? l.data : []).map(normalise));
-        setEngagementRows(columnsToRows(e.data));
-        setSleepRows(columnsToRows(s.data));
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
+    const fetchDashboard = async () => {
+      try {
+        // Fetch own engagement metrics
+        const me = await api.get("/api/me");
+        const userId = v(me.data.uid);
+
+        // Get student's analytics vs class average
+        const compRes = await api.get(
+          `/api/analytics/student/${userId}/comparison`,
+        );
+        const comp = compRes.data;
+
+        // Fetch enrolled lectures
+        const lecturesRes = await api.get("/api/lectures");
+        const lecturesList = (
+          Array.isArray(lecturesRes.data) ? lecturesRes.data : []
+        ).map(normalise);
+
+        const recordingLectures = lecturesList.filter(
+          (l) => v(l.status) === "recording",
+        );
+
+        setComparison(comp);
+        setLectures(lecturesList);
+        setStats({
+          enrolledCount: lecturesList.length,
+          recordingCount: recordingLectures.length,
+          averageEngagement: comp?.self_mean?.toFixed(2) || 0,
+        });
+      } catch (error) {
+        console.error("Error fetching dashboard:", error);
+        setErr(error.response?.data?.error || error.message);
+      }
+    };
+
+    fetchDashboard();
   }, []);
 
-  const stats = useMemo(() => {
-    const meanEng = average(
-      engagementRows.map((r) => Number(r.mean_engagement)),
-    );
-    const meanSleep = average(sleepRows.map((r) => Number(r.sleep_rate)));
-    return {
-      lectureCount: lectures.length,
-      finished: lectures.filter((l) => v(l.status) === "finished").length,
-      meanEngagement: meanEng,
-      sleepRate: meanSleep,
-    };
-  }, [lectures, engagementRows, sleepRows]);
+  if (err) {
+    return <div className="text-red-600 p-4">Error: {err}</div>;
+  }
 
-  if (err)
-    return <div className="text-red-600">Failed to load dashboard: {err}</div>;
+  if (!stats) {
+    return <div className="p-4 text-slate-500">Loading…</div>;
+  }
 
   return (
-    <div>
-      <h1 className="text-2xl font-semibold mb-4">My dashboard</h1>
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold">Welcome!</h1>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Enrolled Lectures" value={stats.enrolledCount} />
         <StatCard
-          label="Enrolled lectures"
-          value={stats.lectureCount}
-          accent="slate"
+          label="Live Now"
+          value={stats.recordingCount}
+          color="bg-blue-100"
         />
         <StatCard
-          label="Finished lectures"
-          value={stats.finished}
-          accent="slate"
-        />
-        <StatCard
-          label="Mean engagement"
-          value={stats.meanEngagement.toFixed(2)}
-          accent={
-            stats.meanEngagement >= 0.5
-              ? "green"
-              : stats.meanEngagement >= 0.3
-                ? "amber"
-                : "red"
-          }
-        />
-        <StatCard
-          label="Sleep rate"
-          value={`${(stats.sleepRate * 100).toFixed(1)}%`}
-          accent={
-            stats.sleepRate < 0.05
-              ? "green"
-              : stats.sleepRate < 0.15
-                ? "amber"
-                : "red"
-          }
+          label="Your Engagement"
+          value={`${stats.averageEngagement}%`}
+          color="bg-green-100"
         />
       </div>
 
-      <div className="bg-white rounded-lg shadow p-4 mt-4">
-        <h2 className="font-semibold mb-2">Recent enrolled lectures</h2>
-        <ul className="divide-y">
+      {comparison && (
+        <div className="bg-white p-6 rounded-lg shadow">
+          <h2 className="text-lg font-semibold mb-4">You vs. Class Average</h2>
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <span>Your Average Engagement:</span>
+              <span className="font-semibold text-green-600">
+                {comparison.self_mean?.toFixed(2) || 0}%
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span>Class Average:</span>
+              <span className="font-semibold text-blue-600">
+                {comparison.class_mean?.toFixed(2) || 0}%
+              </span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2 mt-4">
+              <div
+                className="bg-green-600 h-2 rounded-full"
+                style={{
+                  width: `${Math.min(100, (comparison.self_mean / (comparison.class_mean || 1)) * 100)}%`,
+                }}
+              ></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h2 className="text-lg font-semibold mb-4">Recent Lectures</h2>
+        <div className="space-y-2">
           {lectures.slice(0, 6).map((l) => (
-            <li key={l.id} className="py-2 text-sm flex justify-between">
-              <span>{l.title || l.id}</span>
-              <span className="text-slate-500">{l.status || "scheduled"}</span>
-            </li>
+            <div
+              key={v(l.id)}
+              className="flex justify-between items-center p-3 border-b last:border-b-0"
+            >
+              <div>
+                <div className="font-medium">{v(l.title)}</div>
+                <div className="text-sm text-gray-500">
+                  {l.scheduled_at
+                    ? new Date(v(l.scheduled_at)).toLocaleDateString()
+                    : "-"}
+                </div>
+              </div>
+              <span
+                className={`px-2 py-1 rounded text-xs font-medium ${
+                  v(l.status) === "recording"
+                    ? "bg-red-100 text-red-800"
+                    : v(l.status) === "finished"
+                      ? "bg-green-100 text-green-800"
+                      : "bg-gray-100 text-gray-800"
+                }`}
+              >
+                {v(l.status) || "scheduled"}
+              </span>
+            </div>
           ))}
           {lectures.length === 0 && (
-            <li className="py-2 text-sm text-slate-500">
+            <div className="text-slate-500 text-center py-4">
               No enrolled lectures yet.
-            </li>
+            </div>
           )}
-        </ul>
+        </div>
       </div>
     </div>
   );
@@ -103,22 +147,4 @@ function normalise(row) {
   const out = {};
   for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
   return out;
-}
-
-function columnsToRows(obj) {
-  if (!obj) return [];
-  const keys = Object.keys(obj).filter((k) => Array.isArray(obj[k]));
-  if (keys.length === 0) return [];
-  const n = obj[keys[0]].length;
-  return Array.from({ length: n }, (_, i) => {
-    const row = {};
-    for (const k of keys) row[k] = obj[k][i];
-    return row;
-  });
-}
-
-function average(values) {
-  const nums = values.filter((n) => Number.isFinite(n));
-  if (nums.length === 0) return 0;
-  return nums.reduce((a, b) => a + b, 0) / nums.length;
 }

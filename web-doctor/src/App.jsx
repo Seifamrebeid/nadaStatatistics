@@ -2,10 +2,13 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
-import AdminDashboard from "./pages/AdminDashboard";
-import AdminLectures from "./pages/AdminLectures";
-import AdminAnalytics from "./pages/AdminAnalytics";
-import AdminSettings from "./pages/AdminSettings";
+import DoctorDashboard from "./pages/DoctorDashboard";
+import DoctorSubjects from "./pages/DoctorSubjects";
+import DoctorClasses from "./pages/DoctorClasses";
+import DoctorWeeks from "./pages/DoctorWeeks";
+import DoctorHierarchy from "./pages/DoctorHierarchy";
+import DoctorLectures from "./pages/DoctorLectures";
+import DoctorAnalytics from "./pages/DoctorAnalytics";
 import DoctorNotifications from "./pages/DoctorNotifications";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
@@ -25,11 +28,14 @@ function Gate() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<AdminDashboard />} />
-        <Route path="lectures" element={<AdminLectures />} />
-        <Route path="analytics" element={<AdminAnalytics />} />
+        <Route index element={<DoctorDashboard />} />
+        <Route path="subjects" element={<DoctorSubjects />} />
+        <Route path="classes" element={<DoctorClasses />} />
+        <Route path="weeks" element={<DoctorWeeks />} />
+        <Route path="hierarchy" element={<DoctorHierarchy />} />
+        <Route path="lectures" element={<DoctorLectures />} />
+        <Route path="analytics" element={<DoctorAnalytics />} />
         <Route path="notifications" element={<DoctorNotifications />} />
-        <Route path="settings" element={<AdminSettings />} />
         <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="login" element={<Navigate to="/" replace />} />

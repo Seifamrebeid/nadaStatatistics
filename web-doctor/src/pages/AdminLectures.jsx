@@ -20,6 +20,9 @@ const normalise = (row) => {
 export default function AdminLectures() {
   const [rows, setRows] = useState([]);
   const [students, setStudents] = useState([]);
+  const [subjects, setSubjects] = useState([]);
+  const [classes, setClasses] = useState([]);
+  const [weeks, setWeeks] = useState([]);
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
@@ -30,8 +33,22 @@ export default function AdminLectures() {
         api.get("/api/lectures"),
         api.get("/api/students"),
       ]);
+      const [subRes, classRes, weekRes] = await Promise.all([
+        api.get("/api/subjects"),
+        api.get("/api/classes"),
+        api.get("/api/weeks"),
+      ]);
       setRows((Array.isArray(l.data) ? l.data : []).map(normalise));
       setStudents((Array.isArray(s.data) ? s.data : []).map(normalise));
+      setSubjects(
+        (Array.isArray(subRes.data) ? subRes.data : []).map(normalise),
+      );
+      setClasses(
+        (Array.isArray(classRes.data) ? classRes.data : []).map(normalise),
+      );
+      setWeeks(
+        (Array.isArray(weekRes.data) ? weekRes.data : []).map(normalise),
+      );
     } catch (e) {
       setErr(e.response?.data?.error || e.message);
     }
@@ -41,11 +58,17 @@ export default function AdminLectures() {
   }, []);
 
   function openCreate() {
-    setForm({ title: "", status: "scheduled", enrolled_student_ids: [] });
+    setForm({
+      week_id: "",
+      title: "",
+      status: "scheduled",
+      enrolled_student_ids: [],
+    });
     setModal("create");
   }
   function openEdit(row) {
     setForm({
+      week_id: row.week_id || "",
       title: row.title || "",
       status: row.status || "scheduled",
       enrolled_student_ids: row.enrolled_student_ids || [],
@@ -91,6 +114,33 @@ export default function AdminLectures() {
 
   const columns = [
     { key: "id", label: "ID" },
+    {
+      key: "subject",
+      label: "Subject",
+      render: (r) => {
+        const week = weeks.find((w) => w.id === r.week_id);
+        const cls = classes.find((c) => c.id === week?.class_id);
+        const subject = subjects.find((s) => s.id === cls?.subject_id);
+        return subject?.name || "—";
+      },
+    },
+    {
+      key: "class",
+      label: "Class",
+      render: (r) => {
+        const week = weeks.find((w) => w.id === r.week_id);
+        const cls = classes.find((c) => c.id === week?.class_id);
+        return cls?.name || "—";
+      },
+    },
+    {
+      key: "week",
+      label: "Week",
+      render: (r) => {
+        const week = weeks.find((w) => w.id === r.week_id);
+        return week ? `Week ${week.week_number || "?"}` : "—";
+      },
+    },
     { key: "title", label: "Title" },
     { key: "status", label: "Status" },
     {
@@ -167,6 +217,27 @@ export default function AdminLectures() {
         }
       >
         <div className="space-y-3">
+          <label className="block">
+            <span className="text-sm text-slate-600">Week</span>
+            <select
+              required
+              value={form.week_id ?? ""}
+              onChange={(e) => setForm({ ...form, week_id: e.target.value })}
+              className="mt-1 w-full border rounded px-3 py-2"
+            >
+              <option value="">Select week</option>
+              {weeks.map((w) => {
+                const cls = classes.find((c) => c.id === w.class_id);
+                const subject = subjects.find((s) => s.id === cls?.subject_id);
+                return (
+                  <option key={w.id} value={w.id}>
+                    {subject?.name || "Subject"} · {cls?.name || "Class"} · Week{" "}
+                    {w.week_number || "?"}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
           <label className="block">
             <span className="text-sm text-slate-600">Title</span>
             <input

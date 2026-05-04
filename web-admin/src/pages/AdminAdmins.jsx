@@ -10,7 +10,7 @@ const normalise = (row) => {
   return out;
 };
 
-export default function AdminStudents() {
+export default function AdminAdmins() {
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
@@ -19,13 +19,14 @@ export default function AdminStudents() {
 
   async function load() {
     try {
-      const { data } = await api.get("/api/students");
+      const { data } = await api.get("/api/admins");
       const list = Array.isArray(data) ? data : [];
       setRows(list.map(normalise));
     } catch (e) {
       setErr(e.response?.data?.error || e.message);
     }
   }
+
   useEffect(() => {
     load();
   }, []);
@@ -35,6 +36,7 @@ export default function AdminStudents() {
     setForm({ name: "", email: "", password: "" });
     setModal("create");
   }
+
   function openEdit(row) {
     setForm({
       name: row.name || "",
@@ -49,11 +51,11 @@ export default function AdminStudents() {
       if (modal === "create") {
         const payload = { name: form.name, email: form.email };
         if (form.password) payload.password = form.password;
-        const { data } = await api.post("/api/students", payload);
+        const { data } = await api.post("/api/admins", payload);
         const pw = v(data.temporary_password);
         if (typeof pw === "string" && pw.length > 0) setSavedTempPw(pw);
       } else {
-        await api.put(`/api/students/${modal.row.id}`, {
+        await api.put(`/api/admins/${modal.row.id}`, {
           name: form.name,
           email: form.email,
           active: !!form.active,
@@ -67,24 +69,12 @@ export default function AdminStudents() {
   }
 
   async function remove(row) {
-    if (!confirm(`Soft-delete student "${row.name}"?`)) return;
+    if (!confirm(`Soft-delete admin "${row.name}"?`)) return;
     try {
-      await api.delete(`/api/students/${row.id}`);
+      await api.delete(`/api/admins/${row.id}`);
       await load();
     } catch (e) {
       alert(e.response?.data?.error || e.message);
-    }
-  }
-
-  async function uploadFace(row, file) {
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      await api.post(`/api/students/${row.id}/face`, fd);
-      alert(`Enrolled ${row.name}'s face successfully`);
-      await load();
-    } catch (e) {
-      alert(`Enrollment failed: ${e.response?.data?.error || e.message}`);
     }
   }
 
@@ -97,28 +87,10 @@ export default function AdminStudents() {
       label: "Active",
       render: (r) => (r.active === false ? "no" : "yes"),
     },
-    {
-      key: "enrolled",
-      label: "Face",
-      render: (r) =>
-        r.face_enrolled_at || r.face_encoding ? "enrolled" : "not enrolled",
-    },
   ];
 
   const actions = (r) => (
     <div className="flex gap-2 justify-end items-center">
-      <label className="cursor-pointer text-brand hover:underline">
-        Upload face
-        <input
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files?.[0]) uploadFace(r, e.target.files[0]);
-            e.target.value = "";
-          }}
-        />
-      </label>
       <button
         onClick={() => openEdit(r)}
         className="text-slate-700 hover:underline"
@@ -137,12 +109,12 @@ export default function AdminStudents() {
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-semibold">Students</h1>
+        <h1 className="text-2xl font-semibold">Admins</h1>
         <button
           onClick={openCreate}
           className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded"
         >
-          + New student
+          + New admin
         </button>
       </div>
       {err && (
@@ -155,7 +127,7 @@ export default function AdminStudents() {
       <Modal
         open={modal === "create"}
         onClose={() => setModal(null)}
-        title="Create student"
+        title="Create admin"
         footer={
           <>
             <button
@@ -173,11 +145,11 @@ export default function AdminStudents() {
           </>
         }
       >
-        <StudentForm form={form} setForm={setForm} showPasswordField />
+        <AdminForm form={form} setForm={setForm} showPasswordField />
         {savedTempPw && (
           <div className="mt-3 p-3 bg-emerald-50 border border-emerald-300 text-sm rounded">
             Temporary password: <code className="font-mono">{savedTempPw}</code>{" "}
-            — share with the new student.
+            - share with the new admin.
           </div>
         )}
       </Modal>
@@ -203,13 +175,13 @@ export default function AdminStudents() {
           </>
         }
       >
-        <StudentForm form={form} setForm={setForm} showActive />
+        <AdminForm form={form} setForm={setForm} showActive />
       </Modal>
     </div>
   );
 }
 
-function StudentForm({ form, setForm, showPasswordField, showActive }) {
+function AdminForm({ form, setForm, showPasswordField, showActive }) {
   return (
     <div className="space-y-3">
       <Field
@@ -225,7 +197,7 @@ function StudentForm({ form, setForm, showPasswordField, showActive }) {
       />
       {showPasswordField && (
         <Field
-          label="Password (optional — auto-generated if empty)"
+          label="Password (optional - auto-generated if empty)"
           value={form.password ?? ""}
           onChange={(v) => setForm({ ...form, password: v })}
         />

@@ -5,10 +5,13 @@ import { useAuth } from "../context/AuthContext";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
+  { to: "/hierarchy", label: "Hierarchy" },
+  { to: "/subjects", label: "Subjects" },
+  { to: "/classes", label: "Classes" },
+  { to: "/weeks", label: "Weeks" },
   { to: "/lectures", label: "Lectures" },
   { to: "/analytics", label: "Analytics" },
   { to: "/notifications", label: "Notifications" },
-  { to: "/settings", label: "Settings" },
   { to: "/profile", label: "Profile" },
 ];
 

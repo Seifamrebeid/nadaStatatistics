@@ -10,35 +10,45 @@ const normalise = (row) => {
   return out;
 };
 
-export default function AdminStudents() {
+export default function AdminSubjects() {
   const [rows, setRows] = useState([]);
+  const [doctors, setDoctors] = useState([]);
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
-  const [savedTempPw, setSavedTempPw] = useState(null);
 
   async function load() {
     try {
-      const { data } = await api.get("/api/students");
-      const list = Array.isArray(data) ? data : [];
-      setRows(list.map(normalise));
+      const [subjectsRes, doctorsRes] = await Promise.all([
+        api.get("/api/subjects"),
+        api.get("/api/doctors"),
+      ]);
+      const subjectsList = Array.isArray(subjectsRes.data)
+        ? subjectsRes.data
+        : [];
+      const doctorsList = Array.isArray(doctorsRes.data) ? doctorsRes.data : [];
+      setRows(subjectsList.map(normalise));
+      setDoctors(doctorsList.map(normalise));
     } catch (e) {
       setErr(e.response?.data?.error || e.message);
     }
   }
+
   useEffect(() => {
     load();
   }, []);
 
   function openCreate() {
-    setSavedTempPw(null);
-    setForm({ name: "", email: "", password: "" });
+    setForm({ doctor_id: "", name: "", code: "", description: "" });
     setModal("create");
   }
+
   function openEdit(row) {
     setForm({
+      doctor_id: row.doctor_id || "",
       name: row.name || "",
-      email: row.email || "",
+      code: row.code || "",
+      description: row.description || "",
       active: row.active !== false,
     });
     setModal({ mode: "edit", row });
@@ -47,15 +57,18 @@ export default function AdminStudents() {
   async function save() {
     try {
       if (modal === "create") {
-        const payload = { name: form.name, email: form.email };
-        if (form.password) payload.password = form.password;
-        const { data } = await api.post("/api/students", payload);
-        const pw = v(data.temporary_password);
-        if (typeof pw === "string" && pw.length > 0) setSavedTempPw(pw);
-      } else {
-        await api.put(`/api/students/${modal.row.id}`, {
+        await api.post("/api/subjects", {
+          doctor_id: form.doctor_id,
           name: form.name,
-          email: form.email,
+          code: form.code,
+          description: form.description,
+        });
+      } else {
+        await api.put(`/api/subjects/${modal.row.id}`, {
+          doctor_id: form.doctor_id,
+          name: form.name,
+          code: form.code,
+          description: form.description,
           active: !!form.active,
         });
         setModal(null);
@@ -67,58 +80,36 @@ export default function AdminStudents() {
   }
 
   async function remove(row) {
-    if (!confirm(`Soft-delete student "${row.name}"?`)) return;
+    if (!confirm(`Soft-delete subject "${row.name}"?`)) return;
     try {
-      await api.delete(`/api/students/${row.id}`);
+      await api.delete(`/api/subjects/${row.id}`);
       await load();
     } catch (e) {
       alert(e.response?.data?.error || e.message);
     }
   }
 
-  async function uploadFace(row, file) {
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      await api.post(`/api/students/${row.id}/face`, fd);
-      alert(`Enrolled ${row.name}'s face successfully`);
-      await load();
-    } catch (e) {
-      alert(`Enrollment failed: ${e.response?.data?.error || e.message}`);
-    }
-  }
-
   const columns = [
-    { key: "id", label: "ID" },
+    { key: "code", label: "Code" },
     { key: "name", label: "Name" },
-    { key: "email", label: "Email" },
+    {
+      key: "doctor_id",
+      label: "Doctor",
+      render: (r) => {
+        const doctor = doctors.find((d) => d.id === r.doctor_id);
+        return doctor?.name || "—";
+      },
+    },
+    { key: "description", label: "Description" },
     {
       key: "active",
       label: "Active",
       render: (r) => (r.active === false ? "no" : "yes"),
     },
-    {
-      key: "enrolled",
-      label: "Face",
-      render: (r) =>
-        r.face_enrolled_at || r.face_encoding ? "enrolled" : "not enrolled",
-    },
   ];
 
   const actions = (r) => (
     <div className="flex gap-2 justify-end items-center">
-      <label className="cursor-pointer text-brand hover:underline">
-        Upload face
-        <input
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files?.[0]) uploadFace(r, e.target.files[0]);
-            e.target.value = "";
-          }}
-        />
-      </label>
       <button
         onClick={() => openEdit(r)}
         className="text-slate-700 hover:underline"
@@ -137,12 +128,12 @@ export default function AdminStudents() {
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-semibold">Students</h1>
+        <h1 className="text-2xl font-semibold">Subjects</h1>
         <button
           onClick={openCreate}
           className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded"
         >
-          + New student
+          + New subject
         </button>
       </div>
       {err && (
@@ -155,7 +146,7 @@ export default function AdminStudents() {
       <Modal
         open={modal === "create"}
         onClose={() => setModal(null)}
-        title="Create student"
+        title="Create subject"
         footer={
           <>
             <button
@@ -173,13 +164,7 @@ export default function AdminStudents() {
           </>
         }
       >
-        <StudentForm form={form} setForm={setForm} showPasswordField />
-        {savedTempPw && (
-          <div className="mt-3 p-3 bg-emerald-50 border border-emerald-300 text-sm rounded">
-            Temporary password: <code className="font-mono">{savedTempPw}</code>{" "}
-            — share with the new student.
-          </div>
-        )}
+        <SubjectForm form={form} setForm={setForm} doctors={doctors} />
       </Modal>
 
       <Modal
@@ -203,33 +188,50 @@ export default function AdminStudents() {
           </>
         }
       >
-        <StudentForm form={form} setForm={setForm} showActive />
+        <SubjectForm
+          form={form}
+          setForm={setForm}
+          doctors={doctors}
+          showActive
+        />
       </Modal>
     </div>
   );
 }
 
-function StudentForm({ form, setForm, showPasswordField, showActive }) {
+function SubjectForm({ form, setForm, doctors, showActive }) {
   return (
     <div className="space-y-3">
+      <label className="block">
+        <span className="text-sm text-slate-600">Doctor</span>
+        <select
+          value={form.doctor_id ?? ""}
+          onChange={(e) => setForm({ ...form, doctor_id: e.target.value })}
+          className="mt-1 block w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand"
+        >
+          <option value="">Select doctor...</option>
+          {doctors.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+      </label>
       <Field
         label="Name"
         value={form.name ?? ""}
         onChange={(v) => setForm({ ...form, name: v })}
       />
       <Field
-        label="Email"
-        value={form.email ?? ""}
-        onChange={(v) => setForm({ ...form, email: v })}
-        type="email"
+        label="Code"
+        value={form.code ?? ""}
+        onChange={(v) => setForm({ ...form, code: v })}
       />
-      {showPasswordField && (
-        <Field
-          label="Password (optional — auto-generated if empty)"
-          value={form.password ?? ""}
-          onChange={(v) => setForm({ ...form, password: v })}
-        />
-      )}
+      <Field
+        label="Description"
+        value={form.description ?? ""}
+        onChange={(v) => setForm({ ...form, description: v })}
+      />
       {showActive && (
         <label className="flex items-center gap-2 text-sm">
           <input

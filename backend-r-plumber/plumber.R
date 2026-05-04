@@ -26,17 +26,40 @@ source("R/reports.R",        local = FALSE)
 library(plumber)
 
 # ============================================================
-# §1 Filters
+# §1 Filters & Global Setup
 # ============================================================
 
 #* @filter cors
-function(req, res) cors_filter(req, res)
+function(req, res) {
+  cat("[CORS] REQUEST -", req$REQUEST_METHOD, req$PATH, "\n")
+  cors_filter(req, res)
+}
 
 #* @filter auth
 function(req, res) auth_filter(req, res)
 
+function(req, res) {
+  res$setHeader("Access-Control-Allow-Origin", req$HTTP_ORIGIN %||% "*")
+  res$setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+  res$setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
+  res$status <- 204
+  list()
+}
+
 #* @plumber
 function(pr) {
+    # Mount OPTIONS handler
+    pr$handle("OPTIONS", "/*", function(req, res, ...){
+      cat("[OPTIONS] Handling OPTIONS for", req$PATH, "\n")
+      origin <- req$HTTP_ORIGIN %||% "*"
+      res$setHeader("Access-Control-Allow-Origin", origin)
+      res$setHeader("Access-Control-Allow-Credentials", "true")
+      res$setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Finalize-Secret")
+      res$setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+      res$status <- 204
+      list()
+    }, serializer = NULL)
+
   pr_set_error(pr, function(req, res, err) {
     if (inherits(err, "api_error")) {
       res$status <- err$status
@@ -131,9 +154,17 @@ function(req, res, id) {
 
 #* @put /api/students/<id>
 function(req, res, id) {
-  require_admin(req)
+  require_auth(req)
+  if (req$user$role == "student") {
+    if (!identical(req$user$linked_id, id)) {
+      stop(api_error(403, "forbidden"))
+    }
+  } else {
+    require_admin(req)
+  }
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
-  patch <- drop_empty(body[c("name", "email", "active")])
+  allowed <- if (req$user$role == "student") c("name") else c("name", "email", "active")
+  patch <- drop_empty(body[allowed])
   if (length(patch) == 0) stop(api_error(400, "nothing to update"))
   fs_update(sprintf("students/%s", id), patch)
   list(status = "updated", id = id)
@@ -164,6 +195,79 @@ function(req, res, id) {
 # ============================================================
 # §5 Doctors
 # ============================================================
+
+# ============================================================
+# §4b Admins
+# ============================================================
+
+.admins_visible_to <- function(user) {
+  all <- fs_collection_df("admins")
+  if (nrow(all) == 0) return(all)
+  active <- all[is.na(all$active) | all$active != FALSE, , drop = FALSE]
+  if ((user$role %||% "") == "admin") return(active)
+  active[0, , drop = FALSE]
+}
+
+#* @get /api/admins
+function(req) { require_admin(req); .admins_visible_to(req$user) }
+
+#* @post /api/admins
+function(req, res) {
+  require_admin(req)
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  if (is.null(body$email) || is.null(body$name)) {
+    stop(api_error(400, "email and name are required"))
+  }
+  admin_id <- body$admin_id %||% new_id("adm")
+  password <- body$password %||% paste0("tmp-", new_id(""))
+  uid <- create_auth_user(email = body$email, password = password,
+                          display_name = body$name)
+  fs_create_at("admins", admin_id, drop_empty(list(
+    admin_id   = admin_id,
+    name       = body$name,
+    email      = body$email,
+    active     = TRUE,
+    created_at = now_iso()
+  )))
+  fs_create_at("users", uid, list(
+    uid = uid, role = "admin", linked_id = admin_id, email = body$email
+  ))
+  out <- list(admin_id = admin_id, uid = uid)
+  if (is.null(body$password)) out$temporary_password <- password
+  out
+}
+
+#* @get /api/admins/<id>
+function(req, res, id) {
+  require_admin(req)
+  doc <- tryCatch(fs_get(sprintf("admins/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "admin not found"))
+  c(list(id = id), fs_unwrap_fields(doc$fields))
+}
+
+#* @put /api/admins/<id>
+function(req, res, id) {
+  require_admin(req)
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  patch <- drop_empty(body[c("name", "email", "active")])
+  if (length(patch) == 0) stop(api_error(400, "nothing to update"))
+  if (identical(req$user$linked_id, id) && !is.null(patch$active) && identical(patch$active, FALSE)) {
+    stop(api_error(400, "cannot deactivate your own admin account"))
+  }
+  fs_update(sprintf("admins/%s", id), patch)
+  list(status = "updated", id = id)
+}
+
+#* @delete /api/admins/<id>
+function(req, res, id) {
+  require_admin(req)
+  if (identical(req$user$linked_id, id)) {
+    stop(api_error(400, "cannot delete your own admin account"))
+  }
+  fs_update(sprintf("admins/%s", id),
+            list(active = FALSE, deleted_at = now_iso()))
+  list(status = "soft_deleted", id = id)
+}
 
 .doctors_visible_to <- function(user) {
   all <- fs_collection_df("doctors")
@@ -263,6 +367,352 @@ function(req, res, id) {
 }
 
 # ============================================================
+# §5a Subjects
+# ============================================================
+
+.subjects_visible_to <- function(user) {
+  all <- fs_collection_df("subjects")
+  if (nrow(all) == 0) return(all)
+  active <- all[is.na(all$active) | all$active != FALSE, , drop = FALSE]
+  switch(user$role %||% "",
+    admin   = active,
+    doctor  = active[active$doctor_id == user$linked_id, , drop = FALSE],
+    student = active[0, , drop = FALSE],  # students cannot see subjects directly
+    active[0, , drop = FALSE]
+  )
+}
+
+#* @get /api/subjects
+function(req) { require_auth(req); .subjects_visible_to(req$user) }
+
+#* @post /api/subjects
+function(req, res) {
+  require_admin(req)
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  if (is.null(body$doctor_id) || is.null(body$name)) {
+    stop(api_error(400, "doctor_id and name are required"))
+  }
+  subject_id <- body$subject_id %||% new_id("sub")
+  fs_create_at("subjects", subject_id, drop_empty(list(
+    subject_id  = subject_id,
+    doctor_id   = body$doctor_id,
+    name        = body$name,
+    code        = body$code,
+    description = body$description,
+    active      = TRUE,
+    created_by  = req$user$uid,
+    created_at  = now_iso()
+  )))
+  list(subject_id = subject_id)
+}
+
+#* @get /api/subjects/<id>
+function(req, res, id) {
+  require_auth(req)
+  doc <- tryCatch(fs_get(sprintf("subjects/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "subject not found"))
+  data <- fs_unwrap_fields(doc$fields)
+  if (req$user$role == "doctor" && !identical(data$doctor_id, req$user$linked_id))
+    stop(api_error(403, "forbidden"))
+  c(list(id = id), data)
+}
+
+#* @put /api/subjects/<id>
+function(req, res, id) {
+  require_admin(req)
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  patch <- drop_empty(body[c("doctor_id", "name", "code", "description", "active")])
+  if (length(patch) == 0) stop(api_error(400, "nothing to update"))
+  fs_update(sprintf("subjects/%s", id), patch)
+  list(status = "updated", id = id)
+}
+
+#* @delete /api/subjects/<id>
+function(req, res, id) {
+  require_admin(req)
+  fs_update(sprintf("subjects/%s", id),
+            list(active = FALSE, deleted_at = now_iso()))
+  list(status = "soft_deleted", id = id)
+}
+
+# ============================================================
+# §5b Classes
+# ============================================================
+
+.classes_visible_to <- function(user) {
+  all <- fs_collection_df("classes")
+  if (nrow(all) == 0) return(all)
+  active <- all[is.na(all$active) | all$active != FALSE, , drop = FALSE]
+  switch(user$role %||% "",
+    admin   = active,
+    doctor  = {
+      # Doctors see classes in their assigned subjects
+      subjects <- fs_collection_df("subjects")
+      my_subjects <- if (nrow(subjects) > 0) {
+        subjects[subjects$doctor_id == user$linked_id, "id", drop = TRUE]
+      } else character(0)
+      active[active$subject_id %in% my_subjects, , drop = FALSE]
+    },
+    student = {
+      # Students see classes they are enrolled in
+      active[vapply(active$enrolled_student_ids, function(v) {
+        user$linked_id %in% unlist(v %||% list())
+      }, logical(1)), , drop = FALSE]
+    },
+    active[0, , drop = FALSE]
+  )
+}
+
+#* @get /api/classes
+function(req) { require_auth(req); .classes_visible_to(req$user) }
+
+#* @post /api/classes
+function(req, res) {
+  require_admin_or_doctor(req)
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  if (is.null(body$subject_id) || is.null(body$name)) {
+    stop(api_error(400, "subject_id and name are required"))
+  }
+  # Verify that doctor is assigned to this subject
+  if (req$user$role == "doctor") {
+    subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", body$subject_id)),
+                           error = function(e) NULL)
+    if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+    subject_data <- fs_unwrap_fields(subject_doc$fields)
+    if (!identical(subject_data$doctor_id, req$user$linked_id)) {
+      stop(api_error(403, "not assigned to this subject"))
+    }
+  }
+  class_id <- body$class_id %||% new_id("cls")
+  fs_create_at("classes", class_id, drop_empty(list(
+    class_id           = class_id,
+    subject_id         = body$subject_id,
+    name               = body$name,
+    section            = body$section,
+    academic_year      = body$academic_year,
+    term               = body$term,
+    enrolled_student_ids = body$enrolled_student_ids %||% list(),
+    active             = TRUE,
+    created_by         = req$user$uid,
+    created_at         = now_iso()
+  )))
+  list(class_id = class_id)
+}
+
+#* @get /api/classes/<id>
+function(req, res, id) {
+  require_auth(req)
+  doc <- tryCatch(fs_get(sprintf("classes/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "class not found"))
+  data <- fs_unwrap_fields(doc$fields)
+  u <- req$user
+  if (u$role == "doctor") {
+    subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", data$subject_id)),
+                           error = function(e) NULL)
+    if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+    subject_data <- fs_unwrap_fields(subject_doc$fields)
+    if (!identical(subject_data$doctor_id, u$linked_id)) {
+      stop(api_error(403, "forbidden"))
+    }
+  } else if (u$role == "student") {
+    if (!(u$linked_id %in% unlist(data$enrolled_student_ids %||% list()))) {
+      stop(api_error(403, "not enrolled"))
+    }
+  }
+  c(list(id = id), data)
+}
+
+#* @put /api/classes/<id>
+function(req, res, id) {
+  require_admin_or_doctor(req)
+  doc <- tryCatch(fs_get(sprintf("classes/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "class not found"))
+  data <- fs_unwrap_fields(doc$fields)
+  if (req$user$role == "doctor") {
+    subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", data$subject_id)),
+                           error = function(e) NULL)
+    if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+    subject_data <- fs_unwrap_fields(subject_doc$fields)
+    if (!identical(subject_data$doctor_id, req$user$linked_id)) {
+      stop(api_error(403, "forbidden"))
+    }
+  }
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  patch <- drop_empty(body[c("subject_id", "name", "section", "academic_year", "term", "enrolled_student_ids", "active")])
+  if (length(patch) == 0) stop(api_error(400, "nothing to update"))
+  fs_update(sprintf("classes/%s", id), patch)
+  list(status = "updated", id = id)
+}
+
+#* @delete /api/classes/<id>
+function(req, res, id) {
+  require_admin_or_doctor(req)
+  doc <- tryCatch(fs_get(sprintf("classes/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "class not found"))
+  data <- fs_unwrap_fields(doc$fields)
+  if (req$user$role == "doctor") {
+    subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", data$subject_id)),
+                           error = function(e) NULL)
+    if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+    subject_data <- fs_unwrap_fields(subject_doc$fields)
+    if (!identical(subject_data$doctor_id, req$user$linked_id)) {
+      stop(api_error(403, "forbidden"))
+    }
+  }
+  fs_update(sprintf("classes/%s", id),
+            list(active = FALSE, deleted_at = now_iso()))
+  list(status = "soft_deleted", id = id)
+}
+
+# ============================================================
+# §5c Weeks
+# ============================================================
+
+.weeks_visible_to <- function(user) {
+  all <- fs_collection_df("weeks")
+  if (nrow(all) == 0) return(all)
+  active <- all[is.na(all$active) | all$active != FALSE, , drop = FALSE]
+  switch(user$role %||% "",
+    admin   = active,
+    doctor  = {
+      # Doctors see weeks in their assigned classes
+      classes <- .classes_visible_to(user)
+      my_classes <- if (nrow(classes) > 0) classes$id else character(0)
+      active[active$class_id %in% my_classes, , drop = FALSE]
+    },
+    student = {
+      # Students see weeks for classes they are enrolled in
+      classes <- .classes_visible_to(user)
+      my_classes <- if (nrow(classes) > 0) classes$id else character(0)
+      active[active$class_id %in% my_classes, , drop = FALSE]
+    },
+    active[0, , drop = FALSE]
+  )
+}
+
+#* @get /api/weeks
+function(req) { require_auth(req); .weeks_visible_to(req$user) }
+
+#* @post /api/weeks
+function(req, res) {
+  require_admin_or_doctor(req)
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  if (is.null(body$class_id)) {
+    stop(api_error(400, "class_id is required"))
+  }
+  # Verify that user can access this class
+  class_doc <- tryCatch(fs_get(sprintf("classes/%s", body$class_id)),
+                       error = function(e) NULL)
+  if (is.null(class_doc)) stop(api_error(404, "class not found"))
+  class_data <- fs_unwrap_fields(class_doc$fields)
+  if (req$user$role == "doctor") {
+    subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", class_data$subject_id)),
+                           error = function(e) NULL)
+    if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+    subject_data <- fs_unwrap_fields(subject_doc$fields)
+    if (!identical(subject_data$doctor_id, req$user$linked_id)) {
+      stop(api_error(403, "forbidden"))
+    }
+  }
+  week_id <- body$week_id %||% new_id("wk")
+  fs_create_at("weeks", week_id, drop_empty(list(
+    week_id    = week_id,
+    class_id   = body$class_id,
+    week_number = body$week_number %||% 1,
+    title      = body$title,
+    date       = body$date,
+    lecture_id = body$lecture_id,
+    status     = body$status %||% "planned",
+    notes      = body$notes,
+    active     = TRUE,
+    created_by = req$user$uid,
+    created_at = now_iso()
+  )))
+  list(week_id = week_id)
+}
+
+#* @get /api/weeks/<id>
+function(req, res, id) {
+  require_auth(req)
+  doc <- tryCatch(fs_get(sprintf("weeks/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "week not found"))
+  data <- fs_unwrap_fields(doc$fields)
+  u <- req$user
+  if (u$role == "doctor") {
+    class_doc <- tryCatch(fs_get(sprintf("classes/%s", data$class_id)),
+                         error = function(e) NULL)
+    if (is.null(class_doc)) stop(api_error(404, "class not found"))
+    class_data <- fs_unwrap_fields(class_doc$fields)
+    subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", class_data$subject_id)),
+                           error = function(e) NULL)
+    if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+    subject_data <- fs_unwrap_fields(subject_doc$fields)
+    if (!identical(subject_data$doctor_id, u$linked_id)) {
+      stop(api_error(403, "forbidden"))
+    }
+  } else if (u$role == "student") {
+    class_doc <- tryCatch(fs_get(sprintf("classes/%s", data$class_id)),
+                         error = function(e) NULL)
+    if (is.null(class_doc)) stop(api_error(404, "class not found"))
+    class_data <- fs_unwrap_fields(class_doc$fields)
+    if (!(u$linked_id %in% unlist(class_data$enrolled_student_ids %||% list()))) {
+      stop(api_error(403, "not enrolled"))
+    }
+  }
+  c(list(id = id), data)
+}
+
+#* @put /api/weeks/<id>
+function(req, res, id) {
+  require_admin_or_doctor(req)
+  doc <- tryCatch(fs_get(sprintf("weeks/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "week not found"))
+  data <- fs_unwrap_fields(doc$fields)
+  if (req$user$role == "doctor") {
+    class_doc <- tryCatch(fs_get(sprintf("classes/%s", data$class_id)),
+                         error = function(e) NULL)
+    if (is.null(class_doc)) stop(api_error(404, "class not found"))
+    class_data <- fs_unwrap_fields(class_doc$fields)
+    subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", class_data$subject_id)),
+                           error = function(e) NULL)
+    if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+    subject_data <- fs_unwrap_fields(subject_doc$fields)
+    if (!identical(subject_data$doctor_id, req$user$linked_id)) {
+      stop(api_error(403, "forbidden"))
+    }
+  }
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  patch <- drop_empty(body[c("class_id", "week_number", "title", "date", "lecture_id", "status", "notes", "active")])
+  if (length(patch) == 0) stop(api_error(400, "nothing to update"))
+  fs_update(sprintf("weeks/%s", id), patch)
+  list(status = "updated", id = id)
+}
+
+#* @delete /api/weeks/<id>
+function(req, res, id) {
+  require_admin_or_doctor(req)
+  doc <- tryCatch(fs_get(sprintf("weeks/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "week not found"))
+  data <- fs_unwrap_fields(doc$fields)
+  if (req$user$role == "doctor") {
+    class_doc <- tryCatch(fs_get(sprintf("classes/%s", data$class_id)),
+                         error = function(e) NULL)
+    if (is.null(class_doc)) stop(api_error(404, "class not found"))
+    class_data <- fs_unwrap_fields(class_doc$fields)
+    subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", class_data$subject_id)),
+                           error = function(e) NULL)
+    if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+    subject_data <- fs_unwrap_fields(subject_doc$fields)
+    if (!identical(subject_data$doctor_id, req$user$linked_id)) {
+      stop(api_error(403, "forbidden"))
+    }
+  }
+  fs_update(sprintf("weeks/%s", id),
+            list(active = FALSE, deleted_at = now_iso()))
+  list(status = "soft_deleted", id = id)
+}
+
+# ============================================================
 # §6 Lectures
 # ============================================================
 
@@ -291,18 +741,33 @@ function(req, res) {
   require_admin_or_doctor(req)
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
   if (is.null(body$title)) stop(api_error(400, "title is required"))
+  if (is.null(body$week_id)) stop(api_error(400, "week_id is required"))
   doctor_id <- if (req$user$role == "admin") body$doctor_id else req$user$linked_id
   if (is.null(doctor_id)) stop(api_error(400, "doctor_id is required"))
+  week_doc <- tryCatch(fs_get(sprintf("weeks/%s", body$week_id)), error = function(e) NULL)
+  if (is.null(week_doc)) stop(api_error(404, "week not found"))
+  week_data <- fs_unwrap_fields(week_doc$fields)
+  class_doc <- tryCatch(fs_get(sprintf("classes/%s", week_data$class_id)), error = function(e) NULL)
+  if (is.null(class_doc)) stop(api_error(404, "class not found"))
+  class_data <- fs_unwrap_fields(class_doc$fields)
+  subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", class_data$subject_id)), error = function(e) NULL)
+  if (is.null(subject_doc)) stop(api_error(404, "subject not found"))
+  subject_data <- fs_unwrap_fields(subject_doc$fields)
+  if (req$user$role == "doctor" && !identical(subject_data$doctor_id, req$user$linked_id)) {
+    stop(api_error(403, "forbidden"))
+  }
   lecture_id <- body$lecture_id %||% new_id("lec")
   fs_create_at("lectures", lecture_id, drop_empty(list(
     lecture_id           = lecture_id,
     title                = body$title,
     doctor_id            = doctor_id,
+    week_id              = body$week_id,
     status               = body$status %||% "scheduled",
     enrolled_student_ids = body$enrolled_student_ids %||% list(),
     scheduled_at         = body$scheduled_at,
     created_at           = now_iso()
   )))
+  fs_update(sprintf("weeks/%s", body$week_id), list(lecture_id = lecture_id))
   list(lecture_id = lecture_id)
 }
 
@@ -327,14 +792,34 @@ function(req, res, id) {
   doc <- tryCatch(fs_get(sprintf("lectures/%s", id)), error = function(e) NULL)
   if (is.null(doc)) stop(api_error(404, "lecture not found"))
   data <- fs_unwrap_fields(doc$fields)
+  old_week_id <- data$week_id %||% NULL
   if (u$role == "doctor" && !identical(data$doctor_id, u$linked_id))
     stop(api_error(403, "not your lecture"))
   if (u$role == "student") stop(api_error(403, "forbidden"))
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
-  allowed <- c("title", "status", "enrolled_student_ids", "scheduled_at")
+  allowed <- c("title", "status", "enrolled_student_ids", "scheduled_at", "week_id")
   if (u$role == "admin") allowed <- c(allowed, "doctor_id")
   patch <- drop_empty(body[allowed])
   if (length(patch) == 0) stop(api_error(400, "nothing to update"))
+  new_week_id <- patch$week_id %||% old_week_id
+  if (!identical(new_week_id, old_week_id)) {
+    new_week_doc <- tryCatch(fs_get(sprintf("weeks/%s", new_week_id)), error = function(e) NULL)
+    if (is.null(new_week_doc)) stop(api_error(404, "week not found"))
+    new_week_data <- fs_unwrap_fields(new_week_doc$fields)
+    new_class_doc <- tryCatch(fs_get(sprintf("classes/%s", new_week_data$class_id)), error = function(e) NULL)
+    if (is.null(new_class_doc)) stop(api_error(404, "class not found"))
+    new_class_data <- fs_unwrap_fields(new_class_doc$fields)
+    new_subject_doc <- tryCatch(fs_get(sprintf("subjects/%s", new_class_data$subject_id)), error = function(e) NULL)
+    if (is.null(new_subject_doc)) stop(api_error(404, "subject not found"))
+    new_subject_data <- fs_unwrap_fields(new_subject_doc$fields)
+    if (u$role == "doctor" && !identical(new_subject_data$doctor_id, u$linked_id)) {
+      stop(api_error(403, "forbidden"))
+    }
+    if (!is.null(old_week_id)) {
+      fs_update(sprintf("weeks/%s", old_week_id), list(lecture_id = NULL))
+    }
+    fs_update(sprintf("weeks/%s", new_week_id), list(lecture_id = id))
+  }
   fs_update(sprintf("lectures/%s", id), patch)
   list(status = "updated", id = id)
 }
@@ -349,6 +834,9 @@ function(req, res, id) {
   if (u$role == "doctor" && !identical(data$doctor_id, u$linked_id))
     stop(api_error(403, "not your lecture"))
   if (u$role == "student") stop(api_error(403, "forbidden"))
+  if (!is.null(data$week_id)) {
+    fs_update(sprintf("weeks/%s", data$week_id), list(lecture_id = NULL))
+  }
   fs_delete(sprintf("lectures/%s", id))
   list(status = "deleted", id = id)
 }

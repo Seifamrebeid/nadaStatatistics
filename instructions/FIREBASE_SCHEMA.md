@@ -6,34 +6,35 @@ Schema reference for the Classroom Emotion Detection System. Mirrors what is spe
 
 All dev runs on the **Firebase Emulator Suite** (local). The schema, security rules, and field shapes are identical between emulator and prod — the only thing that changes is the hostname and auth flow. Flip env vars to switch.
 
-| Service | Emulator (dev) | Production |
-|---|---|---|
-| Auth | `http://localhost:9099` | `https://identitytoolkit.googleapis.com` |
-| Firestore | `http://localhost:8080` | `https://firestore.googleapis.com` |
-| Storage | `http://localhost:9199` | `https://firebasestorage.googleapis.com` |
-| Emulator UI | `http://localhost:4000` | n/a (Firebase Console) |
+| Service     | Emulator (dev)          | Production                               |
+| ----------- | ----------------------- | ---------------------------------------- |
+| Auth        | `http://localhost:9099` | `https://identitytoolkit.googleapis.com` |
+| Firestore   | `http://localhost:8080` | `https://firestore.googleapis.com`       |
+| Storage     | `http://localhost:9199` | `https://firebasestorage.googleapis.com` |
+| Emulator UI | `http://localhost:4000` | n/a (Firebase Console)                   |
 
 Auth tokens from the emulator are **unsigned** (magic dev tokens). Backend code must accept them in dev but require full JWT verification in prod.
 
 ## Services used
 
-| Service | Purpose |
-|---|---|
-| **Firebase Auth** | Email/password + Google sign-in for students, doctors, admins |
-| **Cloud Firestore** | All structured data (users, roles, lectures, emotions, ...) |
-| **Firebase Storage** | Student enrollment photos (raw JPEG/PNG) |
+| Service              | Purpose                                                       |
+| -------------------- | ------------------------------------------------------------- |
+| **Firebase Auth**    | Email/password + Google sign-in for students, doctors, admins |
+| **Cloud Firestore**  | All structured data (users, roles, lectures, emotions, ...)   |
+| **Firebase Storage** | Student enrollment photos (raw JPEG/PNG)                      |
 
 ---
 
 ## Firestore collections
 
 ### `users` — role lookup table
+
 One document per Firebase Auth user. The R backend hits this on every request to resolve the caller's role.
 
-| Field | Type | Notes |
-|---|---|---|
-| `uid` | string | Firebase Auth UID (also used as the document id) |
-| `role` | enum | `"student"` \| `"doctor"` \| `"admin"` |
+| Field       | Type   | Notes                                                       |
+| ----------- | ------ | ----------------------------------------------------------- |
+| `uid`       | string | Firebase Auth UID (also used as the document id)            |
+| `role`      | enum   | `"student"` \| `"doctor"` \| `"admin"`                      |
 | `linked_id` | string | ID of the matching doc in `students` / `doctors` / `admins` |
 
 Every time a student / doctor / admin is created, a matching `users` doc is created in the same transaction.
@@ -41,125 +42,193 @@ Every time a student / doctor / admin is created, a matching `users` doc is crea
 ---
 
 ### `students`
+
 Created by admins only.
 
-| Field | Type | Notes |
-|---|---|---|
-| `student_id` | string | Doc id |
-| `name` | string | |
-| `email` | string | Matches the Firebase Auth email |
-| `face_photo_url` | string (URL) | Points at `students/{student_id}/face.jpg` in Firebase Storage |
-| `face_encoding` | array[128] of float | Computed by `face_recognition` from the enrollment photo. **Required** for the classroom app to identify this student.** |
-| `created_by` | string (uid) | Admin who created this record |
-| `created_at` | timestamp | |
-| `active` | boolean | Soft-delete flag (`false` = deleted) |
+| Field                  | Type                | Notes                                                                                                                      |
+| ---------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `student_id`           | string              | Doc id                                                                                                                     |
+| `name`                 | string              |                                                                                                                            |
+| `email`                | string              | Matches the Firebase Auth email                                                                                            |
+| `face_photo_url`       | string (URL)        | Points at `students/{student_id}/face.jpg` in Firebase Storage                                                             |
+| `face_encoding`        | array[128] of float | Computed by `face_recognition` from the enrollment photo. **Required** for the classroom app to identify this student.\*\* |
+| `created_by`           | string (uid)        | Admin who created this record                                                                                              |
+| `enrolled_student_ids` | array of string     | FKs to `students.student_id` for the roster of this class; week and lecture-session records inherit from this roster       |
+| `active`               | boolean             | Soft-delete flag (`false` = deleted)                                                                                       |
 
 Without `face_encoding`, the Python classroom app cannot match this student at capture time. The admin UI must surface "not enrolled" prominently.
 
 ---
 
 ### `doctors`
+
 Created by admins only.
 
-| Field | Type | Notes |
-|---|---|---|
-| `doctor_id` | string | Doc id |
-| `name` | string | |
-| `email` | string | |
-| `department` | string | |
-| `face_photo_url` | string (URL) | Points at `doctors/{doctor_id}/face.jpg` in Firebase Storage. Used for **face sign-in**. |
-| `face_encoding` | array[128] of float | Computed by `face_recognition` from the enrollment photo. Required for face sign-in; optional otherwise (doctor can always use email/password). |
-| `created_by` | string (uid) | Admin who created this record |
-| `created_at` | timestamp | |
-| `active` | boolean | Soft-delete flag |
+| Field            | Type                | Notes                                                                                                                                           |
+| ---------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `doctor_id`      | string              | Doc id                                                                                                                                          |
+| `name`           | string              |                                                                                                                                                 |
+| `email`          | string              |                                                                                                                                                 |
+| `department`     | string              |                                                                                                                                                 |
+| `face_photo_url` | string (URL)        | Points at `doctors/{doctor_id}/face.jpg` in Firebase Storage. Used for **face sign-in**.                                                        |
+| `face_encoding`  | array[128] of float | Computed by `face_recognition` from the enrollment photo. Required for face sign-in; optional otherwise (doctor can always use email/password). |
+| `created_by`     | string (uid)        | Admin who created this record                                                                                                                   |
+| `created_at`     | timestamp           |                                                                                                                                                 |
+| `active`         | boolean             | Soft-delete flag                                                                                                                                |
 
 ---
 
 ### `admins`
+
 Bootstrapped manually for the first admin; created by other admins thereafter.
 
-| Field | Type | Notes |
-|---|---|---|
-| `admin_id` | string | Doc id |
-| `name` | string | |
-| `email` | string | |
-| `created_at` | timestamp | |
+| Field        | Type      | Notes  |
+| ------------ | --------- | ------ |
+| `admin_id`   | string    | Doc id |
+| `name`       | string    |        |
+| `email`      | string    |        |
+| `created_at` | timestamp |        |
 
 ---
 
 ### `lectures`
+
 Created by doctors (for their own) or admins (any).
 
-| Field | Type | Notes |
-|---|---|---|
-| `lecture_id` | string | Doc id |
-| `title` | string | |
-| `doctor_id` | string | Owning doctor (FK to `doctors.doctor_id`) |
-| `date` | timestamp | Scheduled date |
-| `subject` | string | |
-| `enrolled_student_ids` | array of string | FKs to `students.student_id`. The classroom app uses this list to know which face encodings to load. |
-| `status` | enum | `"scheduled"` \| `"recording"` \| `"finished"` — set by the Python classroom app on start/exit |
-| `audio_url` | string (URL, optional) | Set by Python on finalize. Points at `lectures/{id}/audio.wav` in Storage. |
-| `transcript_id` | string (FK, optional) | FK to `transcripts` doc; set by Python after Whisper completes. |
-| `report_pdf_url` | string (URL, optional) | Set by R after rendering the per-lecture PDF. Points at `reports/lectures/{id}.pdf` in Storage. |
-| `finalized_at` | timestamp (optional) | Set by R Plumber when the Python app called `/finalize`. |
+| Field                  | Type                   | Notes                                                                                                |
+| ---------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| `lecture_id`           | string                 | Doc id                                                                                               |
+| `title`                | string                 |                                                                                                      |
+| `doctor_id`            | string                 | Owning doctor (FK to `doctors.doctor_id`)                                                            |
+| `date`                 | timestamp              | Scheduled date                                                                                       |
+| `subject`              | string                 |                                                                                                      |
+| `enrolled_student_ids` | array of string        | FKs to `students.student_id`. The classroom app uses this list to know which face encodings to load. |
+| `status`               | enum                   | `"scheduled"` \| `"recording"` \| `"finished"` — set by the Python classroom app on start/exit       |
+| `audio_url`            | string (URL, optional) | Set by Python on finalize. Points at `lectures/{id}/audio.wav` in Storage.                           |
+| `transcript_id`        | string (FK, optional)  | FK to `transcripts` doc; set by Python after Whisper completes.                                      |
+| `report_pdf_url`       | string (URL, optional) | Set by R after rendering the per-lecture PDF. Points at `reports/lectures/{id}.pdf` in Storage.      |
+| `finalized_at`         | timestamp (optional)   | Set by R Plumber when the Python app called `/finalize`.                                             |
 
 ---
 
 ### `transcripts`
+
 Whisper-generated transcripts of recorded lectures. **One parent doc + a subcollection of live segments per lecture.** Written by the Python classroom app in real time during the lecture — students subscribe via `onSnapshot` to see captions live.
 
 **`transcripts/{transcript_id}` — parent doc (metadata only)**
 
-| Field | Type | Notes |
-|---|---|---|
-| `transcript_id` | string | Doc id |
-| `lecture_id` | string | FK to `lectures.lecture_id` |
-| `language` | string | `"ar"` / `"en"` / ... — either `WHISPER_LANGUAGE` or Whisper's detection |
-| `started_at` | timestamp | When the streaming transcriber emitted its first segment |
-| `last_updated_at` | timestamp | Bumped on every new segment write |
-| `segment_count` | integer | Running count; matches number of docs in the subcollection |
-| `completed` | boolean | `false` while the lecture is recording; flipped to `true` when the Python app exits |
+| Field             | Type      | Notes                                                                               |
+| ----------------- | --------- | ----------------------------------------------------------------------------------- |
+| `transcript_id`   | string    | Doc id                                                                              |
+| `lecture_id`      | string    | FK to `lectures.lecture_id`                                                         |
+| `language`        | string    | `"ar"` / `"en"` / ... — either `WHISPER_LANGUAGE` or Whisper's detection            |
+| `started_at`      | timestamp | When the streaming transcriber emitted its first segment                            |
+| `last_updated_at` | timestamp | Bumped on every new segment write                                                   |
+| `segment_count`   | integer   | Running count; matches number of docs in the subcollection                          |
+| `completed`       | boolean   | `false` while the lecture is recording; flipped to `true` when the Python app exits |
 
 **`transcripts/{transcript_id}/segments/{auto_id}` — subcollection (one doc per finalized speech segment)**
 
-| Field | Type | Notes |
-|---|---|---|
-| `chunk_index` | integer | Monotonic, starts at 0; used for client-side ordering |
-| `start` | float | Seconds from lecture start |
-| `end` | float | Seconds from lecture start |
-| `text` | string | Transcribed text for this segment |
-| `created_at` | timestamp | Server write time |
+| Field         | Type      | Notes                                                 |
+| ------------- | --------- | ----------------------------------------------------- |
+| `chunk_index` | integer   | Monotonic, starts at 0; used for client-side ordering |
+| `start`       | float     | Seconds from lecture start                            |
+| `end`         | float     | Seconds from lecture start                            |
+| `text`        | string    | Transcribed text for this segment                     |
+| `created_at`  | timestamp | Server write time                                     |
 
 Doctors + enrolled students of the parent lecture can read; no one else. The subcollection exists (instead of an inline array) because (a) Firestore real-time listeners work on queries, which an inline array does not support efficiently, and (b) a 60-minute lecture can produce hundreds of segments and exceed the 1 MB doc-size cap.
 
 ---
 
 ### `notifications`
+
 Audit log of emails sent doctor → students via **Brevo** (transactional email). Only doctors produce these (via the R Plumber backend, which is the only writer); admins read for audit; students never see this collection.
 
-| Field | Type | Notes |
-|---|---|---|
-| (doc id) | auto | Firestore auto-id — used as `notification_id` |
-| `sender_doctor_id` | string | FK to `doctors.doctor_id` |
-| `lecture_id` | string (optional) | FK to `lectures.lecture_id`; present when the send is scoped to a specific lecture (the usual case) |
-| `recipient_student_ids` | array of string | FKs to `students.student_id` — the intended recipients |
-| `recipient_emails` | array of string | Snapshot of the email addresses at send time (students' emails can change later; keep what was actually sent to) |
-| `subject` | string | |
-| `body` | string | |
-| `sent_at` | timestamp | |
-| `status` | enum | `"sent"` \| `"failed"` |
-| `brevo_message_id` | string | Brevo's response id when status = sent |
-| `error` | string (optional) | Brevo error text when status = failed |
+| Field                   | Type              | Notes                                                                                                            |
+| ----------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------- |
+| (doc id)                | auto              | Firestore auto-id — used as `notification_id`                                                                    |
+| `sender_doctor_id`      | string            | FK to `doctors.doctor_id`                                                                                        |
+| `lecture_id`            | string (optional) | FK to `lectures.lecture_id`; present when the send is scoped to a specific lecture (the usual case)              |
+| `recipient_student_ids` | array of string   | FKs to `students.student_id` — the intended recipients                                                           |
+| `recipient_emails`      | array of string   | Snapshot of the email addresses at send time (students' emails can change later; keep what was actually sent to) |
+| `subject`               | string            |                                                                                                                  |
+| `body`                  | string            |                                                                                                                  |
+| `sent_at`               | timestamp         |                                                                                                                  |
+| `status`                | enum              | `"sent"` \| `"failed"`                                                                                           |
+| `brevo_message_id`      | string            | Brevo's response id when status = sent                                                                           |
+| `error`                 | string (optional) | Brevo error text when status = failed                                                                            |
+
+### `subjects`
+
+Created by admins, assigned to one doctor at a time.
+
+| Field         | Type              | Notes                                     |
+| ------------- | ----------------- | ----------------------------------------- |
+| `subject_id`  | string            | Doc id                                    |
+| `doctor_id`   | string            | Owning doctor (FK to `doctors.doctor_id`) |
+| `name`        | string            | Human-readable subject name               |
+| `code`        | string (optional) | Subject code shown in the UI              |
+| `description` | string (optional) | Short subject description                 |
+| `active`      | boolean           | Soft-delete flag                          |
+| `created_by`  | string (uid)      | Admin who created this record             |
+| `created_at`  | timestamp         |                                           |
 
 ---
 
+### `classes`
+
+Created under a subject. A doctor usually owns all classes under their assigned subject.
+
+| Field                  | Type              | Notes                                                     |
+| ---------------------- | ----------------- | --------------------------------------------------------- |
+| `class_id`             | string            | Doc id                                                    |
+| `subject_id`           | string            | Parent subject (FK to `subjects.subject_id`)              |
+| `name`                 | string            | Class name or code shown in the UI                        |
+| `section`              | string (optional) | Section / group label                                     |
+| `academic_year`        | string (optional) | Example: `2025-2026`                                      |
+| `term`                 | string (optional) | Example: `fall`, `spring`                                 |
+| `enrolled_student_ids` | array of string   | FKs to `students.student_id` for the roster of this class |
+| `active`               | boolean           | Soft-delete flag                                          |
+| `created_by`           | string (uid)      | Admin or doctor who created the class                     |
+| `created_at`           | timestamp         |                                                           |
+
+---
+
+### `weeks`
+
+Created under a class. A class is expected to have 16 weeks in the teaching plan.
+
+| Field         | Type                 | Notes                                               |
+| ------------- | -------------------- | --------------------------------------------------- |
+| `week_id`     | string               | Doc id                                              |
+| `class_id`    | string               | Parent class (FK to `classes.class_id`)             |
+| `week_number` | integer              | 1..16                                               |
+| `title`       | string               | Week label shown in the UI                          |
+| `date`        | timestamp (optional) | Scheduled week date                                 |
+| `lecture_id`  | string (optional)    | FK to the live lecture-session record for this week |
+| `status`      | enum                 | `"planned"` \| `"recording"` \| `"finished"`        |
+| `notes`       | string (optional)    | Optional week notes / topics                        |
+| `active`      | boolean              | Soft-delete flag                                    |
+| `created_by`  | string (uid)         | Admin or doctor who created the week                |
+| `created_at`  | timestamp            |                                                     |
+
+---
+
+---
+
+Live lecture-session records. These are the runtime capture records tied to a specific week in a class.
+
 ### `emotions`
+
 **Only the Python classroom app writes this collection** (via the Firebase service account). Every other actor reads only.
 
 The collection name is historical — it records **emotion + sleep state + hand gesture + yawn** per observation, since all are computed from the same frame and tied to the same student/lecture/timestamp.
 
 | Field | Type | Notes |
+| `subject_id` | string (optional) | FK to `subjects.subject_id` |
+| `class_id` | string (optional) | FK to `classes.class_id` |
+| `week_id` | string (optional) | FK to `weeks.week_id` |
 |---|---|---|
 | (doc id) | auto | Firestore auto-id |
 | `student_id` | string | FK to `students.student_id`. `"unknown"` when a face wasn't matched. |
@@ -215,6 +284,7 @@ Lecture audio is uploaded by the Python classroom app on finalize; it is the Whi
 Students and doctors can sign in **either** by email/password **or** by face recognition. Admins are intentionally restricted to email/password — face auth is weaker (photo-spoofable) and admin is the highest-privilege role.
 
 Flow (from the client's perspective):
+
 1. User opens the login screen, picks "Sign in with face", picks role (student / doctor).
 2. Client captures one snapshot from the camera.
 3. Client POSTs the image + role to R Plumber `POST /api/auth/face-login`.
@@ -224,6 +294,7 @@ Flow (from the client's perspective):
 7. Every subsequent request uses the ID token like any other session — there is no separate "face auth" code path in the backend beyond the one login endpoint.
 
 Custom-token minting differs between emulator and prod:
+
 - **Emulator:** the Auth emulator accepts any custom token signed with the emulator's well-known dummy key. `firebase-admin` for R (or a manual JWT build via `jose`) just works.
 - **Prod:** the service account private key signs the JWT; the Firebase Auth service verifies and issues a real ID token.
 
@@ -236,7 +307,12 @@ users.uid ──1:1── Firebase Auth user
 users.linked_id ──► students.student_id | doctors.doctor_id | admins.admin_id
 
 doctors.doctor_id ──1:N──► lectures.doctor_id
+doctors.doctor_id ──1:N──► subjects.doctor_id
+subjects.subject_id ──1:N──► classes.subject_id
+classes.class_id ──1:N──► weeks.class_id
+classes.enrolled_student_ids[*] ──N:M──► students.student_id
 lectures.enrolled_student_ids[*] ──N:M──► students.student_id
+weeks.week_id ──1:N──► lectures.week_id
 
 lectures.lecture_id ──1:N──► emotions.lecture_id
 students.student_id ──1:N──► emotions.student_id
@@ -250,26 +326,29 @@ students.student_id ──N:M──► notifications.recipient_student_ids
 
 ## Write ownership
 
-| Collection / path | Who writes | How |
-|---|---|---|
-| `users` | R Plumber backend | Admin CRUD flows (auto-created with student/doctor/admin) |
-| `students` | R Plumber backend | Admin CRUD |
-| `doctors` | R Plumber backend | Admin CRUD |
-| `admins` | R Plumber backend (first admin manual) | Admin CRUD |
-| `lectures` | R Plumber backend | Doctor CRUD on own; Admin CRUD on any |
-| `lectures.status` | **Python classroom app** | Flipped to `recording` on start, `finished` on quit |
-| `students.face_encoding`, `face_photo_url` | R Plumber backend | `POST /api/students/<id>/face` — admin upload triggers encoding |
-| `doctors.face_encoding`, `face_photo_url` | R Plumber backend | `POST /api/doctors/<id>/face` — admin upload triggers encoding |
-| `emotions` | **Python classroom app only** | Written via `firebase-admin` during capture |
-| `transcripts` (parent) | **Python classroom app only** | Parent doc: written at stream start, patched on every segment, finalized with `completed: true` on exit |
-| `transcripts/{id}/segments` | **Python classroom app only** | One doc per VAD-segmented chunk of speech, written in real time during the lecture |
-| `lectures.audio_url` / `transcript_id` | **Python classroom app** | Patched on finalize |
-| `lectures.status` / `finalized_at` / `report_pdf_url` | R Plumber backend | On `POST /api/lectures/<id>/finalize` → async render → Storage upload |
-| `notifications` | R Plumber backend | On `POST /api/notifications` — **only** after a successful doctor-role check. Writes the audit row AFTER the Brevo call (so the row reflects actual send status). |
-| `Storage: students/<id>/face.jpg` | R Plumber backend | On admin photo upload |
-| `Storage: doctors/<id>/face.jpg` | R Plumber backend | On admin photo upload |
-| `Storage: lectures/<id>/audio.wav` | **Python classroom app** | Uploaded on finalize |
-| `Storage: reports/lectures/<id>.pdf` | R Plumber backend | Rendered by `rmarkdown` after finalize |
+| Collection / path                                     | Who writes                             | How                                                                                                                                                               |
+| ----------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users`                                               | R Plumber backend                      | Admin CRUD flows (auto-created with student/doctor/admin)                                                                                                         |
+| `students`                                            | R Plumber backend                      | Admin CRUD                                                                                                                                                        |
+| `doctors`                                             | R Plumber backend                      | Admin CRUD                                                                                                                                                        |
+| `admins`                                              | R Plumber backend (first admin manual) | Admin CRUD                                                                                                                                                        |
+| `subjects`                                            | R Plumber backend                      | Admin CRUD; admin assigns doctor to subject                                                                                                                       |
+| `classes`                                             | R Plumber backend                      | Admin or assigned doctor CRUD                                                                                                                                     |
+| `weeks`                                               | R Plumber backend                      | Admin or assigned doctor CRUD                                                                                                                                     |
+| `lectures`                                            | R Plumber backend                      | Doctor CRUD on own; Admin CRUD on any (session record for a specific week)                                                                                        |
+| `lectures.status`                                     | **Python classroom app**               | Flipped to `recording` on start, `finished` on quit                                                                                                               |
+| `students.face_encoding`, `face_photo_url`            | R Plumber backend                      | `POST /api/students/<id>/face` — admin upload triggers encoding                                                                                                   |
+| `doctors.face_encoding`, `face_photo_url`             | R Plumber backend                      | `POST /api/doctors/<id>/face` — admin upload triggers encoding                                                                                                    |
+| `emotions`                                            | **Python classroom app only**          | Written via `firebase-admin` during capture                                                                                                                       |
+| `transcripts` (parent)                                | **Python classroom app only**          | Parent doc: written at stream start, patched on every segment, finalized with `completed: true` on exit                                                           |
+| `transcripts/{id}/segments`                           | **Python classroom app only**          | One doc per VAD-segmented chunk of speech, written in real time during the lecture                                                                                |
+| `lectures.audio_url` / `transcript_id`                | **Python classroom app**               | Patched on finalize                                                                                                                                               |
+| `lectures.status` / `finalized_at` / `report_pdf_url` | R Plumber backend                      | On `POST /api/lectures/<id>/finalize` → async render → Storage upload                                                                                             |
+| `notifications`                                       | R Plumber backend                      | On `POST /api/notifications` — **only** after a successful doctor-role check. Writes the audit row AFTER the Brevo call (so the row reflects actual send status). |
+| `Storage: students/<id>/face.jpg`                     | R Plumber backend                      | On admin photo upload                                                                                                                                             |
+| `Storage: doctors/<id>/face.jpg`                      | R Plumber backend                      | On admin photo upload                                                                                                                                             |
+| `Storage: lectures/<id>/audio.wav`                    | **Python classroom app**               | Uploaded on finalize                                                                                                                                              |
+| `Storage: reports/lectures/<id>.pdf`                  | R Plumber backend                      | Rendered by `rmarkdown` after finalize                                                                                                                            |
 
 Everyone else (frontends, Shiny, Python for non-`emotions` collections) is **read-only**.
 
@@ -292,6 +371,7 @@ See `PROJECT_INSTRUCTIONS.md` Phase 1 for the full requirements. Key points:
 ## Example documents
 
 **users/abc123uid**
+
 ```json
 {
   "uid": "abc123uid",
@@ -301,6 +381,7 @@ See `PROJECT_INSTRUCTIONS.md` Phase 1 for the full requirements. Key points:
 ```
 
 **students/stu_042** (values shown for **emulator** — the Storage URL changes in prod)
+
 ```json
 {
   "student_id": "stu_042",
@@ -313,9 +394,11 @@ See `PROJECT_INSTRUCTIONS.md` Phase 1 for the full requirements. Key points:
   "active": true
 }
 ```
+
 In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` instead.
 
 **lectures/lec_991** — scheduled
+
 ```json
 {
   "lecture_id": "lec_991",
@@ -329,6 +412,7 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
 ```
 
 **lectures/lec_991** — after the classroom app finishes and R renders the report
+
 ```json
 {
   "lecture_id": "lec_991",
@@ -346,6 +430,7 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
 ```
 
 **transcripts/trn_991** — parent doc (live updating while lecture is recording)
+
 ```json
 {
   "transcript_id": "trn_991",
@@ -359,6 +444,7 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
 ```
 
 **transcripts/trn_991/segments/<auto-id>** — one doc per finalized speech segment
+
 ```json
 {
   "chunk_index": 12,
@@ -370,6 +456,7 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
 ```
 
 **emotions/<auto-id>** — awake, hand raised (asking a question)
+
 ```json
 {
   "student_id": "stu_042",
@@ -387,6 +474,7 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
 ```
 
 **emotions/<auto-id>** — sleeping (both eyes closed and head down)
+
 ```json
 {
   "student_id": "stu_043",
@@ -404,6 +492,7 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
 ```
 
 **emotions/<auto-id>** — toilet request (visible on the doctor's LiveClassroom panel)
+
 ```json
 {
   "student_id": "stu_044",
@@ -421,6 +510,7 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
 ```
 
 **emotions/<auto-id>** — awake but yawning with a hand over the mouth (polite yawn; note `gesture == "none"` because the yawn-covering hand is filtered out of gesture classification)
+
 ```json
 {
   "student_id": "stu_045",
@@ -438,12 +528,17 @@ In prod, `face_photo_url` uses `https://firebasestorage.googleapis.com/...` inst
 ```
 
 **notifications/<auto-id>** — doctor sent an email to all enrolled students in a lecture
+
 ```json
 {
   "sender_doctor_id": "doc_007",
   "lecture_id": "lec_991",
   "recipient_student_ids": ["stu_042", "stu_043", "stu_044"],
-  "recipient_emails": ["nada@example.edu", "omar@example.edu", "laila@example.edu"],
+  "recipient_emails": [
+    "nada@example.edu",
+    "omar@example.edu",
+    "laila@example.edu"
+  ],
   "subject": "Reminder: please review chapter 3 before Monday",
   "body": "Hi all, ...",
   "sent_at": "2026-04-22T10:05:11Z",

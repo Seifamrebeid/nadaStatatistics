@@ -1,7 +1,8 @@
 import axios from "axios";
 import { auth } from "../firebase";
 
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL });
+const baseURL = import.meta.env.DEV ? "" : import.meta.env.VITE_API_URL;
+const api = axios.create({ baseURL });
 
 // Attach the current Firebase ID token on every request. The backend's
 // auth filter decodes it (emulator: alg=none, prod: verified signature).

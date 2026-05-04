@@ -4,13 +4,17 @@ import { auth } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 
 const navItems = [
-  { to: "/",           label: "Dashboard" },
-  { to: "/doctors",    label: "Doctors" },
-  { to: "/students",   label: "Students" },
-  { to: "/lectures",   label: "Lectures" },
-  { to: "/analytics",  label: "Analytics" },
-  { to: "/settings",   label: "Settings" },
-  { to: "/profile",    label: "Profile" },
+  { to: "/", label: "Dashboard" },
+  { to: "/admins", label: "Admins" },
+  { to: "/subjects", label: "Subjects" },
+  { to: "/classes", label: "Classes" },
+  { to: "/weeks", label: "Weeks" },
+  { to: "/doctors", label: "Doctors" },
+  { to: "/students", label: "Students" },
+  { to: "/lectures", label: "Lectures" },
+  { to: "/analytics", label: "Analytics" },
+  { to: "/settings", label: "Settings" },
+  { to: "/profile", label: "Profile" },
 ];
 
 export default function Layout() {
@@ -24,11 +28,15 @@ export default function Layout() {
     <div className="min-h-screen flex flex-col">
       <header className="bg-brand text-white shadow">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-          <Link to="/" className="text-lg font-semibold">Classroom Emotions · Admin</Link>
+          <Link to="/" className="text-lg font-semibold">
+            Classroom Emotions · Admin
+          </Link>
           <div className="flex items-center gap-4 text-sm">
             <span className="opacity-80">{profile?.email}</span>
-            <button onClick={handleLogout}
-                    className="bg-white/10 hover:bg-white/20 px-3 py-1 rounded">
+            <button
+              onClick={handleLogout}
+              className="bg-white/10 hover:bg-white/20 px-3 py-1 rounded"
+            >
               Log out
             </button>
           </div>
@@ -36,11 +44,18 @@ export default function Layout() {
         <nav className="bg-brand-dark text-sm">
           <div className="max-w-7xl mx-auto px-4 flex gap-4 overflow-x-auto">
             {navItems.map(({ to, label }) => (
-              <NavLink key={to} to={to} end={to === "/"}
+              <NavLink
+                key={to}
+                to={to}
+                end={to === "/"}
                 className={({ isActive }) =>
                   `py-2 border-b-2 whitespace-nowrap ${
-                    isActive ? "border-white" : "border-transparent hover:border-white/40"
-                  }`}>
+                    isActive
+                      ? "border-white"
+                      : "border-transparent hover:border-white/40"
+                  }`
+                }
+              >
                 {label}
               </NavLink>
             ))}

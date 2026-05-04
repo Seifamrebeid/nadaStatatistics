@@ -5,8 +5,9 @@
 **Dev vs prod:** Development runs entirely against the **Firebase Emulator Suite** — no real Firebase project is hit during local work. Storage, Auth, and Firestore all run on localhost. For the college-project demo, you can ship on emulators the whole way. For a real deployment, flip env vars to point at a real Firebase project; no code changes required if the Firestore/Auth/Storage wiring is built emulator-aware from day one.
 
 **Architecture at a glance:**
+
 - A **Python desktop app** runs on the classroom PC during each lecture. It opens the webcam, detects all faces, **identifies which student each face belongs to** (face recognition against enrolled photos), runs emotion analysis on each face, and writes one row per face per interval to Firebase Firestore + the CSV backup.
-- An **R Plumber backend** serves the web/mobile clients. It handles auth, role resolution, **CRUD for students / doctors / lectures**, and analytics. **It does not do any detection** — detection lives entirely in the Python desktop app.
+- An **R Plumber backend** serves the web/mobile clients. It handles auth, role resolution, **CRUD for students / doctors / subjects / classes / weeks / lectures**, and analytics. **It does not do any detection** — detection lives entirely in the Python desktop app.
 - There are **six separate frontend apps** — three React web apps and three React Native mobile apps, one per role (Student, Doctor, Admin). They all talk to the same R Plumber backend and the same Firebase project; each app only ships the pages for its own role. **None of them capture video for detection** (only the Login screen uses the camera, for face sign-in on student + doctor apps). This split replaces the older "one web + one mobile with role-based routes" design — see Phases 6 and 7.
 - Firebase holds the data; CSV is the backup.
 
@@ -16,35 +17,38 @@
 
 **Rule of thumb:** if it touches a camera, a pixel, or a pretrained neural net → **Python**. Everything else → **R**.
 
-| Responsibility | Language | Reason |
-|---|---|---|
-| Webcam capture + drawing (OpenCV) | **Python** | `opencv-python` mature; R bindings are weak |
-| Face detection + identification (`face_recognition`) | **Python** | dlib-based, Python-only |
-| Emotion classification (FER) | **Python** | Pretrained CNN, Python-only |
-| Head-pose + eye-closure (sleep detection) via MediaPipe Face Mesh | **Python** | Pretrained landmark model, Python-only |
-| Hand-gesture detection (raise hand, toilet, etc.) via MediaPipe Hands | **Python** | Pretrained landmark model + heuristic classifier, Python-only |
-| Classroom-side Firebase + CSV writes (`firebase-admin`) | **Python** | Lives with the capture loop |
-| HTTP backend / REST API (Plumber) | **R** | Policy |
-| Firebase ID-token verification (JWT) | **R** (`jose`) | Both work |
-| Firestore reads (REST) | **R** (`httr`) | Both work |
-| CRUD logic (students / doctors / lectures) | **R** | Policy |
-| Engagement scoring / emotion→score mapping | **R** | Business logic lives with analytics |
-| Statistics, clustering (k-means), regression | **R** | R's core strength |
-| Dashboard / visualizations (Shiny + ggplot2) | **R** | Shiny wins |
-| FCM push notifications | **R** (`httr`) | Both work |
+| Responsibility                                                        | Language       | Reason                                                        |
+| --------------------------------------------------------------------- | --------------                                                          | -------------------------------------------------------------           |
+| Webcam capture + drawing (OpenCV)                                     | **Python**     | `opencv-python` mature; R bindings are weak                   |
+| Face detection + identification (`face_recognition`)                  | **Python**     | dlib-based, Python-only                                       |
+| Emotion classification (FER)                                          | **Python**     | Pretrained CNN, Python-only                                   |
+| Head-pose + eye-closure (sleep detection) via MediaPipe Face Mesh     | **Python**     | Pretrained landmark model, Python-only                        |
+| Hand-gesture detection (raise hand, toilet, etc.) via MediaPipe Hands | **Python**     | Pretrained landmark model + heuristic classifier, Python-only |
+| Classroom-side Firebase + CSV writes (`firebase-admin`)               | **Python**     | Lives with the capture loop                                                                    |
+| HTTP backend / REST API (Plumber)                                     | **R**                                                                   | Policy                                                                  |
+| Firebase ID-token verification (JWT)                                  | **R** (`jose`) | Both work                                                                    |
+| Firestore reads (REST)                                                | **R** (`httr`) | Both work                                                                    |
+| CRUD logic (students / doctors / lectures)                            | **R**                                                                   | Policy                                                                  |
+| Engagement scoring / emotion→score mapping                            | **R**          | Business logic lives with analytics                                                               |
+| Statistics, clustering (k-means), regression                          | **R**          | R's core strength                                                                |
+| Dashboard / visualizations (Shiny + ggplot2)                          | **R**          | Shiny wins                                                                    |
+| FCM push notifications                                                | **R** (`httr`) | Both work                                                                    |
 
 **Roles:** The system has **three user roles** — **Student**, **Doctor** (instructor / professor), and **Admin**. Each role has its **own dedicated React web app and its own dedicated React Native mobile app** — six frontend projects total (`web-student`, `web-doctor`, `web-admin`, `mobile-student`, `mobile-doctor`, `mobile-admin`). Permissions are enforced by the **R Plumber backend** and Firebase security rules — the client-side split is for UX, packaging, and deployment independence, not for security.
 
 **Feature-parity rule (per role):** parity is now enforced **pair-wise per role**, not across all roles. Every feature in `web-student` must exist in `mobile-student` and vice versa; same for doctor; same for admin. Do **not** try to unify features across roles — the whole point of the split is that each role's surface is independent.
 
 **Role permissions (high level):**
+
 - **Student** — read-only: view own enrolled lectures, view own engagement history, edit own profile. Students do **not** capture video from their own devices — the classroom camera does that. May sign in with **email+password OR face recognition** (same enrollment photo used by the classroom app).
-- **Doctor** — create/manage own lectures, enroll students into lectures, view per-lecture engagement analytics for students in their lectures, and **compose and send email notifications** to students in their own lectures (via Brevo). **No live-detection screen** — the capture runs in the Python classroom app. **No push notifications** — doctors monitor classrooms via the live dashboard, and push emails to students when they want to intervene. May sign in with **email+password OR face recognition** (doctors have their own enrollment photo, uploaded by an admin).
-- **Admin** — **full CRUD on doctors**, **full CRUD on students** (including uploading each student's and doctor's enrollment face photo so the classroom app can recognize them and so they can use face sign-in), view system-wide analytics, manage lectures across all doctors, configure global settings. **Admin signs in with email+password only** — face sign-in is intentionally disabled for admins because it's weaker than a password (photo-spoofable) and admins are the highest-privilege role.
+- **Doctor** — create/manage own subjects, classes, and weeks; view the students enrolled in each class/week; view per-week and per-student analytics for the students in those classes; and **compose and send email notifications** to students in their own classes/weeks (via Brevo). **No live-detection screen** — the capture runs in the Python classroom app. **No push notifications** — doctors monitor classrooms via the live dashboard, and push emails to students when they want to intervene. May sign in with **email+password OR face recognition** (doctors have their own enrollment photo, uploaded by an admin).
+- **Admin** — **full CRUD on doctors**, **full CRUD on students** (including uploading each student's and doctor's enrollment face photo so the classroom app can recognize them and so they can use face sign-in), create and assign subjects to doctors, manage classes and 16-week schedules across all doctors, view system-wide analytics, and still manage lecture-session records when a class/week is actually recorded. **Admin signs in with email+password only** — face sign-in is intentionally disabled for admins because it's weaker than a password (photo-spoofable) and admins are the highest-privilege role.
+
+**Teaching hierarchy:** admin assigns a doctor to a subject; each subject contains one or more classes; each class contains a 16-week sequence; each week can map to a live lecture-session record. The doctor UI should drill down **doctor -> subject -> class -> week -> students -> per-student analytics**.
 
 Check off each item as you finish it. Do **not** skip phases — each one depends on the previous.
 
----
+---------------------------------------------------------
 
 ## 🚀 Quick Start Runbook (what's built today)
 
@@ -52,16 +56,17 @@ Operational guide for running the system as it stands. **Built & working:** Fire
 
 ### 1. Prerequisites (one-time install per machine)
 
-| Tool | Version | Purpose |
-|---|---|---|
-| Python | **3.11** (NOT 3.12) | Capture app, enrollment utility |
-| R | **4.5.3** (tested) | Plumber backend, Shiny dashboard, analysis scripts |
-| Node.js | 20+ | Firebase CLI, web-admin dev server |
-| Java | 11+ | Firestore + Storage emulators |
-| Firebase CLI | any | `npm install -g firebase-tools` |
-| Git | any | |
+| Tool         | Version             | Purpose                                            |
+| ------------ | ------------------- | -------------------------------------------------- |
+| Python       | **3.11** (NOT 3.12) | Capture app, enrollment utility                    |
+| R            | **4.5.3** (tested)  | Plumber backend, Shiny dashboard, analysis scripts |
+| Node.js      | 20+                 | Firebase CLI, web-admin dev server                 |
+| Java         | 11+                 | Firestore + Storage emulators                      |
+| Firebase CLI | any                 | `npm install -g firebase-tools`                    |
+| Git          | any                 |                                                    |
 
 Verify:
+
 ```powershell
 py -3.11 --version        # Python 3.11.x
 & "C:\Program Files\R\R-4.5.3\bin\Rscript.exe" --version   # R 4.5.x
@@ -101,6 +106,7 @@ copy .env.example .env
 ```
 
 First run of `capture_app` / `test_video` triggers model downloads on first use:
+
 - MediaPipe face mesh / hands (~10 MB, bundled)
 - FER weights (small)
 - YOLOv8n (~6 MB, from GitHub)
@@ -110,26 +116,31 @@ First run of `capture_app` / `test_video` triggers model downloads on first use:
 Everything caches to `C:\Users\<you>\.cache\` — subsequent runs are fast.
 
 If PowerShell execution policy blocks `Activate.ps1`:
+
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ```
 
 **2b. R backend packages** (one-time — installs to the Windows user library so system-R-lib write-permission isn't required; takes ~10 min on first run):
+
 ```powershell
 & "C:\Program Files\R\R-4.5.3\bin\Rscript.exe" -e '.libPaths(c(\"C:/Users/$env:USERNAME/AppData/Local/R/win-library/4.5\", .libPaths())); install.packages(c(\"plumber\",\"jsonlite\",\"httr\",\"uuid\",\"dplyr\",\"readr\",\"lubridate\",\"openssl\",\"jose\",\"logger\",\"rmarkdown\",\"knitr\",\"writexl\",\"ggplot2\",\"scales\",\"future\",\"promises\",\"tinytex\",\"shiny\",\"shinydashboard\",\"tidyr\",\"cluster\",\"factoextra\",\"DT\",\"plotly\",\"svglite\"), lib=\"C:/Users/$env:USERNAME/AppData/Local/R/win-library/4.5\", repos=\"https://cloud.r-project.org\")'
 ```
 
 **2c. web-admin npm deps** (one-time):
+
 ```powershell
 cd E:\Projects\nadaStatatistics\web-admin
 npm install --no-audit --no-fund
 ```
 
 **2d. Seed the first admin** (one-time after each emulator seed reset — backend + emulator must already be running for this to work):
+
 ```powershell
 cd E:\Projects\nadaStatatistics\web-admin
 npm run bootstrap-admin
 ```
+
 Creates `admin@classroom.local` / `admin-password-change-me` and writes `users/<uid>` + `admins/admin_001`.
 
 ### 3. Every-time startup
@@ -137,27 +148,34 @@ Creates `admin@classroom.local` / `admin-password-change-me` and writes `users/<
 Up to **five** PowerShell windows depending on what you want running. Start them in this order — later windows depend on earlier ones.
 
 **3a. Firebase Emulator Suite** (always required):
+
 ```powershell
 cd firebase-emulator
 firebase emulators:start --import=./seed --export-on-exit=./seed
 ```
+
 Wait for **"All emulators ready!"**. UI at http://127.0.0.1:4000. Firestore @ 8080 · Auth @ 9099 · Storage @ 9199.
 
 **3b. R Plumber backend** (required by web-admin; capture app's `/finalize` goes here too):
+
 ```powershell
 cd backend-r-plumber
 & "C:\Program Files\R\R-4.5.3\bin\Rscript.exe" run_api.R
 ```
-Wait for **`Running plumber API at http://0.0.0.0:8000`**. Swagger UI at http://localhost:8000/__docs__/.
+
+Wait for **`Running plumber API at http://0.0.0.0:8000`**. Swagger UI at http://localhost:8000/**docs**/.
 
 **3c. web-admin dev server** (required for the admin UI):
+
 ```powershell
 cd web-admin
 npm run dev
 ```
+
 Opens on http://localhost:5175. Log in with `admin@classroom.local` / `admin-password-change-me` (seeded by §2d).
 
 **3d. Enroll a student via the admin UI** (replaces the old `enroll_student.py` stopgap):
+
 1. Open http://localhost:5175 → Students → New student
 2. Fill name + email → Create (note the temporary password shown in green)
 3. In the row's actions, click **Upload face** → pick a clean front-facing photo
@@ -166,14 +184,17 @@ Opens on http://localhost:5175. Log in with `admin@classroom.local` / `admin-pas
 Alternatively (still supported, no backend required): the old CLI `python enroll_student.py <image> <id> <name> <lecture>` still works and is handy if the backend is down.
 
 **3e. Capture app** (venv active):
+
 ```powershell
 cd classroom-app-python
 .\venv\Scripts\Activate.ps1
 python capture_app.py
 ```
+
 Pick `1`. OpenCV opens, Whisper loads in the background. Quit with `q`. On quit, `/finalize` is called and the R backend renders a lecture report (HTML in `reports-out/<lecture_id>.html`).
 
 **3f. Shiny dashboard** (optional — standalone analytics, reads `data/emotions.csv` directly; doesn't need the backend):
+
 ```powershell
 cd r-analysis\shiny
 & "C:\Program Files\R\R-4.5.3\bin\Rscript.exe" -e "shiny::runApp('.', port=3838, launch.browser=TRUE)"
@@ -188,6 +209,7 @@ python test_video.py
 Single-face pipeline for tuning. Live debug line every 0.5 s with EAR / smoothed EAR / streak / pitch / gesture / phone. Rock-on gesture = `toilet_request`. EMA-smoothed face box. YOLOv8 phone overlay.
 
 Tune in `.env` and restart:
+
 ```
 EAR_CLOSED_THRESHOLD=0.25
 EAR_CLOSED_FRAMES=8
@@ -202,28 +224,28 @@ PROCESS_EVERY_N_FRAMES=30
 
 ### 5. Troubleshooting
 
-| Symptom | Fix |
-|---|---|
-| `ModuleNotFoundError: No module named 'firebase_admin'` | Not in the venv. `.\venv\Scripts\Activate.ps1`. Prompt should show `(venv)`. |
-| `FIREBASE_PROJECT_ID is not set` | No `.env`. `copy .env.example .env`. |
-| Hangs on HTTP requests to huggingface.co at startup | First-time Whisper download. `WHISPER_MODEL_SIZE=tiny` in `.env` → 75 MB instead of 480 MB. Async loading (post-2026-04-22) opens the webcam immediately regardless. |
-| `Could not open camera at index 0` | Try `CAMERA_INDEX=1` in `.env`. |
-| All faces labeled `unknown` | Student not enrolled. Run `enroll_student.py` first. |
-| `dlib` compile errors during pip install | You installed `dlib` not `dlib-bin`. Redo Section 2. |
-| `ModuleNotFoundError: No module named 'moviepy.editor'` | `pip install "moviepy==1.0.3"`. |
-| Sleep detection intermittent | Raise `EAR_CLOSED_THRESHOLD` to `0.28`. Watch `EAR=…/smooth=…` in `test_video.py` debug line. |
-| Toilet gesture triggered by peace sign | Bug fixed — gesture now uses bend-angle curl detection. If you still see it, you're on an older build. |
-| Laughing / talking triggers `yawning` | Raise `MAR_OPEN_THRESHOLD` to `0.55`–`0.60` and/or bump `MAR_OPEN_FRAMES` to `15`. Real yawns are wider and longer than any talk/laugh spike. |
-| Hand near face (e.g. resting chin) triggers `yawning (hand)` | Raise `HAND_ON_MOUTH_FRAMES` to `18`, or increase `min_overlap` in `yawn_detector.hand_over_mouth` from `0.15` to `0.20`. |
+| Symptom                                                                                     | Fix                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ModuleNotFoundError: No module named 'firebase_admin'`                                     | Not in the venv. `.\venv\Scripts\Activate.ps1`. Prompt should show `(venv)`.                                                                                                                                                                                                                                                                                                              |
+| `FIREBASE_PROJECT_ID is not set`                                                            | No `.env`. `copy .env.example .env`.                                                                                                                                                                                                                                                                                                                                                      |
+| Hangs on HTTP requests to huggingface.co at startup                                         | First-time Whisper download. `WHISPER_MODEL_SIZE=tiny` in `.env` → 75 MB instead of 480 MB. Async loading (post-2026-04-22) opens the webcam immediately regardless.                                                                                                                                                                                                                      |
+| `Could not open camera at index 0`                                                          | Try `CAMERA_INDEX=1` in `.env`.                                                                                                                                                                                                                                                                                                                                                           |
+| All faces labeled `unknown`                                                                 | Student not enrolled. Run `enroll_student.py` first.                                                                                                                                                                                                                                                                                                                                      |
+| `dlib` compile errors during pip install                                                    | You installed `dlib` not `dlib-bin`. Redo Section 2.                                                                                                                                                                                                                                                                                                                                      |
+| `ModuleNotFoundError: No module named 'moviepy.editor'`                                     | `pip install "moviepy==1.0.3"`.                                                                                                                                                                                                                                                                                                                                                           |
+| Sleep detection intermittent                                                                | Raise `EAR_CLOSED_THRESHOLD` to `0.28`. Watch `EAR=…/smooth=…` in `test_video.py` debug line.                                                                                                                                                                                                                                                                                             |
+| Toilet gesture triggered by peace sign                                                      | Bug fixed — gesture now uses bend-angle curl detection. If you still see it, you're on an older build.                                                                                                                                                                                                                                                                                    |
+| Laughing / talking triggers `yawning`                                                       | Raise `MAR_OPEN_THRESHOLD` to `0.55`–`0.60` and/or bump `MAR_OPEN_FRAMES` to `15`. Real yawns are wider and longer than any talk/laugh spike.                                                                                                                                                                                                                                             |
+| Hand near face (e.g. resting chin) triggers `yawning (hand)`                                | Raise `HAND_ON_MOUTH_FRAMES` to `18`, or increase `min_overlap` in `yawn_detector.hand_over_mouth` from `0.15` to `0.20`.                                                                                                                                                                                                                                                                 |
 | `OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized` | Torch + MKL-linked numpy/ctranslate2 each bundle their own OpenMP runtime on Windows. Already mitigated — `capture_app.py` and `test_video.py` set `KMP_DUPLICATE_LIB_OK=TRUE` at the top of the script. If you invoke any other entry point, set the same env var before `python`. Anaconda's `(base)` being active on top of the venv can also trigger this — `conda deactivate` first. |
-| Finalize POST fails with `ConnectionError` | R backend (§3b) isn't running. Start it. If backend IS running, confirm port 8000 isn't firewalled. |
-| R `install.packages` fails with `'lib = ... is not writable'` on Windows | System R lib needs admin. Use the user lib: `.libPaths(c("C:/Users/<you>/AppData/Local/R/win-library/4.5", .libPaths()))` before `install.packages`, and add `lib=` to the install call. Script in §2b does this. |
-| Backend boots then exits: `createTcpServer: address already in use` | Another Rscript is already on port 8000. `netstat -ano \| findstr :8000` → `taskkill /PID <pid> /F` → retry. |
-| web-admin login: `EMAIL_NOT_FOUND` or `INVALID_PASSWORD` | Admin account isn't in the emulator (seed reset or first run). Re-run `npm run bootstrap-admin` from §2d. |
-| Report render fails: `pandoc version 1.12.3 or higher is required` | Backend falls back to hand-rolled HTML (no pandoc required). If you see this, you're on an old build of `R/reports.R` — pull the current version. |
-| Report render fails: `package "svglite" is required` | `install.packages("svglite", lib="C:/Users/<you>/AppData/Local/R/win-library/4.5")`. Included in §2b. |
-| `/api/notifications` returns `{"status":"stubbed"}` | `BREVO_API_KEY` is empty in `.Renviron` — emails aren't actually sent. Expected in dev. To wire real sends, sign up at brevo.com, paste the key, restart the backend. |
-| `Objects are not valid as a React child (found: object with keys {})` in the admin UI | R serialized a `NULL` field as `{}` in the JSON response. Already fixed on both sides (backend omits the null key; frontend defensively type-checks the value). If you still see this, hard-refresh the browser (Ctrl+Shift+R). |
+| Finalize POST fails with `ConnectionError`                                                  | R backend (§3b) isn't running. Start it. If backend IS running, confirm port 8000 isn't firewalled.                                                                                                                                                                                                                                                                                       |
+| R `install.packages` fails with `'lib = ... is not writable'` on Windows                    | System R lib needs admin. Use the user lib: `.libPaths(c("C:/Users/<you>/AppData/Local/R/win-library/4.5", .libPaths()))` before `install.packages`, and add `lib=` to the install call. Script in §2b does this.                                                                                                                                                                         |
+| Backend boots then exits: `createTcpServer: address already in use`                         | Another Rscript is already on port 8000. `netstat -ano \| findstr :8000` → `taskkill /PID <pid> /F` → retry.                                                                                                                                                                                                                                                                              |
+| web-admin login: `EMAIL_NOT_FOUND` or `INVALID_PASSWORD`                                    | Admin account isn't in the emulator (seed reset or first run). Re-run `npm run bootstrap-admin` from §2d.                                                                                                                                                                                                                                                                                 |
+| Report render fails: `pandoc version 1.12.3 or higher is required`                          | Backend falls back to hand-rolled HTML (no pandoc required). If you see this, you're on an old build of `R/reports.R` — pull the current version.                                                                                                                                                                                                                                         |
+| Report render fails: `package "svglite" is required`                                        | `install.packages("svglite", lib="C:/Users/<you>/AppData/Local/R/win-library/4.5")`. Included in §2b.                                                                                                                                                                                                                                                                                     |
+| `/api/notifications` returns `{"status":"stubbed"}`                                         | `BREVO_API_KEY` is empty in `.Renviron` — emails aren't actually sent. Expected in dev. To wire real sends, sign up at brevo.com, paste the key, restart the backend.                                                                                                                                                                                                                     |
+| `Objects are not valid as a React child (found: object with keys {})` in the admin UI       | R serialized a `NULL` field as `{}` in the JSON response. Already fixed on both sides (backend omits the null key; frontend defensively type-checks the value). If you still see this, hard-refresh the browser (Ctrl+Shift+R).                                                                                                                                                           |
 
 ### 6. What runs where (quick map)
 
@@ -309,11 +331,13 @@ emotion-detection-system/
 You only need a real Firebase project for its **project ID** (the emulator expects one in config) and for production deployment later. A free Spark-plan project is enough — you will never actually write data to it during development.
 
 ### 1.1 Create the Firebase project shell (for the project ID)
+
 - [ ] Go to https://console.firebase.google.com and create a new project named `emotion-detection` — **deferred**. `.firebaserc` uses placeholder `emotion-detection-dev`; swap when real project is created.
 - [ ] Copy the **project ID** — deferred with the above.
 - [ ] (Optional, deferred to Phase 10) Enable Firestore / Auth / Storage in the real project.
 
 ### 1.2 Install and configure the Emulator Suite
+
 - [x] `cd firebase-emulator`
 - [ ] Run `firebase login` — **skipped**, not needed for emulator-only dev.
 - [ ] Run `firebase init emulators` — **skipped**; wrote `firebase.json` / `.firebaserc` / rules files directly (the interactive wizard isn't required).
@@ -321,13 +345,13 @@ You only need a real Firebase project for its **project ID** (the emulator expec
 - [x] Confirm `firebase.json` roughly looks like:
   ```json
   {
-    "firestore":   { "rules": "firestore.rules" },
-    "storage":     { "rules": "storage.rules" },
+    "firestore": { "rules": "firestore.rules" },
+    "storage": { "rules": "storage.rules" },
     "emulators": {
-      "auth":      { "port": 9099 },
+      "auth": { "port": 9099 },
       "firestore": { "port": 8080 },
-      "storage":   { "port": 9199 },
-      "ui":        { "enabled": true, "port": 4000 },
+      "storage": { "port": 9199 },
+      "ui": { "enabled": true, "port": 4000 },
       "singleProjectMode": true
     }
   }
@@ -338,15 +362,20 @@ You only need a real Firebase project for its **project ID** (the emulator expec
   ```
 
 ### 1.3 Run the emulator
+
 - [x] Start: `firebase emulators:start --import=./seed --export-on-exit=./seed`
   - `seed/` is in `.gitignore`.
 - [x] Open the **Emulator UI** at http://localhost:4000.
 
 ### 1.4 Define schema + bootstrap first admin via the Emulator UI
+
 - [~] Create these Firestore collections — **schema is documented in `instructions/FIREBASE_SCHEMA.md`**, but actual collections are created lazily by the capture app + `enroll_student.py` (first write creates the collection). Rules are in place for all of them.
   - [x] `students` — written by `enroll_student.py`
   - [ ] `doctors` — Phase 3 (admin CRUD)
   - [ ] `admins` — Phase 3 (admin CRUD)
+  - [ ] `subjects` — Phase 3 (admin assigns doctors to subjects)
+  - [ ] `classes` — Phase 3 (subject child collection / class roster)
+  - [ ] `weeks` — Phase 3 (16-week schedule inside each class)
   - [x] `lectures` — written by `enroll_student.py` / `capture_app.py`
   - [x] `emotions` — written by `firebase_writer.flush_buffer` on the heavy path
   - [ ] `emotions` — fields: `student_id`, `lecture_id`, `timestamp`, `emotion` (FER label), `confidence`, `state` (`"awake"` \| `"sleeping"`), `sleep_reason` (`null` \| `"head_down"` \| `"eyes_closed"` \| `"both"`), `gesture` (`"none"` \| `"hand_raised"` \| `"toilet_request"` \| `"thumbs_up"` \| `"thumbs_down"` \| `"pointing"` \| ...), `engagement_score`. **Written by the Python classroom app, never by clients.** The collection keeps its name `emotions` for continuity even though it now records emotion + state + gesture per observation.
@@ -371,28 +400,29 @@ You only need a real Firebase project for its **project ID** (the emulator expec
 
 **Status: ✅ complete (2026-04-22). All modules implemented; capture app + test script running against the emulator. Per-phase deviations documented in §2.11 below.**
 
-| § | Area | Status |
-|---|---|---|
-| 2.1 | Setup (venv, requirements, .env) | ✅ done |
-| 2.2 | `face_id.py` (detect + identify) | ✅ done |
-| 2.3 | `emotion.py` (FER wrapper) | ✅ done; uses `face_rectangles=` to skip FER's Haar cascade |
-| 2.4 | `sleep_detector.py` (EAR + head pose) | ✅ done; EMA smoothing + streak counter added |
-| 2.4a | `yawn_detector.py` (MAR + hand-over-mouth) | ✅ added — not in original spec; see §2.4a and §2.11 |
-| 2.5 | `gesture_detector.py` (MediaPipe Hands) | ✅ done; toilet → rock-on; bend-angle curl detection |
-| 2.6 | `engagement.py` (scoring + reducer) | ✅ done; smoke-tested |
-| 2.7 | `firebase_writer.py` (firestore + CSV + Storage) | ✅ done; `_EmulatorCredential` wrapper for emulator mode |
-| 2.7a | `audio_recorder.py` (sounddevice) | ✅ done |
-| 2.7b | `stream_transcribe.py` (faster-whisper + silero-vad) | ✅ done; loads model in background so webcam opens immediately |
-| 2.8 | `capture_app.py` main loop | ✅ done; multi-face `FaceTrack` with IoU matching + every-frame sleep/gesture |
-| 2.9 | Distribution (PyInstaller) | ⏳ deferred until a stable build is needed |
-| 2.10 | `encode_face.py` / `match_face.py` CLIs | ✅ done; shelled out to by Phase 3 R backend when it exists |
-| +    | `phone_detector.py` (YOLOv8 cell-phone) | ✅ added — not in spec; see §2.11 |
-| +    | `enroll_student.py` | ✅ added — stopgap until Phase 3; see §2.11 |
-| +    | `test_video.py` | ✅ added — standalone Firebase-free pipeline tester |
+| §    | Area                                                 | Status                                                                        |
+| ---- | ---------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 2.1  | Setup (venv, requirements, .env)                     | ✅ done                                                                       |
+| 2.2  | `face_id.py` (detect + identify)                     | ✅ done                                                                       |
+| 2.3  | `emotion.py` (FER wrapper)                           | ✅ done; uses `face_rectangles=` to skip FER's Haar cascade                   |
+| 2.4  | `sleep_detector.py` (EAR + head pose)                | ✅ done; EMA smoothing + streak counter added                                 |
+| 2.4a | `yawn_detector.py` (MAR + hand-over-mouth)           | ✅ added — not in original spec; see §2.4a and §2.11                          |
+| 2.5  | `gesture_detector.py` (MediaPipe Hands)              | ✅ done; toilet → rock-on; bend-angle curl detection                          |
+| 2.6  | `engagement.py` (scoring + reducer)                  | ✅ done; smoke-tested                                                         |
+| 2.7  | `firebase_writer.py` (firestore + CSV + Storage)     | ✅ done; `_EmulatorCredential` wrapper for emulator mode                      |
+| 2.7a | `audio_recorder.py` (sounddevice)                    | ✅ done                                                                       |
+| 2.7b | `stream_transcribe.py` (faster-whisper + silero-vad) | ✅ done; loads model in background so webcam opens immediately                |
+| 2.8  | `capture_app.py` main loop                           | ✅ done; multi-face `FaceTrack` with IoU matching + every-frame sleep/gesture |
+| 2.9  | Distribution (PyInstaller)                           | ⏳ deferred until a stable build is needed                                    |
+| 2.10 | `encode_face.py` / `match_face.py` CLIs              | ✅ done; shelled out to by Phase 3 R backend when it exists                   |
+| +    | `phone_detector.py` (YOLOv8 cell-phone)              | ✅ added — not in spec; see §2.11                                             |
+| +    | `enroll_student.py`                                  | ✅ added — stopgap until Phase 3; see §2.11                                   |
+| +    | `test_video.py`                                      | ✅ added — standalone Firebase-free pipeline tester                           |
 
 Python is the **classroom-side capture application**. It runs on the classroom PC that has the camera. It is **not** a server and not a microservice — it's a standalone desktop program the doctor (or IT staff) launches before a lecture starts.
 
 **Responsibilities:**
+
 1. Prompt for which lecture is being recorded (pulled from Firestore).
 2. Load the enrolled students' face encodings for that lecture.
 3. Open the webcam with OpenCV.
@@ -408,6 +438,7 @@ Python is the **classroom-side capture application**. It runs on the classroom P
 8. On quit, mark the lecture `status: "finished"`.
 
 ### 2.1 Setup
+
 - [ ] `cd classroom-app-python`
 - [ ] Create virtual env: `python -m venv venv`
 - [ ] Activate it: `venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Mac/Linux)
@@ -433,6 +464,7 @@ Python is the **classroom-side capture application**. It runs on the classroom P
 - [ ] Install: `pip install -r requirements.txt`
   - **Windows tip:** if `dlib` fails to build, install it via conda first (`conda install -c conda-forge dlib`) or grab a prebuilt wheel matching your Python version. Budget an hour for this on the first try.
 - [ ] Create `.env` with:
+
   ```
   # Firebase project
   FIREBASE_PROJECT_ID=emotion-detection-abc12
@@ -483,18 +515,22 @@ Python is the **classroom-side capture application**. It runs on the classroom P
   # Plumber backend (used for the /finalize call at end of lecture)
   PLUMBER_URL=http://localhost:8000
   ```
+
   When the `*_EMULATOR_HOST` env vars are set, `firebase-admin` auto-connects to the emulator; no real credentials are needed. For prod, clear those vars and set `FIREBASE_SERVICE_ACCOUNT_JSON` to the real key path.
 
 ### 2.2 Face identification module (`face_id.py`)
+
 - [ ] `load_enrolled_encodings(lecture_id)` — fetches the lecture's `enrolled_student_ids` from Firestore, then loads each student's `face_encoding` array into a `{student_id: np.array(128)}` dict.
 - [ ] `detect_and_identify(frame, enrolled)` — runs `face_recognition.face_locations(frame)`, then `face_recognition.face_encodings(frame, locations)`, then compares each encoding against the enrolled dict using `face_recognition.compare_faces` (or `face_distance` for best match). Returns a list of `{box, student_id_or_None}`.
 - [ ] **Unknown faces** (no match within tolerance) — log as `student_id="unknown"` so the doctor can see that a face wasn't recognized. Don't crash.
 
 ### 2.3 Emotion module (`emotion.py`)
+
 - [ ] Wrap the FER `Detector` class in a single function `detect_emotion(face_crop)` that returns `{emotion, confidence}`.
 - [ ] Load the detector once at startup (not per frame) — it's a CNN, don't re-instantiate.
 
 ### 2.4 Sleep detection (`sleep_detector.py`)
+
 Uses **MediaPipe Face Mesh** (478 3D face landmarks per face). Two independent signals:
 
 - [ ] **Eyes closed** (`eyes_closed(landmarks) -> bool`): compute the **Eye Aspect Ratio (EAR)** per eye from MediaPipe's standard eye landmark indices (left eye: 33, 160, 158, 133, 153, 144; right eye: 263, 387, 385, 362, 380, 373). EAR = (||p2−p6|| + ||p3−p5||) / (2·||p1−p4||). Average both eyes. Return `True` when EAR < `EAR_CLOSED_THRESHOLD` for ≥ `EAR_CLOSED_FRAMES` consecutive frames (temporal smoothing — otherwise blinks trigger it).
@@ -507,6 +543,7 @@ Uses **MediaPipe Face Mesh** (478 3D face landmarks per face). Two independent s
 - [ ] **Per-face frame history**: keep a small ring buffer of the last ~30 frames of EAR + pitch per `student_id` so thresholds and consecutive-frame counts are meaningful across the processing interval.
 
 ### 2.4a Yawn detection (`yawn_detector.py`)
+
 Uses **MediaPipe Face Mesh** mouth landmarks (already running for sleep detection — no extra model cost) plus the **MediaPipe Hands** landmarks already consumed by `gesture_detector.py`. Two independent signals can trip the yawn flag:
 
 - [x] **Mouth open** — Mouth Aspect Ratio (MAR) = vertical inner-lip gap (indices 13 ↔ 14) ÷ outer mouth width (indices 61 ↔ 291). Sustained MAR ≥ `MAR_OPEN_THRESHOLD` for ≥ `MAR_OPEN_FRAMES` consecutive frames. Closed mouth ≈ 0, talking ≈ 0.1–0.25, wide yawn ≈ 0.5+ — 0.50 is the default threshold.
@@ -522,6 +559,7 @@ Uses **MediaPipe Face Mesh** mouth landmarks (already running for sleep detectio
 **Why a dedicated module instead of a flag inside `sleep_detector`:** a yawn is not a subtype of sleep — it co-occurs with awake students more often than with sleeping ones. Keeping them in separate modules preserves the `state == "awake"` invariant for the engagement-score formula (Phase 9 R parity test), while still giving the doctor a visible "this person is fading" signal.
 
 ### 2.5 Gesture detection (`gesture_detector.py`)
+
 Uses **MediaPipe Hands** (21 landmarks per hand, up to 2 hands per frame). Built-in gestures + extensible registry:
 
 - [ ] Initialize `mp.solutions.hands.Hands(model_complexity=0, max_num_hands=4)` (up to 4 hands for multi-student frames; tune for your classroom size).
@@ -537,7 +575,9 @@ Uses **MediaPipe Hands** (21 landmarks per hand, up to 2 hands per frame). Built
 - [ ] **Extensibility**: the registry is a `list[tuple[str, Callable]]`. Adding a new gesture = appending one entry. Document this in a code comment — the project will want more gestures later.
 
 ### 2.6 Engagement scoring (`engagement.py`)
+
 - [ ] Mirror the R-side mapping (keep them in sync — it's the project's business rule). The score now considers emotion, sleep state, and gesture:
+
   ```python
   EMOTION_TO_ENGAGEMENT = {
       "happy": 0.9, "surprise": 0.8, "neutral": 0.6,
@@ -554,9 +594,11 @@ Uses **MediaPipe Hands** (21 landmarks per hand, up to 2 hands per frame). Built
           base = min(1.0, base + HAND_RAISED_BONUS)
       return base * attention
   ```
+
 - [ ] Also implement the 4-class reducer (`happy`, `neutral`, `bored`, `confused`) that maps FER's 7 labels to the project's target classes. `sleeping` is a **separate dimension** from these four, recorded in the `state` field — don't collapse it into the emotion.
 
 ### 2.7 Firebase writer (`firebase_writer.py`)
+
 - [ ] `init_firebase()` — initializes `firebase-admin` once. Logic:
   - If `FIRESTORE_EMULATOR_HOST` is set, initialize with `credentials.AnonymousCredentials()` and `projectId=FIREBASE_PROJECT_ID` — no real key needed; the SDK auto-connects to the emulator.
   - Otherwise, load the service account JSON at `FIREBASE_SERVICE_ACCOUNT_JSON` — prod mode.
@@ -567,13 +609,16 @@ Uses **MediaPipe Hands** (21 landmarks per hand, up to 2 hands per frame). Built
 - [ ] **CSV columns** (keep in sync with the Firestore fields): `student_id, lecture_id, timestamp, emotion, confidence, state, sleep_reason, gesture, engagement_score, yawning, yawn_reason`.
 
 ### 2.7a Audio recorder (`audio_recorder.py`)
+
 Captures microphone audio in a background thread while the OpenCV loop runs. The final WAV is used as Whisper input.
+
 - [ ] Use `sounddevice.InputStream(samplerate=AUDIO_SAMPLE_RATE, channels=1, dtype='int16', device=AUDIO_DEVICE_INDEX)` in a background thread.
 - [ ] Push every callback chunk into a thread-safe queue; a second thread drains the queue into a `numpy.int16` buffer.
 - [ ] On stop: flush buffer, write `scipy.io.wavfile.write(path, AUDIO_SAMPLE_RATE, buffer)` to `./recordings/{lecture_id}.wav`. Keep the file local until `finalize` uploads it.
 - [ ] Expose `AudioRecorder.start(lecture_id)` / `.stop() -> wav_path`. The main capture loop owns the lifecycle; this module does not touch Firebase.
 
 ### 2.7b Streaming transcription (`stream_transcribe.py`)
+
 Transcription runs **during the lecture, in parallel with the capture loop**, so students can see live captions. It is a separate OS process (or a sibling thread pool) to keep OpenCV + FER + MediaPipe from sharing cycles with Whisper.
 
 **Architecture — producer/consumer pipeline:**
@@ -633,6 +678,7 @@ Firestore writer            (adds a doc to transcripts/{id}/segments)
 **Why `small` on CPU:** the `small` model runs comfortably faster than real-time on a modern CPU with `faster-whisper` + `int8`, which is what streaming needs. It is less accurate than `medium` / `large-v3` — especially on dialectal Arabic — but the Arabic-specific configuration here (rolling-context prompt, domain + dialect seed, VAD chunking, temperature fallback, word timestamps) recovers most of the accuracy gap. If live-stream quality is unacceptable in your environment, raise `WHISPER_MODEL_SIZE` to `medium` (about 2× slower, ~15–25% WER drop) or `large-v3` (3–4× slower, ~25–40% WER drop) without changing any other code — only the env var flips.
 
 ### 2.8 Main capture loop (`capture_app.py`)
+
 - [ ] At startup:
   - [ ] Authenticate Firebase
   - [ ] List lectures with `status in ("scheduled", "recording")` and prompt the user to pick one (use `inquirer` or a plain `input()` with a numbered list)
@@ -677,10 +723,12 @@ Firestore writer            (adds a doc to transcripts/{id}/segments)
   - [ ] `emotions` rows appear in Firestore + `data/emotions.csv` with the new fields populated (including `yawning` + `yawn_reason`)
 
 ### 2.9 Distribution
+
 - [ ] For handing it to a non-developer, bundle with PyInstaller: `pyinstaller --onefile capture_app.py`. This produces a single `.exe` (Windows) or binary. The `.env` and `serviceAccountKey.json` must sit next to the executable.
 - [ ] MediaPipe ships its model files inside the package; PyInstaller needs `--collect-all=mediapipe` to include them. Without this flag the bundled exe will crash on first use.
 
 ### 2.10 Face helpers for the R backend (`encode_face.py`, `match_face.py`)
+
 The R Plumber backend needs to (a) compute a 128-d encoding from an uploaded enrollment photo, and (b) match a login photo against a list of candidate encodings. Both use `face_recognition`, which is Python-only, so the R backend shells out to these small CLI scripts via `system2()`. They live **in the same `classroom-app-python/` folder** so they share the virtual env + `face_recognition` install — no duplication.
 
 - [ ] Create `encode_face.py` — CLI usage: `python encode_face.py <image_path>`
@@ -702,21 +750,24 @@ The R Plumber backend needs to (a) compute a 128-d encoding from an uploaded enr
 Phase 2 is **complete** as of 2026-04-22. A handful of deliberate deviations and additions during implementation — documented here so future phases can rely on the actual shape of the code.
 
 **Dependency swaps**
+
 - `dlib==19.24.2` → `dlib-bin>=19.24.6`. Prebuilt wheel; skips the Visual-C++ Build Tools headache on Windows. Same `dlib` module at runtime.
 - `face_recognition==1.3.0` installed with `--no-deps` + its runtime deps (`face_recognition_models`, `Click`, `Pillow`) installed separately, because pip otherwise re-resolves `dlib==19.24.2` from source.
 - `moviepy==1.0.3` pinned. `fer==22.5.1` imports `moviepy.editor`, removed in moviepy v2.
 - `ultralytics>=8.4` added for YOLOv8n cell-phone detection (see "Feature additions" below).
 
 **Feature additions (not in the original spec)**
+
 - `phone_detector.py` — YOLOv8 nano cell-phone detection on the heavy path. Per-track `on_phone` flag; renders `!! ON PHONE !!` warning in the label stack. Hands whose bbox overlaps a phone box are excluded from gesture classification (so the phone-holding hand can't simultaneously "hand_raise").
 - `yawn_detector.py` — MAR-based open-mouth detection + hand-over-mouth overlap detection, classified through a `YawnHistory` EMA + streak buffer (mirrors `SleepHistory`). Per-track `last_yawning` + `last_yawn_reason` (`"mouth_open"` / `"hand_covered"` / `"both"`); renders an amber label above the face. Hands whose bbox overlaps any face's padded mouth bbox are excluded from gesture classification — same pattern as the phone-holding filter — so a polite yawn can't false-trigger a hand gesture. Persists `yawning` (bool) + `yawn_reason` on every `emotions` row. Full spec: §2.4a.
 - `enroll_student.py` — stopgap CLI to create a `students/{id}` doc with the face_encoding and optionally create / update a lecture. Needed because the R backend (Phase 3) that normally owns `POST /api/students/<id>/face` doesn't exist yet. Auto-creates a minimal lecture if the target `lecture_id` doesn't exist.
 - `test_video.py` — standalone Firebase-free pipeline runner for tuning + debugging. Runs sleep + gesture every frame, prints live EAR / smoothed EAR / streak / pitch / gesture diagnostic.
 
 **Algorithm changes**
+
 - **Toilet gesture** changed from ASL T-handshape to **index + pinkie extended** (rock-on / ILY). The T requires the thumb tucked precisely between the index and middle MCPs — unreliable in practice and awkward for non-signers. Rock-on is easier to hold and disambiguates cleanly from peace / pointing.
 - **Finger curl detection** rewritten to use the **MCP→PIP→TIP bend angle** (rotation-invariant). The old "tip closer to wrist than MCP" heuristic was fooled by 2D projection of hands pointing away from the camera, causing peace signs to read as fully curled → false `toilet_request`.
-- **`SleepHistory`** rewritten to EMA-smooth EAR + pitch (α=0.35) before thresholding, and track a consecutive-frame *streak* counter that only resets when the smoothed value rises above threshold. The old "all last N frames below threshold" rule broke on single-frame landmark jitter, causing intermittent detections.
+- **`SleepHistory`** rewritten to EMA-smooth EAR + pitch (α=0.35) before thresholding, and track a consecutive-frame _streak_ counter that only resets when the smoothed value rises above threshold. The old "all last N frames below threshold" rule broke on single-frame landmark jitter, causing intermittent detections.
 - **FER emotion** now called with `face_rectangles=[(x, y, w, h)]` + the full BGR frame — FER's internal Haar cascade fails on tight crops and would return the `{"neutral", 0.0}` fallthrough forever.
 - **Multi-face tracker** (`FaceTrack` class in `capture_app.py`) — per-track state (EMA-smoothed box, student_id, sleep + gesture history, last emotion, on-phone flag). MediaPipe mesh faces are matched to existing tracks by IoU every frame; face_recognition attaches `student_id` on the heavy path. Replaces the previous per-`student_id` dict which only worked when identification ran every frame.
 - **Sleep + gesture classification moved to every-frame cadence** in `capture_app.py` (were heavy-path-only). Reaction time improves from ~1 Hz to ~30 Hz. Face mesh + hands run every frame anyway, so the added cost is cheap Python math.
@@ -727,6 +778,7 @@ Phase 2 is **complete** as of 2026-04-22. A handful of deliberate deviations and
 - **Deprecation-safe Firestore `.where`** — uses `filter=FieldFilter(...)` kwarg instead of positional args.
 
 **Default thresholds in `.env.example` (tuned for every-frame cadence, ~30 fps)**
+
 - `EAR_CLOSED_THRESHOLD=0.25` (was 0.20 — too strict for most face shapes)
 - `EAR_CLOSED_FRAMES=15` at 30 fps ≈ 0.5 sec
 - `HEAD_DOWN_FRAMES=15`, `GESTURE_HOLD_FRAMES=8`
@@ -734,6 +786,7 @@ Phase 2 is **complete** as of 2026-04-22. A handful of deliberate deviations and
 - `WHISPER_MODEL_SIZE` remains `small` in `.env.example`; `tiny` is the fastest-first-run option when demoing.
 
 **Known limitations / gaps** (updated 2026-04-22 after Phase 3 landed)
+
 - ~~`POST /api/lectures/<id>/finalize` fails with ConnectionError~~ → **fixed in Phase 3** (backend auto-renders the HTML report on finalize).
 - ~~Face sign-in endpoint doesn't exist yet~~ → **fixed in Phase 3** (`POST /api/auth/face-login` live; admin 403; custom-token round-trip works against the emulator).
 - `students/{id}/face.jpg` raw-image upload to Storage is still deferred. `web-admin` uploads the photo to the backend and saves the 128-d encoding, but the raw JPEG is not persisted yet. Phase 10 item.
@@ -747,9 +800,10 @@ Operational runbook for running the current system: see `HOW_TO_RUN.md` at the r
 
 **Status: ✅ complete (2026-04-22). 41 endpoints live-tested end-to-end.** Built in three chunks (A: skeleton + auth + `/finalize`; B: CRUD + face upload + face-login; C: analytics + exports + notifications + reports). Implementation deviations from this spec are in §3.7 below.
 
-The backend that both the React web app and the React Native app talk to is written in **R using [Plumber](https://www.rplumber.io/)**. It handles auth, role resolution, CRUD for students/doctors/lectures, and analytics. **It does not do any detection** — the Python classroom app handles capture and writes `emotions` rows directly to Firestore. R only *reads* emotions for analytics.
+The backend that both the React web app and the React Native app talk to is written in **R using [Plumber](https://www.rplumber.io/)**. It handles auth, role resolution, CRUD for students/doctors/lectures, and analytics. **It does not do any detection** — the Python classroom app handles capture and writes `emotions` rows directly to Firestore. R only _reads_ emotions for analytics.
 
 ### 3.1 Setup
+
 - [ ] `cd backend-r-plumber`
 - [ ] Install R packages (one-time):
   ```r
@@ -780,6 +834,7 @@ The backend that both the React web app and the React Native app talk to is writ
   ```
 - [ ] Create `plumber.R` (route file) and `R/` (helpers folder)
 - [ ] Create `.Renviron` with:
+
   ```
   FIREBASE_PROJECT_ID=emotion-detection-abc12
 
@@ -803,9 +858,11 @@ The backend that both the React web app and the React Native app talk to is writ
   REPORT_OUTPUT_DIR=../reports-out   # temp dir for rendered PDFs before Storage upload
   PLUMBER_PORT=8000
   ```
+
   Sign up at https://www.brevo.com, get an API key from **SMTP & API → API Keys**. The free tier allows 300 emails/day which is plenty for a college project.
 
 ### 3.2 Auth & role resolution (build this FIRST — every other endpoint depends on it)
+
 - [ ] Create `R/auth.R`:
   - [ ] `verify_firebase_token(id_token)` — two code paths based on env:
     - **Emulator mode** (`FIREBASE_AUTH_EMULATOR_HOST` is set): emulator ID tokens are unsigned — decode the JWT body without signature verification (`jose::jwt_split` + base64 decode) and trust the claims. This is fine for dev.
@@ -815,6 +872,7 @@ The backend that both the React web app and the React Native app talk to is writ
 - [ ] Register `get_current_user` as a Plumber **filter** (`#* @filter auth`) so every route below automatically gets `req$user` populated.
 
 ### 3.3 Firestore client (R-side)
+
 - [ ] Create `R/firestore.R` — thin wrapper around the Firestore REST API using `httr`. Implement:
   - [ ] `fs_base_url()` — returns `http://<FIRESTORE_EMULATOR_HOST>/v1/projects/<project>/databases/(default)/documents` if the emulator host is set, otherwise `https://firestore.googleapis.com/v1/...`
   - [ ] `fs_auth_header()` — in emulator mode returns `Authorization: Bearer owner` (the magic dev token the emulator accepts); in prod, loads the service account JSON and mints an OAuth2 token, cached until ~5 min before expiry
@@ -829,6 +887,7 @@ The backend that both the React web app and the React Native app talk to is writ
 All routes live in `plumber.R` using `#* @get`, `#* @post`, etc. annotations. The `auth` filter runs first; each handler then calls the appropriate role guard.
 
 **Analytics (read-only for `emotions` — the Python classroom app is the writer)**
+
 - [ ] `GET /api/emotions` — returns emotions from Firestore (supports `?lecture_id=` and `?student_id=` filters). Each row includes `emotion`, `state`, `sleep_reason`, `gesture`, `engagement_score`. **Scoped by role**: students only see their own rows, doctors only see rows from their lectures, admins see everything.
 - [ ] `GET /api/emotions/csv` — returns the full CSV file. Admin-only.
 - [ ] `GET /api/analytics/engagement` — aggregated engagement per lecture. Admins see all; doctors see only their own lectures. Implemented in R using `dplyr`.
@@ -838,29 +897,48 @@ All routes live in `plumber.R` using `#* @get`, `#* @post`, etc. annotations. Th
 - [ ] `GET /api/analytics/heatmap` — data shaped for the engagement heatmap on the dashboard. Returns `{cells: [{lecture_id, date, doctor_id, engagement_mean, sleep_rate}]}`. Front end colors a calendar/grid from this. Admins: all lectures; doctors: own lectures; students: enrolled lectures.
 
 **Data exports**
+
 - [ ] `GET /api/exports/emotions.csv` (and `.xlsx`) — returns the observation rows as a direct file download with proper `Content-Type` + `Content-Disposition: attachment`. Accepts the same role scoping as `/api/emotions`. Use `writexl::write_xlsx` for the xlsx variant; pipe through `plumber`'s `res$body` as raw bytes with the right MIME type.
 - [ ] `GET /api/exports/engagement.csv` (and `.xlsx`) — aggregated engagement per lecture. Same role scoping as `/api/analytics/engagement`.
 - [ ] `GET /api/exports/attendance.csv` (and `.xlsx`) — one row per student-lecture with observation count, first-seen timestamp, last-seen timestamp. Derived from `emotions` in R via `dplyr::group_by(student_id, lecture_id)`.
 
+**Teaching hierarchy**
+
+- [ ] `POST /api/subjects` — create a subject. **Admin only**. Body should include `doctor_id`, `name`, and optional `code` / `description`.
+- [ ] `GET /api/subjects` — list subjects. Admin sees all; doctors see only the subjects assigned to them.
+- [ ] `PUT /api/subjects/<id>` — update subject. Admin only.
+- [ ] `DELETE /api/subjects/<id>` — soft-delete subject. Admin only.
+- [ ] `POST /api/classes` — create a class inside a subject. **Admin or assigned doctor** only.
+- [ ] `GET /api/classes` — list classes. Scoped by role: admin sees all, doctors see only classes under their subjects, students see the classes they are enrolled in.
+- [ ] `PUT /api/classes/<id>` — update class details or roster. Admin or assigned doctor only.
+- [ ] `DELETE /api/classes/<id>` — soft-delete class. Admin or assigned doctor only.
+- [ ] `POST /api/weeks` — create a week inside a class. **Admin or assigned doctor** only. Default `week_number` is 1..16.
+- [ ] `GET /api/weeks` — list weeks. Scoped by role: admin sees all, doctors see only their own subject/class hierarchy, students see only the weeks for their enrolled class.
+- [ ] `PUT /api/weeks/<id>` — update week metadata, scheduled date, or linked lecture-session. Admin or assigned doctor only.
+- [ ] `DELETE /api/weeks/<id>` — soft-delete week. Admin or assigned doctor only.
+
 **Lectures**
-- [ ] `POST /api/lectures` — create a lecture. Doctors and admins only (doctor is auto-set as owner; admin can set any `doctor_id`).
-- [ ] `GET /api/lectures` — list lectures. Scoped by role (students: enrolled only; doctors: owned only; admins: all).
-- [ ] `PUT /api/lectures/<id>` — update lecture. Owner doctor or admin only.
-- [ ] `DELETE /api/lectures/<id>` — delete lecture. Owner doctor or admin only.
+
+- [ ] `POST /api/lectures` — create a lecture-session record for a specific week. Doctors and admins only (doctor is auto-set as owner; admin can set any `doctor_id`).
+- [ ] `GET /api/lectures` — list lecture sessions. Scoped by role (students: enrolled only; doctors: own hierarchy only; admins: all).
+- [ ] `PUT /api/lectures/<id>` — update lecture-session metadata. Owner doctor or admin only.
+- [ ] `DELETE /api/lectures/<id>` — delete lecture-session. Owner doctor or admin only.
 - [ ] `POST /api/lectures/<id>/finalize` — **called by the Python classroom app at lecture end**. Accepts a header `X-Finalize-Secret: <FINALIZE_SHARED_SECRET>` instead of a user Firebase token. Sets `status = "finished"`, `finalized_at = now()`, then kicks off PDF report generation asynchronously via `future::future({ render_lecture_report(id) })`. Returns `{status: "finalized", report: "pending"}`.
 - [ ] `POST /api/lectures/<id>/generate-report` — **manual re-trigger** of the report for a doctor/admin (useful if the auto-generation failed or the report is outdated). Role: owner doctor or admin.
 - [ ] `GET /api/lectures/<id>/report` — returns a JSON `{url: ..., generated_at: ...}` pointing at the PDF in Firebase Storage. Scoped: owner doctor, enrolled student, or admin.
 - [ ] `GET /api/lectures/<id>/transcript` — returns `{language, segments: [...]}`. Same role scoping as the report.
 
 **Students — admin CRUD**
+
 - [ ] `POST /api/students` — create a student (also creates Firebase Auth user via the Admin SDK REST endpoint + `users` entry). **Admin only.**
-- [ ] `GET /api/students` — list students. Admin sees all; doctor sees students enrolled in their lectures; student sees only self.
+- [ ] `GET /api/students` — list students. Admin sees all; doctor sees students enrolled in their classes/weeks; student sees only self.
 - [ ] `GET /api/students/<id>` — fetch one student. Same role scoping.
 - [ ] `PUT /api/students/<id>` — update student. **Admin only** (students use `PUT /api/me` for their own profile).
 - [ ] `DELETE /api/students/<id>` — soft-delete (set `active: false`, do NOT wipe `emotions` rows). **Admin only.**
 - [ ] `POST /api/students/<id>/face` — **upload a student's enrollment face photo** (multipart image). The handler: (1) uploads the raw image to Firebase Storage at `students/<id>/face.jpg`, (2) calls `classroom-app-python/encode_face.py` via `system2()` to get the 128-dim encoding, (3) saves `face_photo_url` + `face_encoding` on the student doc. **Admin only.** Without this step, the Python classroom app cannot recognize the student **and** the student cannot use face sign-in.
 
 **Doctors — admin CRUD**
+
 - [ ] `POST /api/doctors` — create a doctor (also creates Firebase Auth user + `users` entry). **Admin only.**
 - [ ] `GET /api/doctors` — list doctors. **Admin only** for the full list; doctors/students only see names of doctors teaching their enrolled lectures.
 - [ ] `GET /api/doctors/<id>` — fetch one doctor. **Admin only.**
@@ -869,6 +947,7 @@ All routes live in `plumber.R` using `#* @get`, `#* @post`, etc. annotations. Th
 - [ ] `POST /api/doctors/<id>/face` — **upload a doctor's enrollment face photo** (mirrors the student face upload). Same three-step handler: Storage upload → `encode_face.py` → save `face_photo_url` + `face_encoding` on the doctor doc. **Admin only.** Required for the doctor to use face sign-in.
 
 **Face sign-in (student + doctor only — admin intentionally excluded)**
+
 - [ ] `POST /api/auth/face-login` — accepts a multipart image + a `role` hint (`"student"` or `"doctor"`). **No auth required** (this IS the authentication endpoint). Flow:
   1. Reject if `role == "admin"` (403).
   2. Save the uploaded photo to a temp file.
@@ -883,6 +962,7 @@ All routes live in `plumber.R` using `#* @get`, `#* @post`, etc. annotations. Th
 - [ ] **Optional liveness check** (recommended but not required for the college demo): the endpoint accepts **two** frames a half-second apart. `match_face.py` gets the first frame; a separate tiny check confirms the EAR or head-pose changed between frames (meaning a real human blinked or moved, not a held-up photo). Document it as a stretch goal.
 
 **Notifications (doctor → students via Brevo email)**
+
 - [ ] `POST /api/notifications` — **doctor-only**. Request body: `{lecture_id, subject, body, student_ids?}`.
   - If `student_ids` is omitted, the recipients default to all `enrolled_student_ids` on the lecture.
   - Doctor must own the lecture (match via `users.linked_id` == `lectures.doctor_id`); admin-submitted requests are rejected (admins audit, they don't send).
@@ -900,16 +980,20 @@ All routes live in `plumber.R` using `#* @get`, `#* @post`, etc. annotations. Th
 - [ ] Create `R/brevo.R` — one function `send_email(to, subject, html_body) -> list(status, message_id_or_error)`. Keep the Brevo call in a single helper so all business logic in the endpoint is plain R.
 
 **Current user / profile**
+
 - [ ] `GET /api/me` — returns the calling user's role + profile
 - [ ] `PUT /api/me` — update own profile (name, etc. — not role, not email)
 
 **Admin dashboard**
+
 - [ ] `GET /api/admin/stats` — total students, total doctors, total lectures, total emotions recorded, avg engagement system-wide. **Admin only.**
 
 **Misc**
+
 - [ ] `GET /health` — simple health check returning `{status: 'ok'}`
 
 ### 3.4a Lecture report template (`reports/lecture_report.Rmd`)
+
 The `generate-report` endpoint calls `rmarkdown::render("reports/lecture_report.Rmd", output_format = "pdf_document", params = list(lecture_id = <id>))`. The template should produce a self-contained PDF that the doctor can share.
 
 - [ ] Parameterized header: `params: { lecture_id: "" }`
@@ -926,8 +1010,11 @@ The `generate-report` endpoint calls `rmarkdown::render("reports/lecture_report.
 - [ ] Run this inside `future::future({ ... })` so the HTTP request returns immediately; the PDF appears a few seconds later.
 
 ### 3.5 Engagement scoring (R — used for analytics)
+
 The Python classroom app computes engagement at write time, but R also needs the same mapping to recompute/aggregate in the Shiny dashboard and the analytics endpoints. **Keep the two in sync.**
+
 - [ ] Create `R/engagement.R` with the **same rules as the Python side** (emotion + state + gesture → score):
+
   ```r
   EMOTION_TO_ENGAGEMENT <- c(
     happy = 0.9, surprise = 0.8, neutral = 0.6,
@@ -945,10 +1032,12 @@ The Python classroom app computes engagement at write time, but R also needs the
     unname(base * attention)
   }
   ```
+
 - [ ] Also add a 4-class mapper (`happy`, `neutral`, `bored`, `confused`) that reduces FER's 7 labels to the project's target classes. `sleeping` stays in the `state` column — never collapsed into the emotion.
 - [ ] Add a `testthat` test that compares R output with the Python output for a fixed set of inputs (emotion × state × gesture combinations). **If they diverge, engagement numbers in the dashboard won't match what the capture app wrote.**
 
 ### 3.6 Middleware & config
+
 - [ ] Enable CORS for **all six frontend dev origins** (three web + three mobile). Pin each web app to a fixed Vite dev port (see Phase 6.1) so the allowlist is deterministic:
   - `http://localhost:5173` — web-student
   - `http://localhost:5174` — web-doctor
@@ -956,7 +1045,7 @@ The Python classroom app computes engagement at write time, but R also needs the
   - `http://localhost:19006` — Expo web preview (if used for any mobile app)
   - `http://localhost:19007` — second Expo app (pin explicitly via `expo start --port 19007`)
   - `http://localhost:19008` — third Expo app
-  Mobile apps running on a physical device reach the backend via its LAN IP; the CORS check applies only to browser-origin requests, so for device runs you usually don't hit CORS at all. Document the LAN IP origin (e.g. `http://192.168.1.15:8000`) if you use Expo-web at dev time. Implement with `plumber::forward()` hooks or the `plumber` CORS helper.
+    Mobile apps running on a physical device reach the backend via its LAN IP; the CORS check applies only to browser-origin requests, so for device runs you usually don't hit CORS at all. Document the LAN IP origin (e.g. `http://192.168.1.15:8000`) if you use Expo-web at dev time. Implement with `plumber::forward()` hooks or the `plumber` CORS helper.
 - [ ] Add structured request logging via `logger`
 - [ ] Entry point: `run_api.R`
   ```r
@@ -972,32 +1061,39 @@ Phase 3 is **complete** as of 2026-04-22. Deliberate deviations and additions du
 **Endpoint count:** 41 routes registered. All in a single `plumber.R` (plumber annotations don't cross files cleanly, so consolidation beat the mounting gymnastics). Helpers split into `R/auth.R`, `R/firestore.R`, `R/firebase_auth.R`, `R/face_ops.R`, `R/brevo.R`, `R/engagement.R`, `R/reports.R`, `R/cors.R`, `R/config.R`, `R/helpers.R`.
 
 **Library-path fix**
+
 - Windows `install.packages` can't write to `C:/Program Files/R/R-4.5.3/library` without admin. Fix baked into `run_api.R` and `load_data.R`: prepend `C:/Users/<you>/AppData/Local/R/win-library/4.5` to `.libPaths()` on boot. Install step in §2b of the Quick Start uses the same path.
 
 **Auth / emulator quirks**
+
 - `decode_emulator_jwt` accepts a trailing-dot token (alg="none" emits 2 parts via `strsplit`, not 3) — the emulator's own tokens would otherwise be rejected.
 - Emulator ID tokens aren't signature-verified in dev; we trust the claims. Prod path (real-Firebase pubkey fetch + `jose::jwt_decode_sig`) is stubbed and gated on `is_emulator() == FALSE`.
 - Custom tokens (face-login) are minted with `alg="none"` + empty signature — the emulator accepts those directly. Prod-mode signing via the service account is not implemented.
 
 **Temp password on create**
+
 - Firebase Auth (even the emulator) rejects `signUp` without a password. `POST /api/students` and `POST /api/doctors` now auto-generate a password when the admin omits it and return `temporary_password` in the response so the admin can share it with the new user.
-- **Null-key serialization caveat:** `list(x = NULL)` wrapped in the response serializes to `{}` via default plumber+jsonlite settings, which the React admin tried to render and crashed on. The handlers now conditionally *add* the field instead of assigning NULL (`if (...) out$temporary_password <- password`). Frontends should still defensively type-check the value.
+- **Null-key serialization caveat:** `list(x = NULL)` wrapped in the response serializes to `{}` via default plumber+jsonlite settings, which the React admin tried to render and crashed on. The handlers now conditionally _add_ the field instead of assigning NULL (`if (...) out$temporary_password <- password`). Frontends should still defensively type-check the value.
 
 **Firestore REST quirks**
+
 - `fs_collection_df()` builds the data.frame column-by-column and uses `I(list(...))` for list-valued fields (e.g. `face_encoding` with 128 floats). Naively calling `as.data.frame` on each row would explode the encoding into 128 extra rows.
 - Plumber's default JSON serializer wraps length-1 scalars as arrays (`"role":["admin"]`). Frontends unwrap with a `v = (x) => Array.isArray(x) ? x[0] : x` helper.
 
 **Reports**
+
 - Spec (§3.4a) called for a `.Rmd` template rendered via `rmarkdown::render`. **Not shipped** in that form — `rmarkdown` requires `pandoc`, which isn't bundled with a bare R install and is a heavy dependency to onboard. Instead, `R/reports.R` emits a **hand-rolled self-contained HTML file** with inline SVG charts (via `svglite`) and embedded tables. Same content as the Rmd (cover, attendance, engagement-over-time, emotion distribution, sleep rate, gesture log) with no pandoc requirement.
 - The `.Rmd` template at `reports/lecture_report.Rmd` is kept as a reference for whenever pandoc is wired in.
 - `svglite` is an extra dependency added to the install list.
-- `/finalize` now *synchronously* renders the report (~1–2s for dev data). The spec's `future`-based async wrapper is deferred — easy to add later without changing the endpoint's contract.
+- `/finalize` now _synchronously_ renders the report (~1–2s for dev data). The spec's `future`-based async wrapper is deferred — easy to add later without changing the endpoint's contract.
 - Upload to Firebase Storage is deferred to Phase 10 — for now, the generated HTML lives in `reports-out/<lecture_id>.html` and is streamed via `GET /api/lectures/<id>/report-file`.
 
 **Brevo stub mode**
+
 - When `BREVO_API_KEY` is empty in `.Renviron`, `send_email()` returns `{status: "stubbed"}` without calling the Brevo API. Lets the whole notification flow work end-to-end without a signup. Audit doc is still written to `notifications` either way.
 
 **Port hygiene**
+
 - Crashed Rscript processes sometimes keep port 8000 bound as a zombie. If boot fails with `createTcpServer: address already in use`, `netstat -ano | findstr :8000` + `taskkill /PID <pid> /F`.
 
 ---
@@ -1007,22 +1103,26 @@ Phase 3 is **complete** as of 2026-04-22. Deliberate deviations and additions du
 **Status: ✅ complete (2026-04-22).** All six scripts + `load_data.R` produce plots in `r-analysis/plots/`. Deviations in §4.4 below.
 
 ### 4.1 Setup
+
 - [ ] `cd r-analysis`
 - [ ] Open RStudio, set working directory to this folder
 - [ ] Install packages:
   ```r
-  install.packages(c("dplyr", "ggplot2", "shiny", "shinydashboard", 
-                     "httr", "jsonlite", "lubridate", "tidyr", 
+  install.packages(c("dplyr", "ggplot2", "shiny", "shinydashboard",
+                     "httr", "jsonlite", "lubridate", "tidyr",
                      "cluster", "factoextra", "DT", "plotly"))
   ```
 
 ### 4.2 Data loader script (`load_data.R`)
+
 Because the backend is also R, the analysis scripts can load data **two ways** — pick whichever fits:
+
 - [ ] `load_from_api()` — `httr::GET("http://localhost:8000/api/emotions/csv")` for a quick HTTP pull (useful when Shiny is deployed separately from the backend)
 - [ ] `load_from_csv()` — reads `../data/emotions.csv` directly (fastest; use for offline analysis)
 - [ ] `load_from_firestore()` — calls the same `R/firestore.R` helpers the backend uses (via `source("../backend-r-plumber/R/firestore.R")`) so you don't duplicate Firestore code. Preferred for Shiny when deployed on the same host as the backend.
 
 ### 4.3 Analysis scripts (one per required analysis)
+
 - [ ] `01_emotion_frequency.R` — frequency distribution per emotion using `dplyr::count()` + `ggplot2::geom_bar()`
 - [ ] `02_emotion_by_lecture.R` — emotion variation across lectures using faceted bar charts
 - [ ] `03_engagement_score.R` — calculate mean engagement score per lecture and per student
@@ -1034,12 +1134,14 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
 ### 4.4 Phase 4 implementation notes (what actually got built vs. this spec)
 
 **What's done**
+
 - `load_data.R` — three loaders (`load_from_csv`, `load_from_api`, `load_from_firestore`) + `attach_doctor_id()` (maps `lecture_id` → `doctor_id` since `emotions` rows don't carry the latter).
 - All six analysis scripts (01–06) produce PNGs in `r-analysis/plots/`.
 - Clustering scripts (05, 06) handle the thin-data case (< 3 groups → render a labelled bar chart instead of fake k-means).
 - `load_data.R` walks up from `getwd()` to find the repo root so scripts work from the repo root, `r-analysis/`, or `r-analysis/shiny/` — no hard-coded relative paths.
 
 **CSV schema drift fix (data layer, not the scripts)**
+
 - The capture app's `_CSV_COLUMNS` list grew from 9 → 11 columns when yawn detection was added. Old rows on disk had the pre-yawning header; new rows had 11 fields under the old header → readr width-mismatch warnings + occasional NaNs.
 - Fix: header rewritten to the 11-column form; old pre-yawning rows padded with `,False,` for the new `yawning`/`yawn_reason` fields. One-time migration; going forward the writer and reader agree.
 - Lesson: whenever you add a column to `_CSV_COLUMNS` in `firebase_writer.py`, pad any existing CSV rows or the loader will warn.
@@ -1069,17 +1171,18 @@ Because the backend is also R, the analysis scripts can load data **two ways** �
 
 **Status: 🟡 partial (2026-04-22).**
 
-| App | Status |
-|---|---|
-| `web-admin/`  | ✅ complete — full CRUD, analytics, report download, settings, profile, role-mismatch gate. |
-| `web-doctor/` | ⏳ not started. |
-| `web-student/` | ⏳ not started. |
+| App            | Status                                                                                      |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| `web-admin/`   | ✅ complete — full CRUD, analytics, report download, settings, profile, role-mismatch gate. |
+| `web-doctor/`  | ⏳ not started.                                                                             |
+| `web-student/` | ⏳ not started.                                                                             |
 
 Implementation deviations for `web-admin` are in §6.9 below. `web-doctor` and `web-student` should be built off the **same skeleton** (sections 6.1–6.3 + 6.7) with only the pages (6.4 or 6.5) swapped in.
 
 The web frontend is **three separate Vite + React projects**, not one app with role-based routes. Each app only knows about its own role's pages. A student opening the doctor URL simply gets the doctor login screen — and if they authenticate successfully, the app detects the role mismatch and signs them back out with a message telling them which URL to use.
 
 **Why three apps and not one:**
+
 - Independent deploys — shipping an admin bugfix can't break the student app
 - Smaller bundles per role
 - Cleaner auditing — each app has a narrower attack surface and a single role in its code
@@ -1100,11 +1203,11 @@ For each of `web-student`, `web-doctor`, `web-admin`:
   ```
 - [ ] Set up Tailwind: follow https://tailwindcss.com/docs/guides/vite
 - [ ] **Pin the dev port** in `vite.config.js` so the R backend's CORS allowlist is deterministic:
-  | App | Dev port |
-  |---|---|
-  | web-student | 5173 |
-  | web-doctor | 5174 |
-  | web-admin | 5175 |
+      | App | Dev port |
+      |---|---|
+      | web-student | 5173 |
+      | web-doctor | 5174 |
+      | web-admin | 5175 |
   ```js
   // vite.config.js
   import { defineConfig } from "vite";
@@ -1115,33 +1218,39 @@ For each of `web-student`, `web-doctor`, `web-admin`:
   });
   ```
 - [ ] Create `src/firebase.js` with your Firebase config (from Phase 1) **and emulator connectors gated by `import.meta.env.DEV`** — **this file is byte-identical across the three apps**:
+
   ```js
   import { initializeApp } from "firebase/app";
   import { getAuth, connectAuthEmulator } from "firebase/auth";
   import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
   import { getStorage, connectStorageEmulator } from "firebase/storage";
 
-  const app = initializeApp({ /* firebaseConfig from Phase 1 — same project for all three apps */ });
+  const app = initializeApp({
+    /* firebaseConfig from Phase 1 — same project for all three apps */
+  });
   export const auth = getAuth(app);
   export const db = getFirestore(app);
   export const storage = getStorage(app);
 
   if (import.meta.env.DEV) {
-    connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
+    connectAuthEmulator(auth, "http://127.0.0.1:9099", {
+      disableWarnings: true,
+    });
     connectFirestoreEmulator(db, "127.0.0.1", 8080);
     connectStorageEmulator(storage, "127.0.0.1", 9199);
   }
   ```
+
 - [ ] In `.env.development` set `VITE_API_URL=http://localhost:8000` (R Plumber); in `.env.production` point it at the deployed backend.
 - [ ] **Declare the app's role** in `src/appRole.js`. This is the single source of truth for the role-mismatch gate:
   ```js
   // src/appRole.js — EACH APP USES A DIFFERENT VALUE
-  export const APP_ROLE = "student";   // "student" | "doctor" | "admin"
+  export const APP_ROLE = "student"; // "student" | "doctor" | "admin"
   ```
 
 ### 6.2 Shared folder skeleton inside `src/` (identical structure in all three apps)
 
-- [ ] `components/` — reusable UI for *this* app only (no cross-role components). Typical: `Navbar`, `Sidebar`, `StatCard`, `CrudTable`, `LoadingSpinner`. Keep the component set minimal — the three apps are small enough that shared generic UI is fine to duplicate.
+- [ ] `components/` — reusable UI for _this_ app only (no cross-role components). Typical: `Navbar`, `Sidebar`, `StatCard`, `CrudTable`, `LoadingSpinner`. Keep the component set minimal — the three apps are small enough that shared generic UI is fine to duplicate.
 - [ ] `pages/` — **only the pages for this app's role** (see 6.4–6.6). No `common/` cross-role folder; `Login`, `NotFound`, `Profile` live at the top of `pages/` in each app.
 - [ ] `services/` — `api.js` (axios wrapper — automatically attaches Firebase ID token) and `firebase.js` (auth helpers — `loginWithEmail`, `loginWithCustomToken`, `logout`)
 - [ ] `hooks/` — `useAuth`, `useLectures`, `useEmotions`, etc. Only hooks this app uses.
@@ -1170,7 +1279,7 @@ For each of `web-student`, `web-doctor`, `web-admin`:
 ### 6.4 `web-student` pages (read-only — students never capture video from the browser)
 
 - [ ] **Login** — email+password + **face sign-in**. The role picker from the unified design is gone; this app IS the student portal, so the face-login POST sends `role: "student"` implicitly.
-- [ ] **StudentDashboard** — list of enrolled lectures + personal avg engagement snapshot, plus a **"You vs. class average"** comparison card fed by `/api/analytics/student/<self>/comparison`. Shows *only* the student's own number and the anonymized class mean — never individual peers. Show a badge "🔴 Live now" on lectures whose `status == "recording"`.
+- [ ] **StudentDashboard** — list of enrolled lectures + personal avg engagement snapshot, plus a **"You vs. class average"** comparison card fed by `/api/analytics/student/<self>/comparison`. Shows _only_ the student's own number and the anonymized class mean — never individual peers. Show a badge "🔴 Live now" on lectures whose `status == "recording"`.
 - [ ] **StudentLectures** — read-only list of enrolled lectures + schedule; each row links to the lecture's report PDF (`/api/lectures/<id>/report`) and transcript, if available. For a lecture that's currently recording, the row links to **StudentLiveLecture** instead.
 - [ ] **StudentLiveLecture** — opens while a lecture is `status == "recording"`. Subscribes to the `transcripts/{id}/segments` subcollection via Firebase JS SDK `onSnapshot` (ordered by `chunk_index`) and renders a rolling caption panel that auto-scrolls to the newest line. RTL-aware for Arabic. Auto-closes when the transcript doc's `completed` flips to `true`; replaces itself with a "View full transcript + download PDF" summary that points at the finished artifacts. **This is the live-captions experience for students sitting in class (or watching remotely).**
 - [ ] **StudentHistory** — own engagement history chart (Recharts) across all attended lectures, with a dashed overlay line showing the anonymized class average per lecture
@@ -1198,7 +1307,7 @@ For each of `web-student`, `web-doctor`, `web-admin`:
 
 ### 6.6 `web-admin` pages (full system control — **no face sign-in in this app at all**)
 
-- [ ] **Login** — email+password **only**. Do not render the face-sign-in UI in this app. Face sign-in is weaker than a password (photo-spoofable) and the admin role has too much power. The "admin face-login 403" mentioned in Phase 3 is enforced here by *absence* on the client as well as by the backend reject.
+- [ ] **Login** — email+password **only**. Do not render the face-sign-in UI in this app. Face sign-in is weaker than a password (photo-spoofable) and the admin role has too much power. The "admin face-login 403" mentioned in Phase 3 is enforced here by _absence_ on the client as well as by the backend reject.
 - [ ] **AdminDashboard** — system-wide KPI cards from `GET /api/admin/stats` (add system-wide sleep rate and top gestures observed)
 - [ ] **AdminDoctors** — **full CRUD on doctors**. Table with search, create modal, edit modal, delete confirm. Each row shows name, email, department, # of lectures, active/inactive. **Plus a face-photo upload field** on create/edit that POSTs to `/api/doctors/<id>/face`. Without an enrollment photo, the doctor cannot use face sign-in on the doctor app.
 - [ ] **AdminStudents** — **full CRUD on students**. Same table pattern, **plus a face-photo upload field** on create/edit that POSTs to `/api/students/<id>/face` and shows whether enrollment succeeded (face detected in photo). Without an enrollment photo, the classroom app cannot recognize the student **and** the student cannot use face sign-in on the student app.
@@ -1222,11 +1331,13 @@ For each of `web-student`, `web-doctor`, `web-admin`:
   const me = await api.get("/api/me");
   if (me.data.role !== APP_ROLE) {
     await signOut(auth);
-    throw new Error(`This is the ${APP_ROLE} portal. You're signed in as a ${me.data.role}.`);
+    throw new Error(
+      `This is the ${APP_ROLE} portal. You're signed in as a ${me.data.role}.`,
+    );
   }
   ```
   Surface the error as a prominent banner on the login page with a link to the correct app's URL (read from `import.meta.env.VITE_STUDENT_URL`, `VITE_DOCTOR_URL`, `VITE_ADMIN_URL` — set these in `.env.production` in each app so the message can link out).
-- [ ] **Security** — identical rules to the unified design, restated because they apply *per app*:
+- [ ] **Security** — identical rules to the unified design, restated because they apply _per app_:
   - [ ] Use Firebase Auth on the client
   - [ ] Keep **all** Firestore writes on the backend (R Plumber) — the frontend only READS via the API and never writes to Firestore directly. This keeps role checks server-side.
   - [ ] The axios interceptor must attach the current user's Firebase ID token to every request
@@ -1246,11 +1357,13 @@ For each of `web-student`, `web-doctor`, `web-admin`:
 The `web-admin` app is the reference implementation that `web-doctor` and `web-student` should clone. Key details of what was actually built:
 
 **Stack**
+
 - Vite 5 + React 18 + Tailwind 3 + Firebase JS SDK v10 + axios 1.7 + Recharts 2 + React Router 6.
 - `vite.config.js` pins port to 5175 with `strictPort: true`.
 - 277 npm packages installed; lock file (`package-lock.json`) committed.
 
 **Files that matter**
+
 - `src/appRole.js` — exports `APP_ROLE = "admin"`. Single source of truth for the mismatch gate.
 - `src/firebase.js` — shared across all three web apps; emulator connectors gated by `import.meta.env.DEV`.
 - `src/services/api.js` — axios client with an interceptor that attaches `auth.currentUser.getIdToken()` to every request. **Copy verbatim into web-doctor and web-student.**
@@ -1259,19 +1372,24 @@ The `web-admin` app is the reference implementation that `web-doctor` and `web-s
 - `src/pages/` — `Login`, `AdminDashboard`, `AdminDoctors`, `AdminStudents`, `AdminLectures`, `AdminAnalytics`, `AdminSettings`, `Profile`, `NotFound`.
 
 **Response-shape quirk handled in every page**
+
 - Plumber's default serializer wraps length-1 scalars as arrays (`"role":["admin"]`). Every page uses a `v = (x) => Array.isArray(x) ? x[0] : x` helper and a `normalise(row)` wrapper to flatten results. **`web-doctor` and `web-student` will need the same helper.**
 
 **Admin bootstrap script**
+
 - `scripts/bootstrap-admin.mjs` — one-shot Node script that hits the Auth-emulator `signUp` endpoint + patches `users/<uid>` and `admins/admin_001`. Run with `npm run bootstrap-admin`. Idempotent: on re-run it signs in, reuses the uid, and re-patches the docs.
 - Default creds: `admin@classroom.local` / `admin-password-change-me` (overridable via `ADMIN_EMAIL`, `ADMIN_PASSWORD` env vars).
 
 **Face upload (Doctors + Students pages)**
+
 - Each CRUD table row has an "Upload face" link that triggers a hidden `<input type="file">`. On change, wraps the file in `FormData` and `POST`s to `/api/{doctors|students}/<id>/face` — plumber parses multipart via its built-in `multi` parser; backend shells out to `encode_face.py` and saves the 128-d encoding. Works end-to-end against the emulator.
 
 **Temporary-password UX**
+
 - After create, if the response contains `temporary_password`, it's shown in a green banner inside the create modal so the admin can copy it. See also §3.7 "Temp password on create" for the backend-side quirk.
 
 **Known limitations in `web-admin`**
+
 - No email/password sanity checks on the client — empty-name creates will 400 from the backend and the error bubbles as an `alert()`. Cosmetic.
 - The analytics page uses Plumber's column-oriented response shape (`{lecture_id: [...], n: [...]}`) — Recharts wants row-oriented, so a `columnsToRows()` helper runs on every response. This is project-wide and should be promoted to a shared util when `web-doctor` lands.
 - Storage upload of face photos is still deferred (spec §1.4 / §3.7). Currently only the 128-d encoding is saved, not the raw JPEG.
@@ -1285,6 +1403,7 @@ The `web-admin` app is the reference implementation that `web-doctor` and `web-s
 Mirrors Phase 6: three independent Expo projects — `mobile-student/`, `mobile-doctor/`, `mobile-admin/`. Each app ships only its own role's screens. Same role-mismatch gate as the web apps; same "face sign-in absent from admin app" rule.
 
 **Why three apps (same reasoning as web):**
+
 - Each role gets a distinct bundle identifier → they show up as three separate icons on the student/doctor/admin's phone, can be installed independently, and can be distributed to the right people via their own install link or store listing
 - Smaller bundle size per install
 - Independent release cadence — fixing an admin-only bug never touches the student build
@@ -1306,14 +1425,16 @@ For each of `mobile-student`, `mobile-doctor`, `mobile-admin`:
   None of these apps captures video for emotion detection — that's the classroom PC's job. `expo-camera` is used **only on the LoginScreen** of `mobile-student` and `mobile-doctor` for the face sign-in flow. `expo-image-picker` is used **only in `mobile-admin`** for uploading student/doctor enrollment photos.
 - [ ] **Distinct Expo app identity per app** in `app.json` / `app.config.js`:
 
-  | App | `slug` | `scheme` | `ios.bundleIdentifier` | `android.package` | Dev port |
-  |---|---|---|---|---|---|
-  | mobile-student | `classroom-student` | `classroom-student` | `edu.<college>.emotions.student` | `edu.<college>.emotions.student` | 19006 |
-  | mobile-doctor | `classroom-doctor` | `classroom-doctor` | `edu.<college>.emotions.doctor` | `edu.<college>.emotions.doctor` | 19007 |
-  | mobile-admin | `classroom-admin` | `classroom-admin` | `edu.<college>.emotions.admin` | `edu.<college>.emotions.admin` | 19008 |
+  | App            | `slug`              | `scheme`            | `ios.bundleIdentifier`           | `android.package`                | Dev port |
+  | -------------- | ------------------- | ------------------- | -------------------------------- | -------------------------------- | -------- |
+  | mobile-student | `classroom-student` | `classroom-student` | `edu.<college>.emotions.student` | `edu.<college>.emotions.student` | 19006    |
+  | mobile-doctor  | `classroom-doctor`  | `classroom-doctor`  | `edu.<college>.emotions.doctor`  | `edu.<college>.emotions.doctor`  | 19007    |
+  | mobile-admin   | `classroom-admin`   | `classroom-admin`   | `edu.<college>.emotions.admin`   | `edu.<college>.emotions.admin`   | 19008    |
 
   Start each app's dev server with its pinned port: `npx expo start --port 19006` (etc). Pinning matters so the backend's CORS allowlist is deterministic and so you can run all three dev servers at once.
+
 - [ ] Create `firebaseConfig.js` **byte-identical across all three apps** — same Firebase project. Because a physical phone cannot reach your dev machine via `localhost`, use the machine's **LAN IP** (e.g. `192.168.1.15`) in the connect calls. The Android emulator's special IP for the host is `10.0.2.2`.
+
   ```js
   import { initializeApp } from "firebase/app";
   import { getAuth, connectAuthEmulator } from "firebase/auth";
@@ -1321,7 +1442,9 @@ For each of `mobile-student`, `mobile-doctor`, `mobile-admin`:
   import { getStorage, connectStorageEmulator } from "firebase/storage";
 
   const HOST = __DEV__ ? "192.168.1.15" : null; // put your dev machine's LAN IP here
-  const app = initializeApp({ /* firebaseConfig — same project for all three apps */ });
+  const app = initializeApp({
+    /* firebaseConfig — same project for all three apps */
+  });
   export const auth = getAuth(app);
   export const db = getFirestore(app);
   export const storage = getStorage(app);
@@ -1332,10 +1455,11 @@ For each of `mobile-student`, `mobile-doctor`, `mobile-admin`:
     connectStorageEmulator(storage, HOST, 9199);
   }
   ```
+
 - [ ] Also set `API_URL=http://192.168.1.15:8000` (or your LAN IP) in an Expo env / `app.config.js` so the axios client can reach the R Plumber backend from the phone.
 - [ ] **Declare the app's role** in `appRole.js` (same single-source-of-truth pattern as the web apps):
   ```js
-  export const APP_ROLE = "student";   // "student" | "doctor" | "admin" — one per app
+  export const APP_ROLE = "student"; // "student" | "doctor" | "admin" — one per app
   ```
 
 ### 7.2 Shared folder skeleton inside `src/` (same structure in all three apps)
@@ -1504,6 +1628,7 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
   - [ ] `admin.<college>.edu` → web-admin
 
   Each deploy has its own build pipeline and its own `.env.production`. No shared monorepo build is required — the three apps are fully independent.
+
 - [ ] **Shiny dashboard** → deploy to shinyapps.io (free for 5 apps). Point its data loader at the deployed Plumber URL.
 - [ ] **React Native — build all three apps independently with EAS**, each with a distinct bundle identifier (EAS will reject two apps sharing one):
   - [ ] `mobile-student` → `edu.<college>.emotions.student`
@@ -1511,6 +1636,7 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
   - [ ] `mobile-admin` → `edu.<college>.emotions.admin`
 
   Build command is `eas build --platform android` (or `ios`) run once per app. Each produces its own APK/IPA that the student, doctor, and admin install separately — they appear as three distinct icons on the device. If you later submit to stores, each gets its own store listing.
+
 - [ ] Update all six frontend `.env` files with the deployed Plumber backend URL and the sibling app URLs (so the role-mismatch banner on each app can show the user where to go).
 
 ---
@@ -1572,7 +1698,7 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
 - **Role checks live on the backend.** The frontend hiding a button is UX, not security. Every admin-only endpoint must re-verify `role == "admin"` server-side before touching Firestore.
 - **Don't let admins demote themselves.** Block deleting the last active admin, and block an admin from changing their own role — otherwise you can lock yourself out.
 - **Soft-delete, don't hard-delete.** Deleting a doctor or student should flip `active: false`, not wipe the row — their historical `emotions` data must stay intact for analytics.
-- **Six-app drift is the biggest risk** now that each role has its own web *and* its own mobile app. Keep the R Plumber endpoints as the single shared API contract. Parity is per-role pair (web-student ↔ mobile-student, etc.) — add any new feature to both sides of the pair in the same task, not "later." Do **not** try to enforce parity across roles — the whole point of the split is that each role's surface is independent.
+- **Six-app drift is the biggest risk** now that each role has its own web _and_ its own mobile app. Keep the R Plumber endpoints as the single shared API contract. Parity is per-role pair (web-student ↔ mobile-student, etc.) — add any new feature to both sides of the pair in the same task, not "later." Do **not** try to enforce parity across roles — the whole point of the split is that each role's surface is independent.
 - **Six-app cross-references** — every place an instruction used to say "the web app" or "the mobile app," it now means "the specific role's app." When writing new instructions, name the exact app (e.g. `web-doctor`, `mobile-admin`) so no one has to guess which one you meant.
 - **Role-mismatch gate is UX, not security.** If someone patches `APP_ROLE` in devtools and signs in, the client will happily accept them — but every backend call with their real role's token will get 403s on endpoints that don't match. The real boundary is always server-side.
 - **Distinct bundle identifiers for the three mobile apps** (`edu.<college>.emotions.{student,doctor,admin}`). EAS / App Store / Play Store each refuse to host two apps with the same ID, so pick them up front in each app's `app.config.js` before the first EAS build.
@@ -1582,14 +1708,14 @@ Do one full dry-run of this flow with a dummy 5-minute "lecture" and a real face
 
 ## 📅 Suggested Timeline (if working alone)
 
-| Week | Phase |
-|------|-------|
-| 1 | Phase 0, 1, 2 (setup + Python classroom capture app with face recognition) |
-| 2 | Phase 3 (R Plumber backend — auth, role guards, CRUD, Firestore client, face-upload endpoint) |
-| 3 | Phase 4, 5 (R analysis + Shiny) |
-| 4 | Phase 6 (React web) |
-| 5 | Phase 7 (React Native) |
-| 6 | Phase 8, 9 (integration + testing) |
-| 7 | Phase 10, 11 (deploy + docs) |
+| Week | Phase                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------- |
+| 1    | Phase 0, 1, 2 (setup + Python classroom capture app with face recognition)                    |
+| 2    | Phase 3 (R Plumber backend — auth, role guards, CRUD, Firestore client, face-upload endpoint) |
+| 3    | Phase 4, 5 (R analysis + Shiny)                                                               |
+| 4    | Phase 6 (React web)                                                                           |
+| 5    | Phase 7 (React Native)                                                                        |
+| 6    | Phase 8, 9 (integration + testing)                                                            |
+| 7    | Phase 10, 11 (deploy + docs)                                                                  |
 
-Good luck! 🚀
+
