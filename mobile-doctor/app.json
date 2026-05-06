@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Classroom Doctor",
+    "slug": "classroom-doctor",
+    "version": "1.0.0",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "edu.college.emotions.doctor"
+    },
+    "android": {
+      "package": "edu.college.emotions.doctor"
+    },
+    "web": {},
+    "scheme": "classroom-doctor",
+    "plugins": [["expo-router"], ["expo-camera"]]
+  }
+}
