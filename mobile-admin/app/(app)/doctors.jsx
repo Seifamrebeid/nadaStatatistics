@@ -19,7 +19,7 @@ export default function DoctorsScreen() {
   useFocusEffect(
     React.useCallback(() => {
       fetchDoctors();
-    }, [])
+    }, []),
   );
 
   const fetchDoctors = async () => {
@@ -75,9 +75,7 @@ export default function DoctorsScreen() {
             {item.department && (
               <Text style={styles.department}>Dept: {item.department}</Text>
             )}
-            <Text style={styles.id}>
-              ID: {item.doctor_id || item.id}
-            </Text>
+            <Text style={styles.id}>ID: {item.doctor_id || item.id}</Text>
           </TouchableOpacity>
         )}
         ListEmptyComponent={

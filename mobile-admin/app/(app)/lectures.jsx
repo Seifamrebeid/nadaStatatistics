@@ -19,7 +19,7 @@ export default function LecturesScreen() {
   useFocusEffect(
     React.useCallback(() => {
       fetchLectures();
-    }, [])
+    }, []),
   );
 
   const fetchLectures = async () => {
@@ -71,18 +71,14 @@ export default function LecturesScreen() {
             }
           >
             <Text style={styles.subject}>{item.subject_name}</Text>
-            <Text style={styles.doctor}>
-              👨‍⚕️ {item.doctor_name || "N/A"}
-            </Text>
+            <Text style={styles.doctor}>👨‍⚕️ {item.doctor_name || "N/A"}</Text>
             <View style={styles.meta}>
               <Text style={styles.date}>{item.date || "No date"}</Text>
               <Text style={styles.students}>
                 {item.enrolled_count || 0} students
               </Text>
             </View>
-            <Text style={styles.id}>
-              ID: {item.lecture_id || item.id}
-            </Text>
+            <Text style={styles.id}>ID: {item.lecture_id || item.id}</Text>
           </TouchableOpacity>
         )}
         ListEmptyComponent={

@@ -35,7 +35,7 @@ export default function CreateStudentScreen() {
       const response = await createStudent(formData);
       Alert.alert(
         "Success",
-        `Student created!\nTemp Password: ${response.data.temporary_password || "Check email"}`
+        `Student created!\nTemp Password: ${response.data.temporary_password || "Check email"}`,
       );
       router.back();
     } catch (error) {

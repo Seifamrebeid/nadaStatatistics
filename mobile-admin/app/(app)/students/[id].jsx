@@ -11,11 +11,7 @@ import {
   Switch,
 } from "react-native";
 import { useRouter, useLocalSearchParams } from "expo-router";
-import {
-  getStudent,
-  updateStudent,
-  deleteStudent,
-} from "../../../api";
+import { getStudent, updateStudent, deleteStudent } from "../../../api";
 
 export default function StudentDetailScreen() {
   const router = useRouter();
@@ -86,7 +82,10 @@ export default function StudentDetailScreen() {
             Alert.alert("Deleted", "Student has been deleted");
             router.back();
           } catch (error) {
-            Alert.alert("Error", error.response?.data?.message || error.message);
+            Alert.alert(
+              "Error",
+              error.response?.data?.message || error.message,
+            );
           }
         },
       },

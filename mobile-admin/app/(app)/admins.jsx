@@ -19,7 +19,7 @@ export default function AdminsScreen() {
   useFocusEffect(
     React.useCallback(() => {
       fetchAdmins();
-    }, [])
+    }, []),
   );
 
   const fetchAdmins = async () => {
@@ -72,9 +72,7 @@ export default function AdminsScreen() {
           >
             <Text style={styles.name}>{item.name}</Text>
             <Text style={styles.email}>{item.email}</Text>
-            <Text style={styles.id}>
-              ID: {item.admin_id || item.id}
-            </Text>
+            <Text style={styles.id}>ID: {item.admin_id || item.id}</Text>
           </TouchableOpacity>
         )}
         ListEmptyComponent={
