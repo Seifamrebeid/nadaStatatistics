@@ -6,8 +6,53 @@
 
 library(jsonlite)
 
-.python_bin <- function() require_env("PYTHON_BIN")
-.scripts_dir <- function() require_env("FACE_SCRIPTS_DIR")
+.scripts_dir <- function() {
+  from_env <- Sys.getenv("FACE_SCRIPTS_DIR", unset = "")
+  if (nzchar(from_env) && dir.exists(from_env)) {
+    return(normalizePath(from_env, winslash = "/", mustWork = TRUE))
+  }
+
+  # Default to the sibling classroom-app-python folder in this repo.
+  fallback <- normalizePath(file.path(getwd(), "..", "classroom-app-python"),
+                            winslash = "/", mustWork = FALSE)
+  if (dir.exists(fallback)) return(fallback)
+
+  stop(
+    "FACE_SCRIPTS_DIR is not set and fallback path ../classroom-app-python was not found",
+    call. = FALSE
+  )
+}
+
+.python_bin <- function() {
+  from_env <- Sys.getenv("PYTHON_BIN", unset = "")
+  if (nzchar(from_env) && file.exists(from_env)) {
+    return(normalizePath(from_env, winslash = "/", mustWork = TRUE))
+  }
+
+  scripts <- .scripts_dir()
+  candidates <- c(
+    file.path(scripts, "venv", "Scripts", "python.exe"),
+    file.path(scripts, ".venv-win", "Scripts", "python.exe"),
+    file.path(scripts, ".venv", "Scripts", "python.exe")
+  )
+
+  hit <- candidates[file.exists(candidates)]
+  if (length(hit) > 0) {
+    return(normalizePath(hit[[1]], winslash = "/", mustWork = TRUE))
+  }
+
+  # Last resort for environments where python is available on PATH.
+  py <- Sys.which("python")
+  if (nzchar(py)) return(py)
+
+  stop(
+    paste(
+      "required env var PYTHON_BIN is not set and no Python runtime was found.",
+      "Set PYTHON_BIN to your venv python, e.g. ../classroom-app-python/venv/Scripts/python.exe"
+    ),
+    call. = FALSE
+  )
+}
 
 #' Write raw image bytes to a temp file; returns the path.
 #' Caller is responsible for cleanup (tempfile() is unlinked on session end too).

@@ -5,7 +5,7 @@ Local emulators for Auth, Firestore, and Storage. Everything in dev runs against
 ## Ports
 
 | Service     | Port |
-|-------------|------|
+| ----------- | ---- |
 | Auth        | 9099 |
 | Firestore   | 8080 |
 | Storage     | 9199 |
@@ -14,6 +14,7 @@ Local emulators for Auth, Firestore, and Storage. Everything in dev runs against
 ## Project ID
 
 `.firebaserc` is set to `emotion-detection-dev` as a placeholder. **When you create the real Firebase project, replace this value in every file below.** All six frontend apps use the same Firebase project, so each of their config files ends up with the same `projectId`:
+
 - `.firebaserc`
 - `classroom-app-python/.env` (`FIREBASE_PROJECT_ID`)
 - `backend-r-plumber/.Renviron` (`FIREBASE_PROJECT_ID`)
@@ -31,6 +32,18 @@ The emulator accepts any project id, so the placeholder works for dev; the value
 ```bash
 cd firebase-emulator
 firebase emulators:start --import=./seed --export-on-exit=./seed
+```
+
+Recommended (auto-import old exports + auto-save on exit):
+
+```powershell
+# Windows PowerShell
+./scripts/start-emulators.ps1
+```
+
+```bash
+# macOS/Linux
+sh scripts/start-emulators.sh
 ```
 
 - `--import` / `--export-on-exit` persists data between runs. The `seed/` directory is gitignored — emulator state is a developer-local thing.
