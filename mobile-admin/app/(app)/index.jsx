@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -7,33 +7,34 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  RefreshControl,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { auth } from "../../firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import axios from "axios";
+import Screen from "../../components/Screen";
+import Card from "../../components/Card";
+import Button from "../../components/Button";
+import { colors, radii, spacing, shadow } from "../../components/theme";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+const TILES = [
+  { key: "students", label: "Students",  icon: "👥", route: "/(app)/students", accent: colors.brand500 },
+  { key: "doctors",  label: "Doctors",   icon: "🩺", route: "/(app)/doctors",  accent: colors.info },
+  { key: "admins",   label: "Admins",    icon: "🛡️", route: "/(app)/admins",   accent: colors.warning },
+  { key: "lectures", label: "Lectures",  icon: "📚", route: "/(app)/lectures", accent: "#8b5cf6" },
+];
 
 export default function AdminHomeScreen() {
   const router = useRouter();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState(null);
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        fetchDashboardData(currentUser);
-      } else {
-        setLoading(false);
-      }
-    });
-    return unsubscribe;
-  }, []);
-
-  const fetchDashboardData = async (currentUser) => {
+  const fetchDashboardData = useCallback(async (currentUser) => {
     try {
       const token = await currentUser.getIdToken();
       const res = await axios.get(`${API_URL}/health`, {
@@ -42,9 +43,25 @@ export default function AdminHomeScreen() {
       setStats(res.data);
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error);
-    } finally {
-      setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        await fetchDashboardData(currentUser);
+      }
+      setLoading(false);
+    });
+    return unsubscribe;
+  }, [fetchDashboardData]);
+
+  const onRefresh = async () => {
+    if (!user) return;
+    setRefreshing(true);
+    await fetchDashboardData(user);
+    setRefreshing(false);
   };
 
   const handleLogout = async () => {
@@ -52,143 +69,178 @@ export default function AdminHomeScreen() {
       await signOut(auth);
       router.replace("/(auth)/login");
     } catch (error) {
-      Alert.alert("Logout Failed", error.message);
+      Alert.alert("Logout failed", error.message);
     }
   };
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#007AFF" />
-      </View>
+      <Screen>
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color={colors.brand600} />
+        </View>
+      </Screen>
     );
   }
 
+  const initials = (user?.email || "?").slice(0, 2).toUpperCase();
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Admin Dashboard</Text>
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Text style={styles.logoutButtonText}>Logout</Text>
-        </TouchableOpacity>
+    <Screen>
+      <View style={styles.topbar}>
+        <View style={styles.brandRow}>
+          <View style={styles.logo}>
+            <Text style={styles.logoText}>N</Text>
+          </View>
+          <View>
+            <Text style={styles.brand}>NadaAdmin</Text>
+            <Text style={styles.brandSub}>Mobile console</Text>
+          </View>
+        </View>
+        <Button title="Log out" variant="secondary" size="sm" onPress={handleLogout} />
       </View>
 
-      {user && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Welcome, {user.email}</Text>
-          <Text style={styles.cardSubtitle}>Admin Portal</Text>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand600} />
+        }
+      >
+        {user && (
+          <Card style={styles.welcome}>
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>{initials}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.welcomeTitle}>Welcome back</Text>
+              <Text style={styles.welcomeSub} numberOfLines={1}>
+                {user.email}
+              </Text>
+            </View>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>Admin</Text>
+            </View>
+          </Card>
+        )}
+
+        {stats && (
+          <Card style={{ marginTop: spacing.md }}>
+            <Text style={styles.sectionTitle}>API status</Text>
+            <View style={styles.statsRow}>
+              <Stat label="Status"  value={String(stats.status ?? "—")} />
+              <Stat label="Mode"    value={String(stats.mode ?? "—")} />
+              <Stat label="Project" value={String(stats.project ?? "—")} />
+            </View>
+          </Card>
+        )}
+
+        <Text style={styles.menuTitle}>Manage</Text>
+        <View style={styles.tiles}>
+          {TILES.map((t) => (
+            <TouchableOpacity
+              key={t.key}
+              activeOpacity={0.85}
+              onPress={() => router.push(t.route)}
+              style={styles.tile}
+            >
+              <View style={[styles.tileIcon, { backgroundColor: t.accent + "22" }]}>
+                <Text style={{ fontSize: 22 }}>{t.icon}</Text>
+              </View>
+              <Text style={styles.tileLabel}>{t.label}</Text>
+              <Text style={styles.tileChev}>›</Text>
+            </TouchableOpacity>
+          ))}
         </View>
-      )}
+      </ScrollView>
+    </Screen>
+  );
+}
 
-      {stats && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>API Status</Text>
-          <Text style={styles.cardText}>Status: {stats.status}</Text>
-          <Text style={styles.cardText}>Mode: {stats.mode}</Text>
-          <Text style={styles.cardText}>Project: {stats.project}</Text>
-        </View>
-      )}
-
-      <View style={styles.menuSection}>
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() => router.push("/(app)/students")}
-        >
-          <Text style={styles.menuItemText}>👥 Manage Students</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() => router.push("/(app)/doctors")}
-        >
-          <Text style={styles.menuItemText}>👨‍⚕️ Manage Doctors</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() => router.push("/(app)/admins")}
-        >
-          <Text style={styles.menuItemText}>⚙️ Manage Admins</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() => router.push("/(app)/lectures")}
-        >
-          <Text style={styles.menuItemText}>📚 Manage Lectures</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+function Stat({ label, value }) {
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={styles.statValue} numberOfLines={1}>{value}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f5f5f5",
-  },
-  header: {
+  loading: { flex: 1, alignItems: "center", justifyContent: "center" },
+  topbar: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    padding: 20,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
+    justifyContent: "space-between",
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    backgroundColor: colors.card,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
+  brandRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  logo: {
+    width: 36, height: 36, borderRadius: radii.md,
+    backgroundColor: colors.brand600,
+    alignItems: "center", justifyContent: "center",
+    ...shadow.card,
   },
-  logoutButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "#ff3b30",
-    borderRadius: 6,
+  logoText: { color: colors.white, fontWeight: "700" },
+  brand: { fontSize: 16, fontWeight: "700", color: colors.slate900 },
+  brandSub: { fontSize: 11, color: colors.slate500 },
+  scroll: { padding: spacing.lg, paddingBottom: 40 },
+  welcome: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
   },
-  logoutButtonText: {
-    color: "#fff",
-    fontWeight: "600",
+  avatar: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.brand100,
+    alignItems: "center", justifyContent: "center",
   },
-  card: {
-    margin: 15,
-    padding: 15,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
+  avatarText: { color: colors.brand700, fontWeight: "700" },
+  welcomeTitle: { fontSize: 14, fontWeight: "700", color: colors.slate900 },
+  welcomeSub: { fontSize: 12, color: colors.slate500, marginTop: 2 },
+  badge: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radii.pill,
+    backgroundColor: colors.brand50,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
+  badgeText: { color: colors.brand700, fontSize: 11, fontWeight: "600" },
+  sectionTitle: {
+    fontSize: 13, fontWeight: "700", color: colors.slate700,
+    marginBottom: spacing.sm,
   },
-  cardSubtitle: {
-    fontSize: 14,
-    color: "#666",
+  statsRow: { flexDirection: "row", gap: spacing.md, marginTop: spacing.xs },
+  statLabel: {
+    fontSize: 10, color: colors.slate500, fontWeight: "600",
+    letterSpacing: 0.5, textTransform: "uppercase",
   },
-  cardText: {
-    fontSize: 14,
-    color: "#555",
-    marginTop: 4,
+  statValue: { fontSize: 14, fontWeight: "600", color: colors.slate800, marginTop: 2 },
+  menuTitle: {
+    fontSize: 11, color: colors.slate500, fontWeight: "700",
+    letterSpacing: 0.6, textTransform: "uppercase",
+    marginTop: spacing.xl, marginBottom: spacing.sm, marginLeft: 4,
   },
-  menuSection: {
-    margin: 15,
+  tiles: { gap: spacing.sm },
+  tile: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    ...shadow.card,
   },
-  menuItem: {
-    paddingVertical: 16,
-    paddingHorizontal: 15,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
+  tileIcon: {
+    width: 40, height: 40, borderRadius: radii.md,
+    alignItems: "center", justifyContent: "center",
+    marginRight: spacing.md,
   },
-  menuItemText: {
-    fontSize: 16,
-    fontWeight: "500",
-    color: "#007AFF",
-  },
+  tileLabel: { flex: 1, fontSize: 15, fontWeight: "600", color: colors.slate800 },
+  tileChev: { fontSize: 20, color: colors.slate400 },
 });

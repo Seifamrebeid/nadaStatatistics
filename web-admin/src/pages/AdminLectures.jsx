@@ -22,22 +22,43 @@ export default function AdminLectures() {
   const [doctors, setDoctors] = useState([]);
   const [students, setStudents] = useState([]);
   const [weeks, setWeeks] = useState([]);
+  const [classes, setClasses] = useState([]);
+  const [subjects, setSubjects] = useState([]);
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  const [filterSubject, setFilterSubject] = useState("");
+  const [filterClass, setFilterClass] = useState("");
+  const [filterWeek, setFilterWeek] = useState("");
+  const [filterDoctor, setFilterDoctor] = useState("");
+
+  // Resolve a week_id back to its subject's owning doctor — so a lecture's
+  // doctor stays consistent with the subject the week belongs to.
+  function doctorForWeek(weekId) {
+    const wk = weeks.find((w) => w.id === weekId);
+    if (!wk) return "";
+    const cls = classes.find((c) => c.id === wk.class_id);
+    if (!cls) return "";
+    const subj = subjects.find((s) => s.id === cls.subject_id);
+    return subj?.doctor_id || "";
+  }
 
   async function loadAll() {
     try {
-      const [l, d, s, w] = await Promise.all([
+      const [l, d, s, w, c, subj] = await Promise.all([
         api.get("/api/lectures"),
         api.get("/api/doctors"),
         api.get("/api/students"),
         api.get("/api/weeks"),
+        api.get("/api/classes"),
+        api.get("/api/subjects"),
       ]);
       setRows((Array.isArray(l.data) ? l.data : []).map(normalise));
       setDoctors((Array.isArray(d.data) ? d.data : []).map(normalise));
       setStudents((Array.isArray(s.data) ? s.data : []).map(normalise));
       setWeeks((Array.isArray(w.data) ? w.data : []).map(normalise));
+      setClasses((Array.isArray(c.data) ? c.data : []).map(normalise));
+      setSubjects((Array.isArray(subj.data) ? subj.data : []).map(normalise));
     } catch (e) {
       setErr(e.response?.data?.error || e.message);
     }
@@ -115,7 +136,20 @@ export default function AdminLectures() {
   const columns = [
     { key: "id", label: "ID" },
     { key: "title", label: "Title" },
-    { key: "doctor", label: "Doctor", render: (r) => doctorName(r.doctor_id) },
+    {
+      key: "doctor",
+      label: "Doctor",
+      render: (r) => {
+        const expected = doctorForWeek(r.week_id);
+        const mismatch = expected && expected !== r.doctor_id;
+        return (
+          <span className={mismatch ? "text-red-700" : ""} title={mismatch ? `Subject is owned by ${doctorName(expected)}` : ""}>
+            {doctorName(r.doctor_id)}
+            {mismatch ? " ⚠" : ""}
+          </span>
+        );
+      },
+    },
     { key: "week", label: "Week", render: (r) => weekLabel(r.week_id) },
     {
       key: "scheduled",
@@ -166,17 +200,87 @@ export default function AdminLectures() {
         <h1 className="text-2xl font-semibold">Lectures</h1>
         <button
           onClick={openCreate}
-          className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded"
+          className="btn-primary"
         >
           + New lecture
         </button>
       </div>
       {err && (
-        <div className="mb-4 px-3 py-2 bg-red-100 text-red-900 text-sm rounded">
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">
           {err}
         </div>
       )}
-      <CrudTable rows={rows} columns={columns} actions={actions} />
+      <div className="mb-4 grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50 border border-slate-200 rounded p-3">
+        <label className="block">
+          <span className="text-xs text-slate-600">Subject</span>
+          <select
+            value={filterSubject}
+            onChange={(e) => {
+              setFilterSubject(e.target.value);
+              setFilterClass("");
+              setFilterWeek("");
+            }}
+            className="mt-1 block w-full border rounded px-3 py-2 text-sm"
+          >
+            <option value="">All subjects</option>
+            {subjects.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-slate-600">Class</span>
+          <select
+            value={filterClass}
+            onChange={(e) => { setFilterClass(e.target.value); setFilterWeek(""); }}
+            className="mt-1 block w-full border rounded px-3 py-2 text-sm"
+          >
+            <option value="">All classes</option>
+            {(filterSubject ? classes.filter((c) => c.subject_id === filterSubject) : classes).map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-slate-600">Week</span>
+          <select
+            value={filterWeek}
+            onChange={(e) => setFilterWeek(e.target.value)}
+            className="mt-1 block w-full border rounded px-3 py-2 text-sm"
+          >
+            <option value="">All weeks</option>
+            {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={String(n)}>Week {n}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-slate-600">Doctor</span>
+          <select
+            value={filterDoctor}
+            onChange={(e) => setFilterDoctor(e.target.value)}
+            className="mt-1 block w-full border rounded px-3 py-2 text-sm"
+          >
+            <option value="">All doctors</option>
+            {doctors.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <CrudTable
+        rows={rows.filter((r) => {
+          const wk = weeks.find((w) => w.id === r.week_id);
+          const cls = wk ? classes.find((c) => c.id === wk.class_id) : null;
+          if (filterSubject && (!cls || cls.subject_id !== filterSubject)) return false;
+          if (filterClass && (!cls || cls.id !== filterClass)) return false;
+          if (filterWeek && (!wk || String(wk.week_number) !== String(filterWeek))) return false;
+          if (filterDoctor && r.doctor_id !== filterDoctor) return false;
+          return true;
+        })}
+        columns={columns}
+        actions={actions}
+      />
 
       <Modal
         open={!!modal}
@@ -190,13 +294,13 @@ export default function AdminLectures() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Save
             </button>
@@ -230,17 +334,35 @@ export default function AdminLectures() {
             <span className="text-sm text-slate-600">Week</span>
             <select
               value={form.week_id ?? ""}
-              onChange={(e) => setForm({ ...form, week_id: e.target.value })}
+              onChange={(e) => {
+                const week_id = e.target.value;
+                const auto = doctorForWeek(week_id);
+                setForm({
+                  ...form,
+                  week_id,
+                  doctor_id: auto || form.doctor_id,
+                });
+              }}
               className="mt-1 w-full border rounded px-3 py-2"
             >
               <option value="">Select week...</option>
-              {weeks.map((w) => (
-                <option key={w.id} value={w.id}>
-                  Week {w.week_number || "?"}
-                  {w.title ? ` - ${w.title}` : ""}
-                </option>
-              ))}
+              {weeks.map((w) => {
+                const cls = classes.find((c) => c.id === w.class_id);
+                const subj = subjects.find((s) => s.id === cls?.subject_id);
+                const ctx = subj && cls ? `${subj.name} / ${cls.name} — ` : "";
+                return (
+                  <option key={w.id} value={w.id}>
+                    {ctx}Week {w.week_number || "?"}
+                    {w.title ? ` - ${w.title}` : ""}
+                  </option>
+                );
+              })}
             </select>
+            {form.week_id && (
+              <span className="text-xs text-slate-500 mt-1 block">
+                Doctor auto-set from this week's subject. Override below if needed.
+              </span>
+            )}
           </label>
           <label className="block">
             <span className="text-sm text-slate-600">Status</span>

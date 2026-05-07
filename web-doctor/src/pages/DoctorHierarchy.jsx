@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import CrudTable from "../components/CrudTable";
+import FilterBar, { makeFilter } from "../components/FilterBar";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
+
+const subjectFilter = makeFilter({
+  search: { fields: ["name", "code"] },
+  selects: [{ key: "active", field: "active" }],
+});
+const studentRowFilter = makeFilter({
+  search: { fields: ["name", "email", "id"] },
+});
 
 function normalise(row) {
   const out = {};
@@ -26,6 +35,8 @@ export default function DoctorHierarchy() {
   const [selectedClassId, setSelectedClassId] = useState(null);
   const [selectedWeekId, setSelectedWeekId] = useState(null);
   const [err, setErr] = useState(null);
+  const [subjectFilters, setSubjectFilters] = useState({ search: "", active: "" });
+  const [studentFilters, setStudentFilters] = useState({ search: "" });
 
   useEffect(() => {
     Promise.all([
@@ -124,7 +135,12 @@ export default function DoctorHierarchy() {
     return students.filter((student) => roster.has(student.id));
   }, [students, selectedClass]);
 
-  const studentRows = useMemo(() => {
+  const filteredSubjects = useMemo(
+    () => subjects.filter(subjectFilter(subjectFilters)),
+    [subjects, subjectFilters],
+  );
+
+  const studentRowsAll = useMemo(() => {
     if (!selectedWeek) return [];
     return enrolledStudents.map((student) => {
       const rows = emotions.filter(
@@ -149,6 +165,11 @@ export default function DoctorHierarchy() {
       };
     });
   }, [enrolledStudents, emotions, selectedWeek]);
+
+  const studentRows = useMemo(
+    () => studentRowsAll.filter(studentRowFilter(studentFilters)),
+    [studentRowsAll, studentFilters],
+  );
 
   const subjectColumns = [
     { key: "name", label: "Subject" },
@@ -221,8 +242,26 @@ export default function DoctorHierarchy() {
       </div>
 
       <Section title="Subjects">
+        <FilterBar
+          value={subjectFilters}
+          onChange={setSubjectFilters}
+          onReset={() => setSubjectFilters({ search: "", active: "" })}
+          searchPlaceholder="Search subjects by name or code..."
+          selects={[
+            {
+              key: "active",
+              label: "Active",
+              options: [
+                { value: "true", label: "Yes" },
+                { value: "false", label: "No" },
+              ],
+            },
+          ]}
+          total={subjects.length}
+          shown={filteredSubjects.length}
+        />
         <CrudTable
-          rows={subjects}
+          rows={filteredSubjects}
           columns={subjectColumns}
           actions={(row) => (
             <button
@@ -306,6 +345,14 @@ export default function DoctorHierarchy() {
               <Info label="Observations" value={emotions.length} />
             </div>
 
+            <FilterBar
+              value={studentFilters}
+              onChange={setStudentFilters}
+              onReset={() => setStudentFilters({ search: "" })}
+              searchPlaceholder="Search students by name, email, or id..."
+              total={studentRowsAll.length}
+              shown={studentRows.length}
+            />
             <CrudTable
               rows={studentRows}
               columns={[
@@ -315,7 +362,7 @@ export default function DoctorHierarchy() {
                 { key: "mean_engagement", label: "Mean engagement" },
                 { key: "sleep_rate", label: "Sleep rate" },
               ]}
-              empty="No students enrolled in this class yet."
+              empty="No students match the current filter."
             />
           </div>
         )}

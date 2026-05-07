@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
+import FilterBar, { makeFilter } from "../components/FilterBar";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
+
+const messageFilter = makeFilter({
+  search: { fields: ["subject", "body", "lecture_id"] },
+  selects: [{ key: "status", field: "status" }],
+  dateRange: { key: "created_at" },
+});
 
 function normalise(row) {
   const out = {};
@@ -22,6 +29,23 @@ export default function DoctorMessages() {
     body: "",
     selected_students: [],
   });
+  const [historyFilters, setHistoryFilters] = useState({
+    search: "",
+    status: "",
+    dateFrom: "",
+    dateTo: "",
+  });
+
+  const filteredHistory = useMemo(
+    () => history.filter(messageFilter(historyFilters)),
+    [history, historyFilters],
+  );
+
+  const statusOptions = useMemo(
+    () =>
+      Array.from(new Set(history.map((h) => h.status).filter(Boolean))).sort(),
+    [history],
+  );
 
   // Fetch lectures and notifications history
   useEffect(() => {
@@ -199,9 +223,21 @@ export default function DoctorMessages() {
         {/* History */}
         <div className="bg-white p-6 rounded-lg shadow">
           <h2 className="text-lg font-semibold mb-4">Sent Messages</h2>
+          <FilterBar
+            value={historyFilters}
+            onChange={setHistoryFilters}
+            onReset={() =>
+              setHistoryFilters({ search: "", status: "", dateFrom: "", dateTo: "" })
+            }
+            searchPlaceholder="Search subject or body..."
+            selects={[{ key: "status", label: "Status", options: statusOptions }]}
+            dateRange={{ key: "created_at" }}
+            total={history.length}
+            shown={filteredHistory.length}
+          />
           <div className="space-y-3 max-h-96 overflow-y-auto">
-            {history.length > 0 ? (
-              history.map((notif) => (
+            {filteredHistory.length > 0 ? (
+              filteredHistory.map((notif) => (
                 <div
                   key={v(notif.id)}
                   className="border-l-4 border-blue-400 pl-3 py-2"
@@ -216,7 +252,11 @@ export default function DoctorMessages() {
                 </div>
               ))
             ) : (
-              <div className="text-gray-500">No sent messages yet.</div>
+              <div className="text-gray-500">
+                {history.length === 0
+                  ? "No sent messages yet."
+                  : "No messages match the current filters."}
+              </div>
             )}
           </div>
         </div>

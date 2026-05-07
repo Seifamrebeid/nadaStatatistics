@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
+import FilterBar, { makeFilter } from "../components/FilterBar";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
+
+const historyFilter = makeFilter({
+  search: { fields: ["subject", "lecture_id"] },
+  selects: [
+    { key: "status", field: "status" },
+    { key: "lecture_id", field: "lecture_id" },
+  ],
+  dateRange: { key: "sent_at" },
+});
 
 function normalise(row) {
   const out = {};
@@ -22,6 +32,24 @@ export default function DoctorNotifications() {
     body: "",
     student_ids: [],
   });
+  const [historyFilters, setHistoryFilters] = useState({
+    search: "",
+    status: "",
+    lecture_id: "",
+    dateFrom: "",
+    dateTo: "",
+  });
+
+  const filteredHistory = useMemo(
+    () => history.filter(historyFilter(historyFilters)),
+    [history, historyFilters],
+  );
+
+  const statusOptions = useMemo(
+    () =>
+      Array.from(new Set(history.map((h) => h.status).filter(Boolean))).sort(),
+    [history],
+  );
 
   async function loadAll() {
     setErr(null);
@@ -190,6 +218,27 @@ export default function DoctorNotifications() {
 
       <div className="bg-white rounded-lg shadow p-4">
         <h2 className="font-semibold mb-2">Recent sends</h2>
+
+        <FilterBar
+          value={historyFilters}
+          onChange={setHistoryFilters}
+          onReset={() =>
+            setHistoryFilters({ search: "", status: "", lecture_id: "", dateFrom: "", dateTo: "" })
+          }
+          searchPlaceholder="Search subject..."
+          selects={[
+            {
+              key: "lecture_id",
+              label: "Lecture",
+              options: lectures.map((l) => ({ value: l.id, label: l.title || l.id })),
+            },
+            { key: "status", label: "Status", options: statusOptions },
+          ]}
+          dateRange={{ key: "sent_at" }}
+          total={history.length}
+          shown={filteredHistory.length}
+        />
+
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -201,7 +250,7 @@ export default function DoctorNotifications() {
               </tr>
             </thead>
             <tbody>
-              {history.map((h) => (
+              {filteredHistory.map((h) => (
                 <tr key={h.id} className="border-b last:border-0">
                   <td className="py-2">{h.sent_at || "-"}</td>
                   <td className="py-2">{h.lecture_id || "-"}</td>
@@ -209,10 +258,12 @@ export default function DoctorNotifications() {
                   <td className="py-2">{h.status || "-"}</td>
                 </tr>
               ))}
-              {history.length === 0 && (
+              {filteredHistory.length === 0 && (
                 <tr>
                   <td className="py-3 text-slate-500" colSpan={4}>
-                    No notifications sent yet.
+                    {history.length === 0
+                      ? "No notifications sent yet."
+                      : "No notifications match the current filters."}
                   </td>
                 </tr>
               )}

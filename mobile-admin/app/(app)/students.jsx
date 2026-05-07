@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -7,10 +7,18 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  RefreshControl,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { auth } from "../../firebase";
 import axios from "axios";
+import Screen from "../../components/Screen";
+import ScreenHeader from "../../components/ScreenHeader";
+import SearchBar from "../../components/SearchBar";
+import FilterChips from "../../components/FilterChips";
+import EmptyState from "../../components/EmptyState";
+import Button from "../../components/Button";
+import { colors, radii, shadow, spacing } from "../../components/theme";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -18,12 +26,11 @@ export default function StudentsScreen() {
   const router = useRouter();
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState(""); // "" | "active" | "inactive" | "enrolled"
 
-  useEffect(() => {
-    fetchStudents();
-  }, []);
-
-  const fetchStudents = async () => {
+  const fetchStudents = useCallback(async () => {
     try {
       const user = auth.currentUser;
       if (!user) return;
@@ -31,134 +38,153 @@ export default function StudentsScreen() {
       const res = await axios.get(`${API_URL}/api/students`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      setStudents(res.data);
+      setStudents(Array.isArray(res.data) ? res.data : []);
     } catch (error) {
       Alert.alert("Error", "Failed to fetch students");
       console.error(error);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchStudents();
+    }, [fetchStudents]),
+  );
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchStudents();
+    setRefreshing(false);
   };
 
-  if (loading) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#007AFF" />
-      </View>
-    );
-  }
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return students.filter((s) => {
+      if (statusFilter === "active"   && s.active === false) return false;
+      if (statusFilter === "inactive" && s.active !== false) return false;
+      if (statusFilter === "enrolled" && !s.face_encoding && !s.face_photo_url) return false;
+      if (!q) return true;
+      const hay = `${s.name || ""} ${s.email || ""} ${s.student_id || s.id || ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [students, search, statusFilter]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>Students ({students.length})</Text>
-        <TouchableOpacity
-          onPress={() => router.push("/(app)/students/create")}
-          style={styles.addButton}
-        >
-          <Text style={styles.addButtonText}>+ New</Text>
-        </TouchableOpacity>
-      </View>
-
-      <FlatList
-        data={students}
-        keyExtractor={(item) => item.student_id || item.id}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={styles.studentCard}
-            onPress={() =>
-              router.push({
-                pathname: "/(app)/students/[id]",
-                params: { id: item.student_id || item.id },
-              })
-            }
-          >
-            <Text style={styles.studentName}>{item.name}</Text>
-            <Text style={styles.studentEmail}>{item.email}</Text>
-            <Text style={styles.studentId}>
-              ID: {item.student_id || item.id}
-            </Text>
-          </TouchableOpacity>
-        )}
-        ListEmptyComponent={
-          <View style={styles.empty}>
-            <Text style={styles.emptyText}>No students found</Text>
-          </View>
+    <Screen>
+      <ScreenHeader
+        title="Students"
+        subtitle={`${filtered.length} of ${students.length}`}
+        right={
+          <Button
+            title="+ New"
+            size="sm"
+            onPress={() => router.push("/(app)/students/create")}
+          />
         }
       />
-    </View>
+
+      <View style={styles.controls}>
+        <SearchBar value={search} onChangeText={setSearch} placeholder="Search name, email, ID..." />
+      </View>
+      <FilterChips
+        value={statusFilter}
+        onChange={setStatusFilter}
+        options={[
+          { value: "active",   label: "Active" },
+          { value: "inactive", label: "Inactive" },
+          { value: "enrolled", label: "Face enrolled" },
+        ]}
+      />
+
+      {loading ? (
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color={colors.brand600} />
+        </View>
+      ) : (
+        <FlatList
+          data={filtered}
+          keyExtractor={(item) => String(item.student_id || item.id)}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand600} />
+          }
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.card}
+              onPress={() =>
+                router.push({
+                  pathname: "/(app)/students/[id]",
+                  params: { id: item.student_id || item.id },
+                })
+              }
+            >
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {(item.name || "?").slice(0, 1).toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.name} numberOfLines={1}>{item.name || "Unnamed"}</Text>
+                <Text style={styles.sub} numberOfLines={1}>{item.email || "—"}</Text>
+                <Text style={styles.id} numberOfLines={1}>ID: {item.student_id || item.id}</Text>
+              </View>
+              {(item.face_encoding || item.face_photo_url) ? (
+                <View style={styles.pill}>
+                  <Text style={styles.pillText}>face</Text>
+                </View>
+              ) : null}
+              <Text style={styles.chev}>›</Text>
+            </TouchableOpacity>
+          )}
+          ListEmptyComponent={
+            <EmptyState
+              icon="🎓"
+              title={students.length === 0 ? "No students yet" : "No matches"}
+              message={
+                students.length === 0
+                  ? "Tap “+ New” to add the first student."
+                  : "Try a different search or filter."
+              }
+            />
+          }
+        />
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f5f5f5",
-  },
-  header: {
+  controls: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center" },
+  list: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.sm },
+  card: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    gap: spacing.md,
+    ...shadow.card,
   },
-  backButton: {
-    fontSize: 16,
-    color: "#007AFF",
-    fontWeight: "600",
+  avatar: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: colors.brand100,
+    alignItems: "center", justifyContent: "center",
   },
-  title: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
+  avatarText: { color: colors.brand700, fontWeight: "700" },
+  name: { fontSize: 15, fontWeight: "600", color: colors.slate900 },
+  sub:  { fontSize: 13, color: colors.slate500, marginTop: 2 },
+  id:   { fontSize: 11, color: colors.slate400, marginTop: 2 },
+  pill: {
+    paddingHorizontal: spacing.sm, paddingVertical: 3,
+    borderRadius: radii.pill,
+    backgroundColor: colors.brand50,
   },
-  addButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "#007AFF",
-    borderRadius: 6,
-  },
-  addButtonText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-  studentCard: {
-    margin: 10,
-    padding: 15,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
-  },
-  studentName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-  },
-  studentEmail: {
-    fontSize: 14,
-    color: "#666",
-    marginTop: 4,
-  },
-  studentId: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 4,
-  },
-  empty: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 50,
-  },
-  emptyText: {
-    fontSize: 16,
-    color: "#999",
-  },
+  pillText: { color: colors.brand700, fontSize: 11, fontWeight: "600" },
+  chev: { fontSize: 22, color: colors.slate300 },
 });

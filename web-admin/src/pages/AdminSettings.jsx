@@ -1,6 +1,7 @@
 import { useState } from "react";
 import api from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import PageHeader from "../components/PageHeader";
 
 // Admin settings: mostly config the backend owns. Showing what we can
 // inspect via /health + letting the admin regenerate reports globally.

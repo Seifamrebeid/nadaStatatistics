@@ -10,12 +10,24 @@ const normalise = (row) => {
   return out;
 };
 
+// Filename convention: "<id>_<First>_<Middle>_<Last>.<ext>" — e.g.
+// "211014850_Marwan_Mohamed_Khalaf.jpg".
+function parseStudentFilename(filename) {
+  const stem = filename.replace(/\.[^/.]+$/, "");
+  const parts = stem.split("_").filter(Boolean);
+  if (parts.length < 2) return null;
+  const [id, ...nameParts] = parts;
+  return { id, name: nameParts.join(" ") };
+}
+
 export default function AdminStudents() {
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [savedTempPw, setSavedTempPw] = useState(null);
+  const [bulk, setBulk] = useState(null); // { running, done, total, errors:[], results:[] }
+  const [parentModal, setParentModal] = useState(null); // { student, form, tempPw }
 
   async function load() {
     try {
@@ -76,6 +88,50 @@ export default function AdminStudents() {
     }
   }
 
+  async function bulkImport(fileList) {
+    const files = Array.from(fileList || []).filter((f) =>
+      /\.(jpe?g|png|webp|bmp)$/i.test(f.name),
+    );
+    if (files.length === 0) {
+      alert("No image files found in the selected folder.");
+      return;
+    }
+    const state = { running: true, done: 0, total: files.length, errors: [], results: [] };
+    setBulk(state);
+    for (const file of files) {
+      const parsed = parseStudentFilename(file.name);
+      if (!parsed) {
+        state.errors.push({ file: file.name, error: "filename does not match <id>_<name>.<ext>" });
+        state.done += 1;
+        setBulk({ ...state });
+        continue;
+      }
+      try {
+        const email = `${parsed.id}@students.local`;
+        const { data } = await api.post("/api/students", {
+          name: parsed.name,
+          email,
+          student_id: parsed.id,
+        });
+        const studentId = v(data.student_id) || parsed.id;
+        const fd = new FormData();
+        fd.append("file", file);
+        await api.post(`/api/students/${studentId}/face`, fd);
+        state.results.push({ file: file.name, id: studentId, name: parsed.name });
+      } catch (e) {
+        state.errors.push({
+          file: file.name,
+          error: e.response?.data?.error || e.message,
+        });
+      }
+      state.done += 1;
+      setBulk({ ...state });
+    }
+    state.running = false;
+    setBulk({ ...state });
+    await load();
+  }
+
   async function uploadFace(row, file) {
     try {
       const fd = new FormData();
@@ -105,8 +161,45 @@ export default function AdminStudents() {
     },
   ];
 
+  function openAddParent(student) {
+    setParentModal({
+      student,
+      form: { name: "", email: "", password: "", relationship: "" },
+      tempPw: null,
+    });
+  }
+
+  async function saveParent() {
+    if (!parentModal) return;
+    const { student, form: pf } = parentModal;
+    try {
+      const payload = {
+        name: pf.name,
+        email: pf.email,
+        relationship: pf.relationship || undefined,
+        linked_student_ids: [student.id],
+      };
+      if (pf.password) payload.password = pf.password;
+      const { data } = await api.post("/api/parents", payload);
+      const pw = v(data.temporary_password);
+      if (typeof pw === "string" && pw.length > 0) {
+        setParentModal({ ...parentModal, tempPw: pw });
+      } else {
+        setParentModal(null);
+      }
+    } catch (e) {
+      alert(e.response?.data?.error || e.message);
+    }
+  }
+
   const actions = (r) => (
     <div className="flex gap-2 justify-end items-center">
+      <button
+        onClick={() => openAddParent(r)}
+        className="text-slate-700 hover:underline"
+      >
+        Add parent
+      </button>
       <label className="cursor-pointer text-brand hover:underline">
         Upload face
         <input
@@ -138,15 +231,72 @@ export default function AdminStudents() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-semibold">Students</h1>
-        <button
-          onClick={openCreate}
-          className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded"
-        >
-          + New student
-        </button>
+        <div className="flex gap-2">
+          <label className="cursor-pointer bg-slate-700 hover:bg-slate-800 text-white px-4 py-2 rounded">
+            Import folder
+            <input
+              type="file"
+              webkitdirectory=""
+              directory=""
+              multiple
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) bulkImport(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <button
+            onClick={openCreate}
+            className="btn-primary"
+          >
+            + New student
+          </button>
+        </div>
       </div>
+      {bulk && (
+        <div className="mb-4 p-3 bg-slate-50 border border-slate-200 rounded text-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              {bulk.running ? "Importing" : "Import complete"}:{" "}
+              <strong>{bulk.done}</strong> / {bulk.total} —{" "}
+              <span className="text-emerald-700">{bulk.results.length} ok</span>,{" "}
+              <span className="text-red-700">{bulk.errors.length} failed</span>
+            </div>
+            {!bulk.running && (
+              <button
+                onClick={() => setBulk(null)}
+                className="text-slate-600 hover:underline"
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+          <div className="w-full bg-slate-200 rounded h-2 mt-2 overflow-hidden">
+            <div
+              className="bg-brand h-full transition-all"
+              style={{ width: `${(bulk.done / bulk.total) * 100}%` }}
+            />
+          </div>
+          {bulk.errors.length > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-red-700">
+                Show {bulk.errors.length} error(s)
+              </summary>
+              <ul className="mt-1 list-disc list-inside text-xs text-red-800 max-h-40 overflow-auto">
+                {bulk.errors.map((e, i) => (
+                  <li key={i}>
+                    <code>{e.file}</code> — {e.error}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
       {err && (
-        <div className="mb-4 px-3 py-2 bg-red-100 text-red-900 text-sm rounded">
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">
           {err}
         </div>
       )}
@@ -160,13 +310,13 @@ export default function AdminStudents() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Create
             </button>
@@ -190,13 +340,13 @@ export default function AdminStudents() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Save
             </button>
@@ -204,6 +354,81 @@ export default function AdminStudents() {
         }
       >
         <StudentForm form={form} setForm={setForm} showActive />
+      </Modal>
+
+      <Modal
+        open={!!parentModal}
+        onClose={() => setParentModal(null)}
+        title={
+          parentModal
+            ? `Add parent for ${parentModal.student.name || parentModal.student.id}`
+            : ""
+        }
+        footer={
+          <>
+            <button onClick={() => setParentModal(null)} className="btn-secondary">
+              Close
+            </button>
+            {!parentModal?.tempPw && (
+              <button onClick={saveParent} className="btn-primary">
+                Create
+              </button>
+            )}
+          </>
+        }
+      >
+        {parentModal && (
+          <div className="space-y-3">
+            <Field
+              label="Name"
+              value={parentModal.form.name}
+              onChange={(val) =>
+                setParentModal({
+                  ...parentModal,
+                  form: { ...parentModal.form, name: val },
+                })
+              }
+            />
+            <Field
+              label="Email"
+              type="email"
+              value={parentModal.form.email}
+              onChange={(val) =>
+                setParentModal({
+                  ...parentModal,
+                  form: { ...parentModal.form, email: val },
+                })
+              }
+            />
+            <Field
+              label="Relationship (mother / father / guardian)"
+              value={parentModal.form.relationship}
+              onChange={(val) =>
+                setParentModal({
+                  ...parentModal,
+                  form: { ...parentModal.form, relationship: val },
+                })
+              }
+            />
+            <Field
+              label="Password (optional — auto-generated if empty)"
+              value={parentModal.form.password}
+              onChange={(val) =>
+                setParentModal({
+                  ...parentModal,
+                  form: { ...parentModal.form, password: val },
+                })
+              }
+            />
+            {parentModal.tempPw && (
+              <div className="mt-3 p-3 bg-emerald-50 border border-emerald-300 text-sm rounded">
+                Temporary password:{" "}
+                <code className="font-mono">{parentModal.tempPw}</code> — share
+                with the parent.
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   );

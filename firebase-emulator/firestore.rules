@@ -35,6 +35,12 @@ service cloud.firestore {
     function isAdmin()   { return isSignedIn() && role() == 'admin'; }
     function isDoctor()  { return isSignedIn() && role() == 'doctor'; }
     function isStudent() { return isSignedIn() && role() == 'student'; }
+    function isParent()  { return isSignedIn() && role() == 'parent'; }
+
+    // Children IDs of the signed-in parent. Reads parents/{linkedId()}.
+    function parentKids() {
+      return get(/databases/$(database)/documents/parents/$(linkedId())).data.linked_student_ids;
+    }
 
     // users — role lookup table. A user can read their own entry; only the backend writes.
     match /users/{uid} {
@@ -47,11 +53,19 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // students — admin-only CRUD; students read self; doctors read (backend narrows).
+    // students — admin-only CRUD; students read self; doctors read (backend narrows);
+    // parents read children they are linked to.
     match /students/{id} {
       allow read: if isAdmin()
                   || (isStudent() && linkedId() == id)
-                  || isDoctor();
+                  || isDoctor()
+                  || (isParent() && id in parentKids());
+      allow write: if isAdmin();
+    }
+
+    // parents — admin-only CRUD; parent reads own doc.
+    match /parents/{id} {
+      allow read: if isAdmin() || (isParent() && linkedId() == id);
       allow write: if isAdmin();
     }
 
@@ -65,7 +79,8 @@ service cloud.firestore {
     match /lectures/{lectureId} {
       allow read: if isAdmin()
                   || (isDoctor() && resource.data.doctor_id == linkedId())
-                  || (isStudent() && linkedId() in resource.data.enrolled_student_ids);
+                  || (isStudent() && linkedId() in resource.data.enrolled_student_ids)
+                  || (isParent() && parentKids().hasAny(resource.data.enrolled_student_ids));
       allow create: if isAdmin()
                     || (isDoctor() && request.resource.data.doctor_id == linkedId());
       allow update, delete: if isAdmin()
@@ -76,6 +91,7 @@ service cloud.firestore {
     match /emotions/{id} {
       allow read: if isAdmin()
                   || (isStudent() && resource.data.student_id == linkedId())
+                  || (isParent() && resource.data.student_id in parentKids())
                   || (isDoctor()
                       && get(/databases/$(database)/documents/lectures/$(resource.data.lecture_id)).data.doctor_id == linkedId());
       allow write: if false;

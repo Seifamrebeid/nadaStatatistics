@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import api from "../services/api";
+import StatCard from "../components/StatCard";
+import { CalendarCheck, Smile, Users } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -23,28 +25,34 @@ export default function StudentHistory() {
       try {
         // Get current user
         const me = await api.get("/api/me");
-        const userId = v(me.data.uid);
+        const studentId = v(me.data.linked_id);
+        if (!studentId) {
+          setStats({ averageEngagement: 0, lectureCount: 0, classAverage: 0 });
+          return;
+        }
 
-        // Get student's comparison data (includes per-lecture data)
         const compRes = await api.get(
-          `/api/analytics/student/${userId}/comparison`,
+          `/api/analytics/student/${studentId}/comparison`,
         );
         const comparison = compRes.data;
 
-        if (comparison?.per_lecture) {
-          const chartData = comparison.per_lecture.map((item, idx) => ({
+        const perLecture = Array.isArray(comparison?.per_lecture)
+          ? comparison.per_lecture
+          : [];
+        if (perLecture.length > 0) {
+          const chartData = perLecture.map((item, idx) => ({
             name: `Lecture ${idx + 1}`,
-            lecture_id: item.lecture_id,
-            self: item.self || 0,
-            class_mean: item.class_mean || 0,
+            lecture_id: v(item.lecture_id),
+            self: Number(v(item.self) || 0),
+            class_mean: Number(v(item.class_mean) || 0),
           }));
           setHistoryData(chartData);
         }
 
         setStats({
-          averageEngagement: comparison?.self_mean?.toFixed(2) || 0,
-          lectureCount: comparison?.per_lecture?.length || 0,
-          classAverage: comparison?.class_mean?.toFixed(2) || 0,
+          averageEngagement: Number(v(comparison?.self_mean) ?? 0).toFixed(2),
+          lectureCount: perLecture.length,
+          classAverage: Number(v(comparison?.class_mean) ?? 0).toFixed(2),
         });
       } catch (error) {
         console.error("Error fetching engagement history:", error);
@@ -56,80 +64,57 @@ export default function StudentHistory() {
   }, []);
 
   if (err) {
-    return <div className="text-red-600 p-4">Error: {err}</div>;
+    return (
+      <div className="card p-6 text-red-700 bg-red-50 border-red-200">
+        Error: {err}
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Engagement History</h1>
+    <div>
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">
+          Engagement History
+        </h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Your engagement across past lectures vs. the class average.
+        </p>
+      </div>
 
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white p-4 rounded-lg shadow">
-            <div className="text-gray-600 text-sm">Lectures Attended</div>
-            <div className="text-3xl font-bold text-blue-600">
-              {stats.lectureCount}
-            </div>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow">
-            <div className="text-gray-600 text-sm">Average Engagement</div>
-            <div className="text-3xl font-bold text-green-600">
-              {stats.averageEngagement}%
-            </div>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow">
-            <div className="text-gray-600 text-sm">Class Average</div>
-            <div className="text-3xl font-bold text-purple-600">
-              {stats.classAverage}%
-            </div>
-          </div>
+          <StatCard label="Lectures Attended" value={stats.lectureCount}      accent="brand" icon={CalendarCheck} />
+          <StatCard label="Your Average"      value={`${stats.averageEngagement}%`} accent="green" icon={Smile} />
+          <StatCard label="Class Average"     value={`${stats.classAverage}%`}      accent="slate" icon={Users} />
         </div>
       )}
 
       {historyData.length > 0 && (
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h2 className="text-lg font-semibold mb-4">Engagement Over Time</h2>
-          <ResponsiveContainer width="100%" height={400}>
-            <LineChart data={historyData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="name" />
-              <YAxis
-                yAxisId="left"
-                label={{
-                  value: "Engagement Score",
-                  angle: -90,
-                  position: "insideLeft",
-                }}
-              />
+        <div className="card p-6 mt-6">
+          <h2 className="font-semibold text-slate-900">Engagement over time</h2>
+          <p className="text-xs text-slate-500 mt-0.5 mb-4">
+            Per-lecture comparison against the class mean.
+          </p>
+          <ResponsiveContainer width="100%" height={360}>
+            <LineChart data={historyData} margin={{ top: 5, right: 16, bottom: 5, left: -10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+              <XAxis dataKey="name" tick={{ fill: "#64748b", fontSize: 12 }} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
+              <YAxis tick={{ fill: "#64748b", fontSize: 12 }} axisLine={false} tickLine={false} />
               <Tooltip
-                formatter={(value) => value?.toFixed(2) || 0}
-                labelFormatter={(label) => `${label}`}
+                formatter={(value) => Number(value).toFixed(2)}
+                contentStyle={{ borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12 }}
               />
-              <Legend />
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="self"
-                stroke="#3b82f6"
-                name="Your Engagement"
-                connectNulls
-              />
-              <Line
-                yAxisId="left"
-                type="monotone"
-                dataKey="class_mean"
-                stroke="#9ca3af"
-                strokeDasharray="5 5"
-                name="Class Average"
-                connectNulls
-              />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="self"       stroke="#0ea5e9" strokeWidth={2.5} name="Your Engagement" dot={{ r: 3 }} connectNulls />
+              <Line type="monotone" dataKey="class_mean" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" name="Class Average" dot={false} connectNulls />
             </LineChart>
           </ResponsiveContainer>
         </div>
       )}
 
       {historyData.length === 0 && !err && (
-        <div className="bg-white p-6 rounded-lg shadow text-center text-gray-500">
+        <div className="card p-10 mt-6 text-center text-sm text-slate-500">
           No lecture history yet.
         </div>
       )}

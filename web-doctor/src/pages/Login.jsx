@@ -6,6 +6,15 @@ import {
 import { auth } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import api from "../services/api";
+import {
+  Stethoscope,
+  ScanFace,
+  Activity,
+  Users,
+  Sparkles,
+  AlertCircle,
+} from "lucide-react";
+import Spinner from "../components/Spinner";
 
 export default function Login() {
   const { mismatchError, setMismatchError } = useAuth();
@@ -22,8 +31,6 @@ export default function Login() {
     setBusy(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      // AuthContext takes over from here: role-mismatch gate runs, then
-      // either admits (redirects via AppRoutes) or signs back out.
     } catch (ex) {
       setErr(ex.message.replace(/^Firebase:\s*/, ""));
     } finally {
@@ -70,70 +77,128 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <form
-        onSubmit={submit}
-        className="bg-white rounded-lg shadow-lg p-8 w-full max-w-sm"
-      >
-        <h1 className="text-xl font-semibold text-center">Doctor Portal</h1>
-        <p className="text-sm text-slate-500 text-center mt-1">
-          Sign in with your doctor account
-        </p>
+    <div className="min-h-screen flex bg-slate-50">
+      <div className="hidden lg:flex lg:w-1/2 relative bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900 text-white p-12 flex-col justify-between overflow-hidden">
+        <div className="absolute -top-20 -right-20 h-80 w-80 rounded-full bg-indigo-500/20 blur-3xl" />
+        <div className="absolute -bottom-32 -left-10 h-96 w-96 rounded-full bg-indigo-400/10 blur-3xl" />
 
-        {mismatchError && (
-          <div className="mt-4 px-3 py-2 bg-amber-100 border border-amber-300 text-amber-900 text-sm rounded">
-            {mismatchError}
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-white/10 backdrop-blur flex items-center justify-center ring-1 ring-white/20">
+            <Stethoscope className="h-5 w-5" />
           </div>
-        )}
-        {err && (
-          <div className="mt-4 px-3 py-2 bg-red-100 border border-red-300 text-red-900 text-sm rounded">
-            {err}
+          <div>
+            <div className="font-semibold">Classroom Emotions</div>
+            <div className="text-xs text-white/60">Doctor Workspace</div>
           </div>
-        )}
+        </div>
 
-        <label className="block mt-4">
-          <span className="text-sm text-slate-600">Email</span>
-          <input
-            type="email"
-            required
-            value={email}
-            autoFocus
-            onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 block w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand"
-          />
-        </label>
-        <label className="block mt-3">
-          <span className="text-sm text-slate-600">Password</span>
-          <input
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 block w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand"
-          />
-        </label>
+        <div className="relative z-10 max-w-md">
+          <h2 className="text-3xl font-semibold leading-tight">
+            Teach with insight, not guesswork.
+          </h2>
+          <p className="mt-3 text-white/70 text-sm leading-relaxed">
+            Run live classrooms, review per-student engagement, and act on
+            real-time emotion signals — all from one focused workspace.
+          </p>
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="mt-5 w-full bg-brand hover:bg-brand-dark text-white rounded py-2 disabled:opacity-60"
-        >
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
+          <ul className="mt-8 space-y-3 text-sm">
+            <li className="flex items-center gap-3">
+              <Activity className="h-4 w-4 text-indigo-300" />
+              <span className="text-white/80">Live engagement & gesture stream</span>
+            </li>
+            <li className="flex items-center gap-3">
+              <Users className="h-4 w-4 text-indigo-300" />
+              <span className="text-white/80">Class, week, and student-level analytics</span>
+            </li>
+            <li className="flex items-center gap-3">
+              <Sparkles className="h-4 w-4 text-indigo-300" />
+              <span className="text-white/80">Face sign-in for fast lecture starts</span>
+            </li>
+          </ul>
+        </div>
 
-        <button
-          type="button"
-          onClick={signInWithFace}
-          disabled={faceBusy}
-          className="mt-2 w-full border border-brand text-brand hover:bg-brand/10 rounded py-2 disabled:opacity-60"
-        >
-          {faceBusy ? "Scanning face…" : "Sign in with face"}
-        </button>
+        <div className="relative z-10 text-xs text-white/40">
+          © {new Date().getFullYear()} Classroom Emotions
+        </div>
+      </div>
 
-        <p className="text-xs text-slate-500 text-center mt-4">
-          Doctors can sign in with email/password or face recognition.
-        </p>
-      </form>
+      <div className="flex-1 flex items-center justify-center p-6">
+        <form onSubmit={submit} className="w-full max-w-sm">
+          <div className="lg:hidden mb-8 flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white">
+              <Stethoscope className="h-4 w-4" />
+            </div>
+            <div className="font-semibold text-slate-900">Classroom Emotions</div>
+          </div>
+
+          <h1 className="text-2xl font-semibold text-slate-900">Welcome back, Doctor</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Sign in with email/password — or use your face.
+          </p>
+
+          {mismatchError && (
+            <div className="mt-5 px-3.5 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg flex gap-2">
+              <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>{mismatchError}</span>
+            </div>
+          )}
+          {err && (
+            <div className="mt-5 px-3.5 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg flex gap-2">
+              <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+              <span>{err}</span>
+            </div>
+          )}
+
+          <div className="mt-6">
+            <label className="label">Email</label>
+            <input
+              type="email"
+              required
+              value={email}
+              autoFocus
+              onChange={(e) => setEmail(e.target.value)}
+              className="input"
+              placeholder="you@example.com"
+            />
+          </div>
+          <div className="mt-4">
+            <label className="label">Password</label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="input"
+              placeholder="••••••••"
+            />
+          </div>
+
+          <button type="submit" disabled={busy} className="btn-primary w-full mt-6 py-2.5">
+            {busy && <Spinner size="sm" className="text-white" />}
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+
+          <div className="my-4 flex items-center gap-3 text-xs text-slate-400">
+            <div className="flex-1 h-px bg-slate-200" />
+            <span>OR</span>
+            <div className="flex-1 h-px bg-slate-200" />
+          </div>
+
+          <button
+            type="button"
+            onClick={signInWithFace}
+            disabled={faceBusy}
+            className="btn-secondary w-full py-2.5"
+          >
+            {faceBusy ? <Spinner size="sm" /> : <ScanFace className="h-4 w-4" />}
+            {faceBusy ? "Scanning face…" : "Sign in with face"}
+          </button>
+
+          <p className="text-xs text-slate-400 text-center mt-6">
+            Doctors can sign in with email/password or face recognition.
+          </p>
+        </form>
+      </div>
     </div>
   );
 }

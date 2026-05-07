@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
+import FilterBar, { makeFilter } from "../components/FilterBar";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 const normalise = (row) => {
@@ -10,6 +11,16 @@ const normalise = (row) => {
   return out;
 };
 
+const weekFilter = makeFilter({
+  search: { fields: ["title", "notes"] },
+  selects: [
+    { key: "class_id", field: "class_id" },
+    { key: "status", field: "status" },
+    { key: "week_number", field: "week_number" },
+  ],
+  dateRange: { key: "date" },
+});
+
 export default function DoctorWeeks() {
   const [rows, setRows] = useState([]);
   const [classes, setClasses] = useState([]);
@@ -17,6 +28,27 @@ export default function DoctorWeeks() {
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  const [filters, setFilters] = useState({
+    search: "",
+    class_id: "",
+    status: "",
+    week_number: "",
+    dateFrom: "",
+    dateTo: "",
+  });
+
+  const filteredRows = useMemo(
+    () => rows.filter(weekFilter(filters)),
+    [rows, filters],
+  );
+
+  const weekNumberOptions = useMemo(
+    () =>
+      Array.from(new Set(rows.map((r) => r.week_number).filter((n) => n != null)))
+        .sort((a, b) => Number(a) - Number(b))
+        .map((n) => ({ value: String(n), label: `Week ${n}` })),
+    [rows],
+  );
 
   async function loadAll() {
     try {
@@ -125,8 +157,33 @@ export default function DoctorWeeks() {
         </div>
       )}
 
+      <FilterBar
+        value={filters}
+        onChange={setFilters}
+        onReset={() =>
+          setFilters({ search: "", class_id: "", status: "", week_number: "", dateFrom: "", dateTo: "" })
+        }
+        searchPlaceholder="Search title or notes..."
+        selects={[
+          {
+            key: "class_id",
+            label: "Class",
+            options: classes.map((c) => ({ value: c.id, label: c.name || c.id })),
+          },
+          {
+            key: "status",
+            label: "Status",
+            options: ["planned", "recording", "finished"],
+          },
+          { key: "week_number", label: "Week #", options: weekNumberOptions },
+        ]}
+        dateRange={{ key: "date" }}
+        total={rows.length}
+        shown={filteredRows.length}
+      />
+
       <CrudTable
-        rows={rows}
+        rows={filteredRows}
         columns={[
           {
             key: "class_id",

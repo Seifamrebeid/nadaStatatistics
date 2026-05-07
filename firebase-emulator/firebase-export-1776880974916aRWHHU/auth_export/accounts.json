@@ -1,1 +1,48 @@
-{"kind":"identitytoolkit#DownloadAccountResponse","users":[{"localId":"bmuPfJMAkYXB5rEhhMbRqtSCDx6O","lastLoginAt":"1777888476120","displayName":"nada","emailVerified":false,"email":"nadasoska2005@gmail.com","salt":"fakeSaltFvfKhrqMKB26paHp1mxz","passwordHash":"fakeHash:salt=fakeSaltFvfKhrqMKB26paHp1mxz:password=123456789","passwordUpdatedAt":1777888476120,"validSince":"1777888476","createdAt":"1777888476120","providerUserInfo":[{"providerId":"password","email":"nadasoska2005@gmail.com","federatedId":"nadasoska2005@gmail.com","rawId":"nadasoska2005@gmail.com","displayName":"nada"}],"lastRefreshAt":"2026-05-04T09:54:36.121Z"},{"localId":"hueb1bOwngczkGtdWx1GU3AJokEG","createdAt":"1776880588464","lastLoginAt":"1777888444599","passwordHash":"fakeHash:salt=fakeSaltBRki2yFl8yXuVWEpBZJc:password=admin-password-change-me","salt":"fakeSaltBRki2yFl8yXuVWEpBZJc","passwordUpdatedAt":1777888428443,"providerUserInfo":[{"providerId":"password","email":"admin@classroom.local","federatedId":"admin@classroom.local","rawId":"admin@classroom.local"}],"validSince":"1777888428","email":"admin@classroom.local","emailVerified":false,"disabled":false,"lastRefreshAt":"2026-05-04T09:54:04.599Z"}]}
+{
+  "kind": "identitytoolkit#DownloadAccountResponse",
+  "users": [
+    {
+      "localId": "bmuPfJMAkYXB5rEhhMbRqtSCDx6O",
+      "lastLoginAt": "1777888476120",
+      "displayName": "nada",
+      "emailVerified": false,
+      "email": "nadasoska2005@gmail.com",
+      "salt": "fakeSaltFvfKhrqMKB26paHp1mxz",
+      "passwordHash": "fakeHash:salt=fakeSaltFvfKhrqMKB26paHp1mxz:password=123456789",
+      "passwordUpdatedAt": 1777888476120,
+      "validSince": "1777888476",
+      "createdAt": "1777888476120",
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "nadasoska2005@gmail.com",
+          "federatedId": "nadasoska2005@gmail.com",
+          "rawId": "nadasoska2005@gmail.com",
+          "displayName": "nada"
+        }
+      ],
+      "lastRefreshAt": "2026-05-04T09:54:36.121Z"
+    },
+    {
+      "localId": "hueb1bOwngczkGtdWx1GU3AJokEG",
+      "createdAt": "1776880588464",
+      "lastLoginAt": "1777888444599",
+      "passwordHash": "fakeHash:salt=fakeSaltBRki2yFl8yXuVWEpBZJc:password=admin-password-change-me",
+      "salt": "fakeSaltBRki2yFl8yXuVWEpBZJc",
+      "passwordUpdatedAt": 1777888428443,
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "admin@classroom.local",
+          "federatedId": "admin@classroom.local",
+          "rawId": "admin@classroom.local"
+        }
+      ],
+      "validSince": "1777888428",
+      "email": "admin@classroom.local",
+      "emailVerified": false,
+      "disabled": false,
+      "lastRefreshAt": "2026-05-04T09:54:04.599Z"
+    }
+  ]
+}

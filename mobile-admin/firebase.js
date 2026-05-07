@@ -8,10 +8,15 @@ import {
 import { getFirestore, connectFirestoreEmulator } from "firebase/firestore";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
 
-// Shared Firebase config across all apps. In dev, routes to local emulator.
-// In prod, remove the emulator connections (env-based).
+// Phones on Wi-Fi can't reach the laptop's 127.0.0.1; they need the laptop's
+// LAN IP. Set EXPO_PUBLIC_EMULATOR_HOST in .env to your laptop's IPv4 (e.g.
+// 192.168.1.42). Falls back to localhost so a web preview / iOS simulator
+// running on the same machine still works.
+const EMULATOR_HOST = process.env.EXPO_PUBLIC_EMULATOR_HOST || "127.0.0.1";
+
 const firebaseConfig = {
-  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || "nada-stats-dev",
+  projectId:
+    process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || "emotion-detection-dev",
   apiKey: "fake-api-key-for-emulator",
   authDomain: "localhost",
 };
@@ -34,16 +39,15 @@ export const storage = getStorage(app);
 // Dev: connect to emulator suite
 const isDev = process.env.NODE_ENV !== "production";
 if (isDev) {
-  // Avoid double-initialization errors
   if (!auth.emulatorConfig) {
-    connectAuthEmulator(auth, "http://172.20.10.2:9099", {
+    connectAuthEmulator(auth, `http://${EMULATOR_HOST}:9099`, {
       disableWarnings: true,
     });
   }
   if (!db.emulatorConfig) {
-    connectFirestoreEmulator(db, "172.20.10.2", 8080);
+    connectFirestoreEmulator(db, EMULATOR_HOST, 8080);
   }
   if (!storage.emulatorConfig) {
-    connectStorageEmulator(storage, "172.20.10.2", 9199);
+    connectStorageEmulator(storage, EMULATOR_HOST, 9199);
   }
 }

@@ -6,6 +6,7 @@ CORS_ALLOWED_ORIGINS <- c(
   "http://localhost:5173",
   "http://localhost:5174",
   "http://localhost:5175",
+  "http://localhost:5176",
   # Expo-web preview ports (see Phase 7.1)
   "http://localhost:19006",
   "http://localhost:19007",

@@ -131,13 +131,13 @@ export default function AdminSubjects() {
         <h1 className="text-2xl font-semibold">Subjects</h1>
         <button
           onClick={openCreate}
-          className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded"
+          className="btn-primary"
         >
           + New subject
         </button>
       </div>
       {err && (
-        <div className="mb-4 px-3 py-2 bg-red-100 text-red-900 text-sm rounded">
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">
           {err}
         </div>
       )}
@@ -151,13 +151,13 @@ export default function AdminSubjects() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Create
             </button>
@@ -175,13 +175,13 @@ export default function AdminSubjects() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Save
             </button>

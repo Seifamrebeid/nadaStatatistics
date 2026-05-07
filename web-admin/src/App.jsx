@@ -1,11 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
+import { PageLoader } from "./components/Spinner";
 import Login from "./pages/Login";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminAdmins from "./pages/AdminAdmins";
 import AdminDoctors from "./pages/AdminDoctors";
 import AdminStudents from "./pages/AdminStudents";
+import AdminParents from "./pages/AdminParents";
 import AdminSubjects from "./pages/AdminSubjects";
 import AdminClasses from "./pages/AdminClasses";
 import AdminWeeks from "./pages/AdminWeeks";
@@ -17,13 +19,7 @@ import NotFound from "./pages/NotFound";
 
 function Gate() {
   const { user, profile, loading } = useAuth();
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500">
-        Loading…
-      </div>
-    );
-  }
+  if (loading) return <PageLoader />;
   if (!user || !profile) {
     return <Login />;
   }
@@ -34,6 +30,7 @@ function Gate() {
         <Route path="admins" element={<AdminAdmins />} />
         <Route path="doctors" element={<AdminDoctors />} />
         <Route path="students" element={<AdminStudents />} />
+        <Route path="parents" element={<AdminParents />} />
         <Route path="subjects" element={<AdminSubjects />} />
         <Route path="classes" element={<AdminClasses />} />
         <Route path="weeks" element={<AdminWeeks />} />

@@ -1,0 +1,188 @@
+{
+  "kind": "identitytoolkit#DownloadAccountResponse",
+  "users": [
+    {
+      "localId": "3TCstApCn8Gfj293gUdv9JUPft8l",
+      "lastLoginAt": "1778109776453",
+      "displayName": "seif ebeid",
+      "emailVerified": false,
+      "email": "seif.amr.ebeid@gmail.com",
+      "salt": "fakeSaltIM5fNZN5PIgIw0iXEaOe",
+      "passwordHash": "fakeHash:salt=fakeSaltIM5fNZN5PIgIw0iXEaOe:password=123456789",
+      "passwordUpdatedAt": 1778109406556,
+      "validSince": "1778109406",
+      "createdAt": "1778109406556",
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "seif.amr.ebeid@gmail.com",
+          "federatedId": "seif.amr.ebeid@gmail.com",
+          "rawId": "seif.amr.ebeid@gmail.com",
+          "displayName": "seif ebeid"
+        }
+      ],
+      "lastRefreshAt": "2026-05-06T23:22:56.455Z",
+      "customAuth": true
+    },
+    {
+      "localId": "DrG7eBgdJ3zzRW2NEDJyts2IVCpD",
+      "lastLoginAt": "1778109294876",
+      "displayName": "Dr. Mona Saeed",
+      "emailVerified": false,
+      "email": "mona.saeeed@nada.edu",
+      "salt": "fakeSaltOrT2CCCHSRiXajMkkCNu",
+      "passwordHash": "fakeHash:salt=fakeSaltOrT2CCCHSRiXajMkkCNu:password=Doctor@123",
+      "passwordUpdatedAt": 1778109061491,
+      "validSince": "1778109061",
+      "createdAt": "1778109061491",
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "mona.saeeed@nada.edu",
+          "federatedId": "mona.saeeed@nada.edu",
+          "rawId": "mona.saeeed@nada.edu",
+          "displayName": "Dr. Mona Saeed"
+        }
+      ],
+      "lastRefreshAt": "2026-05-06T23:14:54.876Z",
+      "disabled": false
+    },
+    {
+      "localId": "bmuPfJMAkYXB5rEhhMbRqtSCDx6O",
+      "createdAt": "1777888476120",
+      "lastLoginAt": "1778108600256",
+      "displayName": "nada",
+      "passwordHash": "fakeHash:salt=fakeSaltFvfKhrqMKB26paHp1mxz:password=123456789",
+      "salt": "fakeSaltFvfKhrqMKB26paHp1mxz",
+      "passwordUpdatedAt": 1778107454300,
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "nadasoska2005@gmail.com",
+          "federatedId": "nadasoska2005@gmail.com",
+          "rawId": "nadasoska2005@gmail.com",
+          "displayName": "nada"
+        }
+      ],
+      "validSince": "1778107454",
+      "email": "nadasoska2005@gmail.com",
+      "emailVerified": false,
+      "disabled": false,
+      "lastRefreshAt": "2026-05-06T23:03:20.257Z"
+    },
+    {
+      "localId": "hueb1bOwngczkGtdWx1GU3AJokEG",
+      "createdAt": "1776880588464",
+      "lastLoginAt": "1778107492315",
+      "passwordHash": "fakeHash:salt=fakeSaltvSfqCqWHulso22ZfTX1U:password=123456789",
+      "salt": "fakeSaltvSfqCqWHulso22ZfTX1U",
+      "passwordUpdatedAt": 1778107488606,
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "admin@classroom.local",
+          "federatedId": "admin@classroom.local",
+          "rawId": "admin@classroom.local",
+          "displayName": "",
+          "photoUrl": ""
+        }
+      ],
+      "validSince": "1778107488",
+      "email": "admin@classroom.local",
+      "emailVerified": false,
+      "disabled": false,
+      "displayName": "",
+      "photoUrl": "",
+      "customAttributes": "",
+      "lastRefreshAt": "2026-05-06T22:44:52.315Z"
+    },
+    {
+      "localId": "mh2OBdYp8Shu1mfbmeAaQQQhzNkn",
+      "lastLoginAt": "1778107947681",
+      "displayName": "Dr. Ahmed Hassan",
+      "emailVerified": false,
+      "email": "ahmed.hassan@nada.edu",
+      "salt": "fakeSaltdX9nZzHhrwk5UiDgAp2G",
+      "passwordHash": "fakeHash:salt=fakeSaltdX9nZzHhrwk5UiDgAp2G:password=Doctor@123",
+      "passwordUpdatedAt": 1778107947682,
+      "validSince": "1778107947",
+      "createdAt": "1778107947681",
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "ahmed.hassan@nada.edu",
+          "federatedId": "ahmed.hassan@nada.edu",
+          "rawId": "ahmed.hassan@nada.edu",
+          "displayName": "Dr. Ahmed Hassan"
+        }
+      ],
+      "lastRefreshAt": "2026-05-06T22:52:27.684Z"
+    },
+    {
+      "localId": "oSCQPgNzbC04FwydnAWAex7EB2Pn",
+      "lastLoginAt": "1778108479152",
+      "displayName": "Dr. Khaled Mostafa",
+      "emailVerified": false,
+      "email": "khaled.mostafea@nada.edu",
+      "salt": "fakeSaltd0vbFp16KTyJecG7mCug",
+      "passwordHash": "fakeHash:salt=fakeSaltd0vbFp16KTyJecG7mCug:password=Doctor@123",
+      "passwordUpdatedAt": 1778108479152,
+      "validSince": "1778108479",
+      "createdAt": "1778108479152",
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "khaled.mostafea@nada.edu",
+          "federatedId": "khaled.mostafea@nada.edu",
+          "rawId": "khaled.mostafea@nada.edu",
+          "displayName": "Dr. Khaled Mostafa"
+        }
+      ],
+      "lastRefreshAt": "2026-05-06T23:01:19.153Z"
+    },
+    {
+      "localId": "rolS6cycgA0sZf0DGy3Ews3iV4uV",
+      "lastLoginAt": "1778109274479",
+      "displayName": "Dr. Khaled Mostafa",
+      "emailVerified": false,
+      "email": "khaled.mostafa@nada.edu",
+      "salt": "fakeSaltHu8vk9oO1TpZi9XBWmcP",
+      "passwordHash": "fakeHash:salt=fakeSaltHu8vk9oO1TpZi9XBWmcP:password=Doctor@123",
+      "passwordUpdatedAt": 1778108903564,
+      "validSince": "1778108903",
+      "createdAt": "1778108903564",
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "khaled.mostafa@nada.edu",
+          "federatedId": "khaled.mostafa@nada.edu",
+          "rawId": "khaled.mostafa@nada.edu",
+          "displayName": "Dr. Khaled Mostafa"
+        }
+      ],
+      "lastRefreshAt": "2026-05-06T23:14:34.479Z"
+    },
+    {
+      "localId": "wMAfH6DmpZeVfUEJIPK4uZBYZkhT",
+      "lastLoginAt": "1778109273650",
+      "displayName": "Dr. Ahmed Hassan",
+      "emailVerified": false,
+      "email": "ahmed.haessan@nada.edu",
+      "salt": "fakeSaltKVLmmFEXL9OOLmVrKgCl",
+      "passwordHash": "fakeHash:salt=fakeSaltKVLmmFEXL9OOLmVrKgCl:password=Doctor@123",
+      "passwordUpdatedAt": 1778109061085,
+      "validSince": "1778109061",
+      "createdAt": "1778109061085",
+      "providerUserInfo": [
+        {
+          "providerId": "password",
+          "email": "ahmed.haessan@nada.edu",
+          "federatedId": "ahmed.haessan@nada.edu",
+          "rawId": "ahmed.haessan@nada.edu",
+          "displayName": "Dr. Ahmed Hassan"
+        }
+      ],
+      "lastRefreshAt": "2026-05-06T23:14:33.650Z"
+    }
+  ]
+}

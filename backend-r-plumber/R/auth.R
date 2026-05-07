@@ -116,6 +116,7 @@ require_role <- function(req, roles) {
 require_admin       <- function(req) require_role(req, "admin")
 require_doctor      <- function(req) require_role(req, "doctor")
 require_student     <- function(req) require_role(req, "student")
+require_parent      <- function(req) require_role(req, "parent")
 require_admin_or_doctor <- function(req) require_role(req, c("admin", "doctor"))
 
 # ---- Small helpers ----

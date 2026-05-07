@@ -106,8 +106,41 @@ function(req) {
     # Doctors need the active student roster to enroll students into new lectures.
     doctor  = active,
     student = active[active$id == user$linked_id, , drop = FALSE],
+    parent  = {
+      ids <- .parent_linked_student_ids(user$linked_id)
+      active[active$id %in% ids, , drop = FALSE]
+    },
     active[0, , drop = FALSE]
   )
+}
+
+# Helper: list of student_ids linked to a parent. Returns character(0) if missing.
+.parent_linked_student_ids <- function(parent_id) {
+  if (is.null(parent_id) || !nzchar(parent_id)) return(character(0))
+  doc <- tryCatch(fs_get(sprintf("parents/%s", parent_id)), error = function(e) NULL)
+  if (is.null(doc)) return(character(0))
+  data <- fs_unwrap_fields(doc$fields)
+  ids <- unlist(data$linked_student_ids %||% list())
+  if (is.null(ids)) character(0) else as.character(ids)
+}
+
+# Helper: TRUE if the requester is allowed to view stats for student_id.
+# Admin: yes. Student: only self. Doctor: only if the student is enrolled
+# in one of their visible lectures. Parent: only if linked.
+.can_view_student <- function(user, student_id) {
+  role <- user$role %||% ""
+  if (role == "admin") return(TRUE)
+  if (role == "student") return(identical(user$linked_id, student_id))
+  if (role == "parent") return(student_id %in% .parent_linked_student_ids(user$linked_id))
+  if (role == "doctor") {
+    lectures <- .lectures_visible_to(user)
+    if (nrow(lectures) == 0) return(FALSE)
+    enrolled_lists <- lapply(lectures$enrolled_student_ids, function(v) {
+      if (is.null(v) || length(v) == 0) character(0) else unlist(v)
+    })
+    return(any(vapply(enrolled_lists, function(e) student_id %in% e, logical(1))))
+  }
+  FALSE
 }
 
 #* @get /api/students
@@ -145,8 +178,7 @@ function(req, res) {
 #* @get /api/students/<id>
 function(req, res, id) {
   require_auth(req)
-  if (req$user$role == "student" && req$user$linked_id != id)
-    stop(api_error(403, "forbidden"))
+  if (!.can_view_student(req$user, id)) stop(api_error(403, "forbidden"))
   doc <- tryCatch(fs_get(sprintf("students/%s", id)), error = function(e) NULL)
   if (is.null(doc)) stop(api_error(404, "student not found"))
   c(list(id = id), fs_unwrap_fields(doc$fields))
@@ -268,6 +300,93 @@ function(req, res, id) {
             list(active = FALSE, deleted_at = now_iso()))
   list(status = "soft_deleted", id = id)
 }
+
+# ============================================================
+# §4c Parents
+# ============================================================
+
+.parents_visible_to <- function(user) {
+  all <- fs_collection_df("parents")
+  if (nrow(all) == 0) return(all)
+  active <- all[is.na(all$active) | all$active != FALSE, , drop = FALSE]
+  switch(user$role %||% "",
+    admin  = all,
+    parent = active[active$id == user$linked_id, , drop = FALSE],
+    active[0, , drop = FALSE]
+  )
+}
+
+#* @get /api/parents
+function(req) { require_auth(req); .parents_visible_to(req$user) }
+
+#* @post /api/parents
+function(req, res) {
+  require_admin(req)
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  if (is.null(body$email) || is.null(body$name)) {
+    stop(api_error(400, "email and name are required"))
+  }
+  parent_id <- body$parent_id %||% new_id("par")
+  password  <- body$password  %||% paste0("tmp-", new_id(""))
+  linked    <- body$linked_student_ids %||% list()
+  if (!is.list(linked)) linked <- as.list(linked)
+  uid <- create_auth_user(email = body$email, password = password,
+                          display_name = body$name)
+  fs_create_at("parents", parent_id, drop_empty(list(
+    parent_id          = parent_id,
+    name               = body$name,
+    email              = body$email,
+    relationship       = body$relationship,
+    linked_student_ids = linked,
+    active             = TRUE,
+    created_by         = req$user$uid,
+    created_at         = now_iso()
+  )))
+  fs_create_at("users", uid, list(
+    uid = uid, role = "parent", linked_id = parent_id, email = body$email
+  ))
+  out <- list(parent_id = parent_id, uid = uid)
+  if (is.null(body$password)) out$temporary_password <- password
+  out
+}
+
+#* @get /api/parents/<id>
+function(req, res, id) {
+  require_auth(req)
+  if (req$user$role == "parent" && !identical(req$user$linked_id, id)) {
+    stop(api_error(403, "forbidden"))
+  } else if (!(req$user$role %in% c("admin", "parent"))) {
+    stop(api_error(403, "forbidden"))
+  }
+  doc <- tryCatch(fs_get(sprintf("parents/%s", id)), error = function(e) NULL)
+  if (is.null(doc)) stop(api_error(404, "parent not found"))
+  c(list(id = id), fs_unwrap_fields(doc$fields))
+}
+
+#* @put /api/parents/<id>
+function(req, res, id) {
+  require_admin(req)
+  body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
+  patch <- drop_empty(body[c("name", "email", "relationship", "linked_student_ids", "active")])
+  if (length(patch) == 0) stop(api_error(400, "nothing to update"))
+  if (!is.null(patch$linked_student_ids) && !is.list(patch$linked_student_ids)) {
+    patch$linked_student_ids <- as.list(patch$linked_student_ids)
+  }
+  fs_update(sprintf("parents/%s", id), patch)
+  list(status = "updated", id = id)
+}
+
+#* @delete /api/parents/<id>
+function(req, res, id) {
+  require_admin(req)
+  fs_update(sprintf("parents/%s", id),
+            list(active = FALSE, deleted_at = now_iso()))
+  list(status = "soft_deleted", id = id)
+}
+
+# ============================================================
+# §5 Doctors
+# ============================================================
 
 .doctors_visible_to <- function(user) {
   all <- fs_collection_df("doctors")
@@ -459,6 +578,12 @@ function(req, res, id) {
         user$linked_id %in% unlist(v %||% list())
       }, logical(1)), , drop = FALSE]
     },
+    parent = {
+      kids <- .parent_linked_student_ids(user$linked_id)
+      active[vapply(active$enrolled_student_ids, function(v) {
+        any(kids %in% unlist(v %||% list()))
+      }, logical(1)), , drop = FALSE]
+    },
     active[0, , drop = FALSE]
   )
 }
@@ -517,6 +642,11 @@ function(req, res, id) {
   } else if (u$role == "student") {
     if (!(u$linked_id %in% unlist(data$enrolled_student_ids %||% list()))) {
       stop(api_error(403, "not enrolled"))
+    }
+  } else if (u$role == "parent") {
+    kids <- .parent_linked_student_ids(u$linked_id)
+    if (!any(kids %in% unlist(data$enrolled_student_ids %||% list()))) {
+      stop(api_error(403, "no linked student in class"))
     }
   }
   c(list(id = id), data)
@@ -729,6 +859,14 @@ function(req, res, id) {
       }, logical(1))
       all[enrolled, , drop = FALSE]
     },
+    parent = {
+      kids <- .parent_linked_student_ids(user$linked_id)
+      enrolled <- vapply(all$enrolled_student_ids, function(v) {
+        if (is.null(v) || length(v) == 0) FALSE
+        else any(kids %in% unlist(v))
+      }, logical(1))
+      all[enrolled, , drop = FALSE]
+    },
     all[0, , drop = FALSE]
   )
 }
@@ -782,6 +920,11 @@ function(req, res, id) {
     stop(api_error(403, "not your lecture"))
   if (u$role == "student" && !(u$linked_id %in% unlist(data$enrolled_student_ids %||% list())))
     stop(api_error(403, "not enrolled"))
+  if (u$role == "parent") {
+    kids <- .parent_linked_student_ids(u$linked_id)
+    if (!any(kids %in% unlist(data$enrolled_student_ids %||% list())))
+      stop(api_error(403, "no linked student in lecture"))
+  }
   c(list(id = id), data)
 }
 
@@ -941,6 +1084,10 @@ function(req, res) {
 
   df <- all_emotions[all_emotions$lecture_id %in% visible_ids, , drop = FALSE]
   if (user$role == "student") df <- df[df$student_id == user$linked_id, , drop = FALSE]
+  if (user$role == "parent") {
+    kids <- .parent_linked_student_ids(user$linked_id)
+    df <- df[df$student_id %in% kids, , drop = FALSE]
+  }
   if (!is.null(student_id))   df <- df[df$student_id == student_id, , drop = FALSE]
   df
 }
@@ -1030,7 +1177,7 @@ function(req) {
 function(req, id) {
   require_auth(req)
   u <- req$user
-  if (u$role == "student" && u$linked_id != id) stop(api_error(403, "forbidden"))
+  if (!.can_view_student(u, id)) stop(api_error(403, "forbidden"))
   # Doctors: must have the student in one of their lectures.
   visible_lectures <- .lectures_visible_to(u)
   all_emotions <- fs_collection_df("emotions")

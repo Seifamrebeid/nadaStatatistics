@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "../services/api";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
+import PageHeader from "../components/PageHeader";
 
 // Plumber wraps scalars as length-1 arrays in its default JSON; normalise them.
 const v = (x) => (Array.isArray(x) ? x[0] : x);
@@ -107,21 +108,23 @@ export default function AdminDoctors() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-semibold">Doctors</h1>
-        <button onClick={openCreate}
-          className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded">
-          + New doctor
-        </button>
-      </div>
-      {err && <div className="mb-4 px-3 py-2 bg-red-100 text-red-900 text-sm rounded">{err}</div>}
+      <PageHeader
+        title="Doctors"
+        subtitle="Manage doctor accounts and face enrollment."
+        actions={
+          <button onClick={openCreate} className="btn-primary">
+            + New doctor
+          </button>
+        }
+      />
+      {err && <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">{err}</div>}
       <CrudTable rows={rows} columns={columns} actions={actions}/>
 
       <Modal open={modal === "create"} onClose={() => setModal(null)}
              title="Create doctor"
              footer={<>
-               <button onClick={() => setModal(null)} className="px-3 py-1.5 border rounded">Cancel</button>
-               <button onClick={save} className="px-3 py-1.5 bg-brand text-white rounded">Create</button>
+               <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
+               <button onClick={save} className="btn-primary">Create</button>
              </>}>
         <DoctorForm form={form} setForm={setForm} showPasswordField/>
         {savedTempPw && (
@@ -134,8 +137,8 @@ export default function AdminDoctors() {
       <Modal open={modal?.mode === "edit"} onClose={() => setModal(null)}
              title={`Edit ${modal?.row?.name || ""}`}
              footer={<>
-               <button onClick={() => setModal(null)} className="px-3 py-1.5 border rounded">Cancel</button>
-               <button onClick={save} className="px-3 py-1.5 bg-brand text-white rounded">Save</button>
+               <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
+               <button onClick={save} className="btn-primary">Save</button>
              </>}>
         <DoctorForm form={form} setForm={setForm} showActive/>
       </Modal>

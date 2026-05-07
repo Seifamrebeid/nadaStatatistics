@@ -13,25 +13,34 @@ const normalise = (row) => {
 export default function AdminWeeks() {
   const [rows, setRows] = useState([]);
   const [classes, setClasses] = useState([]);
+  const [subjects, setSubjects] = useState([]);
   const [lectures, setLectures] = useState([]);
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
 
+  // Filters — required so the table never renders all 240 weeks at once.
+  const [filterSubject, setFilterSubject] = useState("");
+  const [filterClass, setFilterClass] = useState("");
+  const [filterWeek, setFilterWeek] = useState("1");
+
   async function load() {
     try {
-      const [weeksRes, classesRes, lecturesRes] = await Promise.all([
+      const [weeksRes, classesRes, subjectsRes, lecturesRes] = await Promise.all([
         api.get("/api/weeks"),
         api.get("/api/classes"),
+        api.get("/api/subjects"),
         api.get("/api/lectures"),
       ]);
       const weeksList = Array.isArray(weeksRes.data) ? weeksRes.data : [];
       const classesList = Array.isArray(classesRes.data) ? classesRes.data : [];
+      const subjectsList = Array.isArray(subjectsRes.data) ? subjectsRes.data : [];
       const lecturesList = Array.isArray(lecturesRes.data)
         ? lecturesRes.data
         : [];
       setRows(weeksList.map(normalise));
       setClasses(classesList.map(normalise));
+      setSubjects(subjectsList.map(normalise));
       setLectures(lecturesList.map(normalise));
     } catch (e) {
       setErr(e.response?.data?.error || e.message);
@@ -152,23 +161,91 @@ export default function AdminWeeks() {
     </div>
   );
 
+  // Classes filtered by selected subject — drives the class dropdown.
+  const classesForSubject = filterSubject
+    ? classes.filter((c) => c.subject_id === filterSubject)
+    : classes;
+
+  // Weeks visible after all filters applied. Subject + class + week-number must
+  // narrow to at most one week per class so the table never shows >1 week.
+  const filteredRows = rows.filter((r) => {
+    if (filterClass && r.class_id !== filterClass) return false;
+    if (!filterClass && filterSubject) {
+      const cls = classes.find((c) => c.id === r.class_id);
+      if (!cls || cls.subject_id !== filterSubject) return false;
+    }
+    if (filterWeek && String(r.week_number) !== String(filterWeek)) return false;
+    return true;
+  });
+
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-semibold">Weeks</h1>
         <button
           onClick={openCreate}
-          className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded"
+          className="btn-primary"
         >
           + New week
         </button>
       </div>
       {err && (
-        <div className="mb-4 px-3 py-2 bg-red-100 text-red-900 text-sm rounded">
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">
           {err}
         </div>
       )}
-      <CrudTable rows={rows} columns={columns} actions={actions} />
+
+      <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 border border-slate-200 rounded p-3">
+        <label className="block">
+          <span className="text-xs text-slate-600">Subject</span>
+          <select
+            value={filterSubject}
+            onChange={(e) => {
+              setFilterSubject(e.target.value);
+              setFilterClass("");
+            }}
+            className="mt-1 block w-full border rounded px-3 py-2 text-sm"
+          >
+            <option value="">All subjects</option>
+            {subjects.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-slate-600">Class</span>
+          <select
+            value={filterClass}
+            onChange={(e) => setFilterClass(e.target.value)}
+            className="mt-1 block w-full border rounded px-3 py-2 text-sm"
+          >
+            <option value="">All classes</option>
+            {classesForSubject.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs text-slate-600">Week</span>
+          <select
+            value={filterWeek}
+            onChange={(e) => setFilterWeek(e.target.value)}
+            className="mt-1 block w-full border rounded px-3 py-2 text-sm"
+          >
+            {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={String(n)}>
+                Week {n}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <CrudTable rows={filteredRows} columns={columns} actions={actions} />
 
       <Modal
         open={modal === "create"}
@@ -178,13 +255,13 @@ export default function AdminWeeks() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Create
             </button>
@@ -207,13 +284,13 @@ export default function AdminWeeks() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Save
             </button>

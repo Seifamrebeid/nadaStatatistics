@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Layout from "./components/Layout";
+import { PageLoader } from "./components/Spinner";
 import Login from "./pages/Login";
 import DoctorDashboard from "./pages/DoctorDashboard";
 import DoctorSubjects from "./pages/DoctorSubjects";
@@ -15,13 +16,7 @@ import NotFound from "./pages/NotFound";
 
 function Gate() {
   const { user, profile, loading } = useAuth();
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-500">
-        Loading…
-      </div>
-    );
-  }
+  if (loading) return <PageLoader />;
   if (!user || !profile) {
     return <Login />;
   }

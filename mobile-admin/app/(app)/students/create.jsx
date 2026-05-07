@@ -3,41 +3,38 @@ import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
   Alert,
-  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { createStudent } from "../../../api";
+import Screen from "../../../components/Screen";
+import ScreenHeader from "../../../components/ScreenHeader";
+import Button from "../../../components/Button";
+import { colors, radii, shadow, spacing } from "../../../components/theme";
 
 export default function CreateStudentScreen() {
   const router = useRouter();
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-  });
+  const [form, setForm] = useState({ name: "", email: "" });
   const [loading, setLoading] = useState(false);
 
-  const handleInputChange = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
   const handleCreate = async () => {
-    if (!formData.name || !formData.email) {
-      Alert.alert("Error", "Name and email are required");
+    if (!form.name || !form.email) {
+      Alert.alert("Missing info", "Name and email are required.");
       return;
     }
-
     setLoading(true);
     try {
-      const response = await createStudent(formData);
+      const response = await createStudent(form);
+      const tmp = response.data?.temporary_password;
       Alert.alert(
-        "Success",
-        `Student created!\nTemp Password: ${response.data.temporary_password || "Check email"}`,
+        "Student created",
+        tmp ? `Temporary password:\n${tmp}` : "Account created.",
+        [{ text: "OK", onPress: () => router.back() }],
       );
-      router.back();
     } catch (error) {
       Alert.alert("Error", error.response?.data?.message || error.message);
     } finally {
@@ -46,112 +43,84 @@ export default function CreateStudentScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>New Student</Text>
-      </View>
+    <Screen>
+      <ScreenHeader title="New student" />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1 }}
+      >
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <View style={styles.card}>
+            <Text style={styles.label}>Name</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Full name"
+              value={form.name}
+              onChangeText={(v) => setForm((f) => ({ ...f, name: v }))}
+              editable={!loading}
+              placeholderTextColor={colors.slate400}
+            />
 
-      <View style={styles.form}>
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Name *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Full name"
-            value={formData.name}
-            onChangeText={(val) => handleInputChange("name", val)}
-            editable={!loading}
-          />
-        </View>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="student@example.com"
+              value={form.email}
+              onChangeText={(v) => setForm((f) => ({ ...f, email: v }))}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!loading}
+              placeholderTextColor={colors.slate400}
+            />
 
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Email *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="student@example.com"
-            value={formData.email}
-            onChangeText={(val) => handleInputChange("email", val)}
-            keyboardType="email-address"
-            editable={!loading}
-          />
-        </View>
-
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleCreate}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Create Student</Text>
-          )}
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+            <Button
+              title={loading ? "Creating…" : "Create student"}
+              onPress={handleCreate}
+              loading={loading}
+              size="lg"
+              style={{ marginTop: spacing.lg }}
+            />
+            <Button
+              title="Cancel"
+              onPress={() => router.back()}
+              variant="ghost"
+              style={{ marginTop: spacing.sm }}
+            />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f5f5f5",
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  backButton: {
-    fontSize: 16,
-    color: "#007AFF",
-    fontWeight: "600",
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    marginLeft: 10,
-  },
-  form: {
-    padding: 20,
-  },
-  formGroup: {
-    marginBottom: 20,
+  scroll: { padding: spacing.lg },
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    ...shadow.card,
   },
   label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
+    fontSize: 11,
+    color: colors.slate600,
+    fontWeight: "700",
+    marginTop: spacing.md,
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
   input: {
+    backgroundColor: colors.white,
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: "#fff",
-  },
-  button: {
-    backgroundColor: "#007AFF",
-    padding: 14,
-    borderRadius: 8,
-    alignItems: "center",
-    marginTop: 20,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+    fontSize: 15,
+    color: colors.slate900,
   },
 });

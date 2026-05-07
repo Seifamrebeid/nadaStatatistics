@@ -26,7 +26,7 @@ export default function AppIndex() {
         backgroundColor: "#f5f5f5",
       }}
     >
-      <ActivityIndicator size="large" color="#007AFF" />
+      <ActivityIndicator size="large" color="#059669" />
     </View>
   );
 }

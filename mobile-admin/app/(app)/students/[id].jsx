@@ -1,40 +1,38 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View,
   Text,
   TextInput,
-  TouchableOpacity,
   StyleSheet,
   ScrollView,
   Alert,
   ActivityIndicator,
   Switch,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { getStudent, updateStudent, deleteStudent } from "../../../api";
+import Screen from "../../../components/Screen";
+import ScreenHeader from "../../../components/ScreenHeader";
+import Button from "../../../components/Button";
+import { colors, radii, shadow, spacing } from "../../../components/theme";
 
 export default function StudentDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams();
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    active: true,
-  });
+  const [form, setForm] = useState({ name: "", email: "", active: true });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    fetchStudent();
-  }, []);
-
-  const fetchStudent = async () => {
+  const fetchStudent = useCallback(async () => {
     try {
       const response = await getStudent(id);
-      setFormData({
-        name: response.data.name || "",
-        email: response.data.email || "",
-        active: response.data.active !== false,
+      const d = response.data || {};
+      setForm({
+        name: d.name || "",
+        email: d.email || "",
+        active: d.active !== false,
       });
     } catch (error) {
       Alert.alert("Error", "Failed to load student");
@@ -42,27 +40,23 @@ export default function StudentDetailScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, router]);
 
-  const handleInputChange = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
+  useFocusEffect(
+    useCallback(() => {
+      fetchStudent();
+    }, [fetchStudent]),
+  );
 
   const handleSave = async () => {
-    if (!formData.name || !formData.email) {
-      Alert.alert("Error", "Name and email are required");
+    if (!form.name || !form.email) {
+      Alert.alert("Missing info", "Name and email are required.");
       return;
     }
-
     setSaving(true);
     try {
-      await updateStudent(id, {
-        name: formData.name,
-        email: formData.email,
-        active: formData.active,
-      });
-      Alert.alert("Success", "Student updated");
-      router.back();
+      await updateStudent(id, form);
+      Alert.alert("Saved", "Student updated.", [{ text: "OK", onPress: () => router.back() }]);
     } catch (error) {
       Alert.alert("Error", error.response?.data?.message || error.message);
     } finally {
@@ -70,8 +64,8 @@ export default function StudentDetailScreen() {
     }
   };
 
-  const handleDelete = async () => {
-    Alert.alert("Delete Student", "Are you sure?", [
+  const handleDelete = () => {
+    Alert.alert("Delete student", "This action cannot be undone.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
@@ -79,13 +73,9 @@ export default function StudentDetailScreen() {
         onPress: async () => {
           try {
             await deleteStudent(id);
-            Alert.alert("Deleted", "Student has been deleted");
             router.back();
           } catch (error) {
-            Alert.alert(
-              "Error",
-              error.response?.data?.message || error.message,
-            );
+            Alert.alert("Error", error.response?.data?.message || error.message);
           }
         },
       },
@@ -94,158 +84,118 @@ export default function StudentDetailScreen() {
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#007AFF" />
-      </View>
+      <Screen>
+        <ScreenHeader title="Student" />
+        <View style={styles.loading}>
+          <ActivityIndicator size="large" color={colors.brand600} />
+        </View>
+      </Screen>
     );
   }
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backButton}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>Student Details</Text>
-      </View>
+    <Screen>
+      <ScreenHeader title={form.name || "Student"} subtitle={`ID: ${id}`} />
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1 }}
+      >
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+          <View style={styles.card}>
+            <Text style={styles.label}>Name</Text>
+            <TextInput
+              style={styles.input}
+              value={form.name}
+              onChangeText={(v) => setForm((f) => ({ ...f, name: v }))}
+              editable={!saving}
+              placeholderTextColor={colors.slate400}
+            />
 
-      <View style={styles.form}>
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Name</Text>
-          <TextInput
-            style={styles.input}
-            value={formData.name}
-            onChangeText={(val) => handleInputChange("name", val)}
-            editable={!saving}
-          />
-        </View>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              value={form.email}
+              onChangeText={(v) => setForm((f) => ({ ...f, email: v }))}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!saving}
+              placeholderTextColor={colors.slate400}
+            />
 
-        <View style={styles.formGroup}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            value={formData.email}
-            onChangeText={(val) => handleInputChange("email", val)}
-            keyboardType="email-address"
-            editable={!saving}
-          />
-        </View>
+            <View style={styles.switchRow}>
+              <View>
+                <Text style={[styles.label, { marginTop: 0 }]}>Active</Text>
+                <Text style={styles.hint}>Inactive students cannot sign in.</Text>
+              </View>
+              <Switch
+                value={form.active}
+                onValueChange={(val) => setForm((f) => ({ ...f, active: val }))}
+                disabled={saving}
+                trackColor={{ true: colors.brand500, false: colors.slate200 }}
+                thumbColor={colors.white}
+              />
+            </View>
 
-        <View style={styles.formGroup}>
-          <View style={styles.switchRow}>
-            <Text style={styles.label}>Active</Text>
-            <Switch
-              value={formData.active}
-              onValueChange={(val) => handleInputChange("active", val)}
+            <Button
+              title={saving ? "Saving…" : "Save changes"}
+              onPress={handleSave}
+              loading={saving}
+              size="lg"
+              style={{ marginTop: spacing.lg }}
+            />
+            <Button
+              title="Delete student"
+              onPress={handleDelete}
+              variant="danger"
               disabled={saving}
+              style={{ marginTop: spacing.sm }}
             />
           </View>
-        </View>
-
-        <TouchableOpacity
-          style={[styles.button, saving && styles.buttonDisabled]}
-          onPress={handleSave}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Save Changes</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.deleteButton}
-          onPress={handleDelete}
-          disabled={saving}
-        >
-          <Text style={styles.deleteButtonText}>Delete Student</Text>
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f5f5f5",
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 15,
-    paddingVertical: 12,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-  },
-  backButton: {
-    fontSize: 16,
-    color: "#007AFF",
-    fontWeight: "600",
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    marginLeft: 10,
-  },
-  form: {
-    padding: 20,
-  },
-  formGroup: {
-    marginBottom: 20,
+  loading: { flex: 1, alignItems: "center", justifyContent: "center" },
+  scroll: { padding: spacing.lg },
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    ...shadow.card,
   },
   label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
+    fontSize: 11,
+    color: colors.slate600,
+    fontWeight: "700",
+    marginTop: spacing.md,
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
+  hint: { fontSize: 12, color: colors.slate500, marginTop: 2 },
   input: {
+    backgroundColor: colors.white,
     borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    backgroundColor: "#fff",
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+    fontSize: 15,
+    color: colors.slate900,
   },
   switchRow: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "#fff",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#ddd",
-  },
-  button: {
-    backgroundColor: "#007AFF",
-    padding: 14,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  deleteButton: {
-    backgroundColor: "#ff3b30",
-    padding: 14,
-    borderRadius: 8,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  deleteButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
 });

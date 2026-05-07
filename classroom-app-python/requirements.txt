@@ -18,3 +18,5 @@ firebase-admin==6.5.0
 requests==2.32.3
 python-dotenv==1.0.1
 ultralytics>=8.4              # YOLOv8 nano — cell phone detection for "on phone" warning
+customtkinter==5.2.2          # modern Tk theme for capture_app_ui (wizard + live screen)
+pillow>=10.0                  # PIL ImageTk for rendering BGR frames into Tk

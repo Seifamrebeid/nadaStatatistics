@@ -145,6 +145,81 @@ attach_doctor_id <- function(df, mapping = c(lec_test_001 = "doc_test")) {
                  dplyr::coalesce("doc_unknown"))
 }
 
+# ---- Lecture metadata for the Shiny picker ----
+#
+# Fetches lectures + weeks + classes from Firestore and returns a named char
+# vector suitable for Shiny's selectInput choices: names() are display labels
+# ("Computing Algorithms — Week 1 (CS-ALG SE1)"), values are the lecture ids.
+# Returns NULL if Firestore is unavailable so the caller falls back to ids.
+load_lecture_labels <- function() {
+  have_firestore <- nzchar(Sys.getenv("FIRESTORE_EMULATOR_HOST", unset = "")) ||
+                    nzchar(Sys.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", unset = ""))
+  if (!have_firestore) return(NULL)
+  tryCatch({
+    root <- .find_repo_root()
+    if (is.na(root)) stop("repo root not found")
+    source(file.path(root, "backend-r-plumber", "R", "config.R"))
+    source(file.path(root, "backend-r-plumber", "R", "firestore.R"))
+
+    .rows <- function(coll) {
+      docs <- fs_list(coll)
+      if (length(docs) == 0) return(dplyr::tibble())
+      rows <- lapply(docs, function(d) {
+        flat <- fs_unwrap_fields(d$fields)
+        flat <- lapply(flat, function(x) if (is.null(x)) NA else x)
+        dplyr::as_tibble(flat)
+      })
+      dplyr::bind_rows(rows)
+    }
+
+    lectures <- .rows("lectures")
+    weeks    <- .rows("weeks")
+    classes  <- .rows("classes")
+    if (nrow(lectures) == 0) return(NULL)
+
+    # Build label per lecture: "<title> · Week N · <class name>"
+    weeks_lk <- if (nrow(weeks) > 0) {
+      stats::setNames(
+        paste0("Week ", ifelse(is.na(weeks$week_number), "?", as.character(weeks$week_number))),
+        weeks$week_id %||% weeks$id
+      )
+    } else character(0)
+    week_class_lk <- if (nrow(weeks) > 0) {
+      stats::setNames(weeks$class_id %||% rep(NA, nrow(weeks)),
+                      weeks$week_id %||% weeks$id)
+    } else character(0)
+    classes_lk <- if (nrow(classes) > 0) {
+      stats::setNames(classes$name %||% rep(NA, nrow(classes)),
+                      classes$class_id %||% classes$id)
+    } else character(0)
+
+    ids   <- lectures$lecture_id %||% lectures$id
+    title <- ifelse(is.na(lectures$title), ids, lectures$title)
+    wk_id <- lectures$week_id %||% rep(NA, nrow(lectures))
+    cl_id <- unname(week_class_lk[wk_id])
+    wk_lbl <- unname(weeks_lk[wk_id])
+    cl_nm  <- unname(classes_lk[cl_id])
+
+    fmt_one <- function(t, w, c) {
+      parts <- c(t,
+                 if (!is.na(w) && nzchar(w)) w else NULL,
+                 if (!is.na(c) && nzchar(c)) c else NULL)
+      paste(parts, collapse = "  ·  ")
+    }
+    labels <- mapply(fmt_one, title, wk_lbl, cl_nm, USE.NAMES = FALSE)
+
+    # Sort alphabetically by label for a stable picker order.
+    o <- order(tolower(labels))
+    stats::setNames(ids[o], labels[o])
+  }, error = function(e) {
+    message(sprintf("load_lecture_labels: %s", conditionMessage(e)))
+    NULL
+  })
+}
+
+# Tiny null-coalesce so the .rows() helper above stays readable.
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
 # Convenience for scripts.
 plot_dir <- function() {
   d <- "plots"

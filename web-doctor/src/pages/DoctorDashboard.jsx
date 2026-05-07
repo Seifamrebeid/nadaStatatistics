@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api from "../services/api";
 import StatCard from "../components/StatCard";
+import { Presentation, Radio, Smile, Hand, Bath } from "lucide-react";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 
@@ -11,7 +12,6 @@ export default function DoctorDashboard() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        // Fetch doctor's own lectures and engagement metrics
         const lecturesRes = await api.get("/api/lectures");
         const lectures = lecturesRes.data || [];
 
@@ -24,7 +24,6 @@ export default function DoctorDashboard() {
           (l) => v(l.status) === "recording",
         );
 
-        // Calculate avg engagement across own lectures
         const emotionsRes = await api.get("/api/emotions");
         const emotions = emotionsRes.data || [];
         const avgEngagement =
@@ -60,38 +59,53 @@ export default function DoctorDashboard() {
   }, []);
 
   if (err) {
-    return <div className="text-red-600 p-4">Error: {err}</div>;
+    return (
+      <div className="card p-6 text-red-700 bg-red-50 border-red-200">
+        Error: {err}
+      </div>
+    );
   }
 
   if (!stats) {
-    return <div className="p-4 text-slate-500">Loading…</div>;
+    return (
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="card p-5 animate-pulse">
+            <div className="h-3 w-20 bg-slate-200 rounded" />
+            <div className="h-8 w-24 bg-slate-200 rounded mt-3" />
+          </div>
+        ))}
+      </div>
+    );
   }
 
+  const recording = stats.recordingCount > 0;
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Doctor Dashboard</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatCard label="Today's Lectures" value={stats.todayCount} />
-        <StatCard
-          label="Currently Recording"
-          value={stats.recordingCount}
-          color="bg-blue-100"
-        />
-        <StatCard
-          label="Avg Engagement"
-          value={`${stats.avgEngagement}%`}
-          color="bg-green-100"
-        />
-        <StatCard
-          label="Hands Raised"
-          value={stats.raisedHandsCount}
-          color="bg-yellow-100"
-        />
-        <StatCard
-          label="Toilet Requests"
-          value={stats.toiletRequestsCount}
-          color="bg-red-100"
-        />
+    <div>
+      <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">
+            Doctor Dashboard
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Live snapshot of your teaching activity. Refreshes every 5 seconds.
+          </p>
+        </div>
+        {recording && (
+          <span className="badge bg-red-50 text-red-700 ring-1 ring-red-100 gap-1.5 px-2.5 py-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+            {stats.recordingCount} live now
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <StatCard label="Today's Lectures" value={stats.todayCount} accent="brand" icon={Presentation} />
+        <StatCard label="Currently Recording" value={stats.recordingCount} accent={recording ? "red" : "slate"} icon={Radio} />
+        <StatCard label="Avg Engagement" value={`${stats.avgEngagement}%`} accent="green" icon={Smile} />
+        <StatCard label="Hands Raised" value={stats.raisedHandsCount} accent="amber" icon={Hand} />
+        <StatCard label="Toilet Requests" value={stats.toiletRequestsCount} accent="slate" icon={Bath} />
       </div>
     </div>
   );

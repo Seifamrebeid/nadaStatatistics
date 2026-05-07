@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
+import FilterBar, { makeFilter } from "../components/FilterBar";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 const normalise = (row) => {
@@ -10,11 +11,22 @@ const normalise = (row) => {
   return out;
 };
 
+const subjectFilter = makeFilter({
+  search: { fields: ["name", "code", "description"] },
+  selects: [{ key: "active", field: "active" }],
+});
+
 export default function DoctorSubjects() {
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  const [filters, setFilters] = useState({ search: "", active: "" });
+
+  const filteredRows = useMemo(
+    () => rows.filter(subjectFilter(filters)),
+    [rows, filters],
+  );
 
   async function load() {
     try {
@@ -94,8 +106,27 @@ export default function DoctorSubjects() {
         </div>
       )}
 
+      <FilterBar
+        value={filters}
+        onChange={setFilters}
+        onReset={() => setFilters({ search: "", active: "" })}
+        searchPlaceholder="Search name, code, description..."
+        selects={[
+          {
+            key: "active",
+            label: "Active",
+            options: [
+              { value: "true", label: "Yes" },
+              { value: "false", label: "No" },
+            ],
+          },
+        ]}
+        total={rows.length}
+        shown={filteredRows.length}
+      />
+
       <CrudTable
-        rows={rows}
+        rows={filteredRows}
         columns={[
           { key: "code", label: "Code" },
           { key: "name", label: "Name" },

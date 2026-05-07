@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import {
   LineChart,
@@ -11,6 +11,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import FilterBar, { makeFilter } from "../components/FilterBar";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 
@@ -20,6 +21,12 @@ const normalise = (row) => {
   return out;
 };
 
+const lectureFilter = makeFilter({
+  search: { fields: ["title", "id"] },
+  selects: [{ key: "status", field: "status" }],
+  dateRange: { key: "scheduled_at" },
+});
+
 export default function DoctorAnalytics() {
   const [lectures, setLectures] = useState([]);
   const [selectedLecture, setSelectedLecture] = useState(null);
@@ -27,6 +34,30 @@ export default function DoctorAnalytics() {
   const [sleepData, setSleepData] = useState([]);
   const [gestureData, setGestureData] = useState([]);
   const [err, setErr] = useState(null);
+  const [filters, setFilters] = useState({
+    search: "",
+    status: "",
+    dateFrom: "",
+    dateTo: "",
+  });
+  const [studentFilter, setStudentFilter] = useState("");
+  const [stateFilter, setStateFilter] = useState("");
+
+  const filteredLectures = useMemo(
+    () => lectures.filter(lectureFilter(filters)),
+    [lectures, filters],
+  );
+
+  // Keep selectedLecture in sync with the visible (filtered) list.
+  useEffect(() => {
+    if (filteredLectures.length === 0) {
+      setSelectedLecture(null);
+      return;
+    }
+    if (!filteredLectures.some((l) => l.id === selectedLecture)) {
+      setSelectedLecture(filteredLectures[0].id);
+    }
+  }, [filteredLectures, selectedLecture]);
 
   useEffect(() => {
     const fetchLectures = async () => {
@@ -48,17 +79,44 @@ export default function DoctorAnalytics() {
     fetchLectures();
   }, []);
 
+  const [allEmotions, setAllEmotions] = useState([]);
+
   useEffect(() => {
-    if (!selectedLecture) return;
+    if (!selectedLecture) {
+      setAllEmotions([]);
+      return;
+    }
 
     const fetchAnalytics = async () => {
       try {
         const { data } = await api.get("/api/emotions", {
           params: { lecture_id: selectedLecture },
         });
-        const rows = (Array.isArray(data) ? data : []).map(normalise);
+        setAllEmotions((Array.isArray(data) ? data : []).map(normalise));
+      } catch (error) {
+        console.error("Error fetching analytics:", error);
+        setErr(error.response?.data?.error || error.message);
+      }
+    };
 
-        const byTime = new Map();
+    fetchAnalytics();
+  }, [selectedLecture]);
+
+  const studentOptions = useMemo(() => {
+    const s = new Set();
+    for (const r of allEmotions) if (r.student_id) s.add(String(r.student_id));
+    return Array.from(s).sort().map((id) => ({ value: id, label: id }));
+  }, [allEmotions]);
+
+  useEffect(() => {
+    const rows = allEmotions.filter((row) => {
+      if (studentFilter && String(row.student_id) !== studentFilter) return false;
+      if (stateFilter && String(row.state || "") !== stateFilter) return false;
+      return true;
+    });
+
+    try {
+      const byTime = new Map();
         const bySleepReason = new Map();
         const byGesture = new Map();
 
@@ -99,14 +157,11 @@ export default function DoctorAnalytics() {
             count,
           })),
         );
-      } catch (error) {
-        console.error("Error fetching analytics:", error);
-        setErr(error.response?.data?.error || error.message);
-      }
-    };
-
-    fetchAnalytics();
-  }, [selectedLecture]);
+    } catch (error) {
+      console.error("Error processing analytics:", error);
+      setErr(error.response?.data?.error || error.message);
+    }
+  }, [allEmotions, studentFilter, stateFilter]);
 
   return (
     <div className="space-y-6">
@@ -114,25 +169,72 @@ export default function DoctorAnalytics() {
 
       {err && <div className="text-red-600 p-4 bg-red-50 rounded">{err}</div>}
 
-      <div>
-        <label className="block text-sm font-medium mb-2">
-          Select Lecture:
+      <FilterBar
+        value={filters}
+        onChange={setFilters}
+        onReset={() => setFilters({ search: "", status: "", dateFrom: "", dateTo: "" })}
+        searchPlaceholder="Search lecture title..."
+        selects={[
+          {
+            key: "status",
+            label: "Lecture status",
+            options: ["scheduled", "recording", "finished"],
+          },
+        ]}
+        dateRange={{ key: "scheduled_at" }}
+        total={lectures.length}
+        shown={filteredLectures.length}
+      />
+
+      <div className="bg-white rounded-lg shadow p-3 flex flex-wrap items-end gap-3">
+        <label className="flex-1 min-w-[220px]">
+          <span className="text-xs text-slate-500 block mb-1">Lecture</span>
+          <select
+            value={selectedLecture || ""}
+            onChange={(e) => setSelectedLecture(e.target.value)}
+            className="w-full border rounded px-3 py-2 text-sm"
+          >
+            {filteredLectures.length === 0 && (
+              <option value="">No lectures match filters</option>
+            )}
+            {filteredLectures.map((lec) => (
+              <option key={lec.id} value={lec.id}>
+                {lec.title || lec.id} (
+                {lec.scheduled_at
+                  ? new Date(lec.scheduled_at).toLocaleDateString()
+                  : "n/a"}
+                )
+              </option>
+            ))}
+          </select>
         </label>
-        <select
-          value={selectedLecture || ""}
-          onChange={(e) => setSelectedLecture(e.target.value)}
-          className="border rounded px-4 py-2"
-        >
-          {lectures.map((lec) => (
-            <option key={lec.id} value={lec.id}>
-              {lec.title || lec.id} (
-              {lec.scheduled_at
-                ? new Date(lec.scheduled_at).toLocaleDateString()
-                : "n/a"}
-              )
-            </option>
-          ))}
-        </select>
+        <label className="min-w-[160px]">
+          <span className="text-xs text-slate-500 block mb-1">Student</span>
+          <select
+            value={studentFilter}
+            onChange={(e) => setStudentFilter(e.target.value)}
+            className="w-full border rounded px-3 py-2 text-sm bg-white"
+          >
+            <option value="">All students</option>
+            {studentOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="min-w-[140px]">
+          <span className="text-xs text-slate-500 block mb-1">State</span>
+          <select
+            value={stateFilter}
+            onChange={(e) => setStateFilter(e.target.value)}
+            className="w-full border rounded px-3 py-2 text-sm bg-white"
+          >
+            <option value="">All</option>
+            <option value="awake">awake</option>
+            <option value="sleeping">sleeping</option>
+          </select>
+        </label>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

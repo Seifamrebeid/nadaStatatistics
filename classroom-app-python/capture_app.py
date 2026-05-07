@@ -44,7 +44,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2
-import numpy as np
 import requests
 from dotenv import load_dotenv
 
@@ -52,7 +51,7 @@ import firebase_writer
 import face_id
 import emotion as emotion_mod
 from engagement import engagement_score
-from sleep_detector import SleepHistory, classify_sleep, init_face_mesh, init_face_mesh
+from sleep_detector import SleepHistory, classify_sleep, init_face_mesh
 from gesture_detector import (
     GestureHistory,
     assign_hand_to_face,
@@ -204,23 +203,44 @@ class FaceTrack:
 
 
 def main() -> int:
+    """CLI entry — interactive lecture pick, opens cv2.imshow live window."""
+    load_dotenv(Path(__file__).with_name(".env"))
+    db = firebase_writer.init_firebase()
+    lecture_id, lecture_doc = _pick_lecture(db)
+    return run_capture(lecture_id, lecture_doc)
+
+
+def run_capture(
+    lecture_id: str,
+    lecture_doc: dict,
+    *,
+    on_frame=None,
+    on_log=None,
+    stop_event=None,
+) -> int:
+    """Run the detection pipeline against a chosen lecture.
+
+    on_frame(frame_bgr): receives annotated BGR frames; if None, falls back
+        to cv2.imshow (legacy CLI behaviour).
+    on_log(message): replaces stdout prints (UI log panel).
+    stop_event (threading.Event): when set, loop exits cleanly. If None, the
+        loop exits when the user presses 'q' in the cv2 window.
+    """
+    _log = on_log if on_log is not None else print
     load_dotenv(Path(__file__).with_name(".env"))
     db = firebase_writer.init_firebase()
 
-    use_mediapipe = bool(mp and getattr(mp, "solutions", None))
-
-    lecture_id, lecture_doc = _pick_lecture(db)
-    print(f"\nRecording lecture: {lecture_id} — {lecture_doc.get('title')}")
+    _log(f"Recording lecture: {lecture_id} — {lecture_doc.get('title')}")
     firebase_writer.set_lecture_status(lecture_id, "recording")
 
     enrolled, names = face_id.load_enrolled_encodings(db, lecture_id)
-    print(f"Loaded {len(enrolled)} enrolled face encoding(s).")
+    _log(f"Loaded {len(enrolled)} enrolled face encoding(s).")
 
     try:
         mp_face_mesh = init_face_mesh(max_num_faces=8)
         mp_hands = init_hands(max_num_hands=8)
     except Exception as e:
-        print(f"MediaPipe init failed ({e}); running face ID + emotion only.")
+        _log(f"MediaPipe init failed ({e}); running face ID + emotion only.")
         mp_face_mesh = None
         mp_hands = None
 
@@ -231,13 +251,30 @@ def main() -> int:
         recorder.add_listener(transcriber.feed)
         transcriber.start(lecture_id)
     except Exception as e:
-        print(f"Audio/transcription init failed ({e}); continuing video-only.")
+        _log(f"Audio/transcription init failed ({e}); continuing video-only.")
 
     camera_index = int(os.getenv("CAMERA_INDEX", "0"))
-    cap = cv2.VideoCapture(camera_index)
+    cap_w = int(os.getenv("CAMERA_WIDTH", "640"))
+    cap_h = int(os.getenv("CAMERA_HEIGHT", "480"))
+    cap_fps = int(os.getenv("CAMERA_FPS", "30"))
+
+    # CAP_DSHOW backend on Windows starts the camera much faster and respects
+    # FRAME_WIDTH/HEIGHT/FPS reliably (the default MSMF backend often ignores
+    # them). On non-Windows the backend flag is harmless if undefined.
+    if os.name == "nt":
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(camera_index)
     if not cap.isOpened():
-        print(f"Could not open camera at index {camera_index}")
+        _log(f"Could not open camera at index {camera_index}")
         return 3
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, cap_w)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cap_h)
+    cap.set(cv2.CAP_PROP_FPS, cap_fps)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    _log(f"Camera open: {actual_w}x{actual_h} @ requested {cap_fps} fps")
 
     process_every_n = int(os.getenv("PROCESS_EVERY_N_FRAMES", "30"))
     save_interval = float(os.getenv("SAVE_INTERVAL_SECONDS", "3"))
@@ -253,9 +290,11 @@ def main() -> int:
 
     try:
         while True:
+            if stop_event is not None and stop_event.is_set():
+                break
             ok, frame = cap.read()
             if not ok:
-                print("Frame read failed; stopping.")
+                _log("Frame read failed; stopping.")
                 break
             h, w = frame.shape[:2]
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -411,6 +450,51 @@ def main() -> int:
                     phones = detect_phones(frame)
                     last_phone_boxes = [p["box"] for p in phones]
 
+                    # Re-identify enrolled students every N frames and attach
+                    # the matched student_id to whichever track owns that face
+                    # box (matched by IoU). Without this step every track stays
+                    # at the default "unknown".
+                    if enrolled:
+                        try:
+                            id_dets = face_id.detect_and_identify(
+                                rgb, enrolled, tolerance=tolerance,
+                            )
+                        except Exception as e:
+                            id_dets = []
+                            _log(f"face identify failed: {e}")
+
+                        named_count = 0
+                        unmatched_to_track = 0
+                        for det in id_dets:
+                            sid = det.get("student_id")
+                            box = det.get("box")
+                            dist = det.get("distance")
+                            if not sid or sid == "unknown":
+                                _log(
+                                    f"id: face at {box} -> unknown"
+                                    + (f" (closest dist={dist:.3f})" if dist is not None else "")
+                                )
+                                continue
+                            best_tid, best_iou = None, _MIN_IOU_ID_MATCH
+                            for tid, tr in tracks.items():
+                                iou = _iou(box, tr.box)
+                                if iou > best_iou:
+                                    best_iou = iou
+                                    best_tid = tid
+                            if best_tid is not None:
+                                tracks[best_tid].student_id = sid
+                                tracks[best_tid].name = names.get(sid, sid)
+                                named_count += 1
+                            else:
+                                unmatched_to_track += 1
+                        _log(
+                            f"id pass: {len(id_dets)} face(s) detected, "
+                            f"{named_count} matched to tracks, "
+                            f"{unmatched_to_track} identified but no track IoU match"
+                        )
+                    else:
+                        _log("id pass: skipped — no enrolled encodings loaded for this lecture")
+
                     for tid, tr in tracks.items():
                         top, right, bottom, left = tr.box
                         face_rect = (left, top, right - left, bottom - top)
@@ -482,9 +566,12 @@ def main() -> int:
                 total_rows += flushed
                 last_flush = now
 
-            cv2.imshow("Classroom Capture", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+            if on_frame is not None:
+                on_frame(frame)
+            else:
+                cv2.imshow("Classroom Capture", frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
             frame_idx += 1
 
     finally:
@@ -493,11 +580,12 @@ def main() -> int:
             flushed = firebase_writer.flush_buffer()
             total_rows += flushed
         except Exception as e:
-            print(f"final flush failed: {e}")
+            _log(f"final flush failed: {e}")
 
         try:
             cap.release()
-            cv2.destroyAllWindows()
+            if on_frame is None:
+                cv2.destroyAllWindows()
             if mp_face_mesh is not None:
                 mp_face_mesh.close()
             if mp_hands is not None:
@@ -509,17 +597,17 @@ def main() -> int:
         try:
             transcriber.stop()
         except Exception as e:
-            print(f"transcriber.stop failed: {e}")
+            _log(f"transcriber.stop failed: {e}")
         try:
             wav_path = recorder.stop()
         except Exception as e:
-            print(f"recorder.stop failed: {e}")
+            _log(f"recorder.stop failed: {e}")
 
         if wav_path is not None:
             try:
                 firebase_writer.upload_audio(lecture_id, str(wav_path))
             except Exception as e:
-                print(f"upload_audio failed: {e}")
+                _log(f"upload_audio failed: {e}")
 
         plumber_url = os.getenv("PLUMBER_URL", "http://localhost:8000")
         finalize_secret = os.getenv("FINALIZE_SHARED_SECRET", "")
@@ -529,11 +617,11 @@ def main() -> int:
                 headers={"X-Finalize-Secret": finalize_secret},
                 timeout=10,
             )
-            print(f"finalize: {r.status_code} {r.text[:200]}")
+            _log(f"finalize: {r.status_code} {r.text[:200]}")
         except Exception as e:
-            print(f"finalize call failed: {e}")
+            _log(f"finalize call failed: {e}")
 
-        print(f"\nCaptured {total_rows} observations; audio: {wav_path}; transcript was streamed live.")
+        _log(f"Captured {total_rows} observations; audio: {wav_path}; transcript was streamed live.")
 
     return 0
 

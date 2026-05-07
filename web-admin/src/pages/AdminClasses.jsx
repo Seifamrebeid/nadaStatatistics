@@ -23,6 +23,7 @@ export default function AdminClasses() {
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  const [filterSubject, setFilterSubject] = useState("");
 
   async function load() {
     try {
@@ -162,17 +163,38 @@ export default function AdminClasses() {
         <h1 className="text-2xl font-semibold">Classes</h1>
         <button
           onClick={openCreate}
-          className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded"
+          className="btn-primary"
         >
           + New class
         </button>
       </div>
       {err && (
-        <div className="mb-4 px-3 py-2 bg-red-100 text-red-900 text-sm rounded">
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">
           {err}
         </div>
       )}
-      <CrudTable rows={rows} columns={columns} actions={actions} />
+      <div className="mb-4 bg-slate-50 border border-slate-200 rounded p-3">
+        <label className="block max-w-sm">
+          <span className="text-xs text-slate-600">Filter by subject</span>
+          <select
+            value={filterSubject}
+            onChange={(e) => setFilterSubject(e.target.value)}
+            className="mt-1 block w-full border rounded px-3 py-2 text-sm"
+          >
+            <option value="">All subjects</option>
+            {subjects.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <CrudTable
+        rows={filterSubject ? rows.filter((r) => r.subject_id === filterSubject) : rows}
+        columns={columns}
+        actions={actions}
+      />
 
       <Modal
         open={modal === "create"}
@@ -182,13 +204,13 @@ export default function AdminClasses() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Create
             </button>
@@ -211,13 +233,13 @@ export default function AdminClasses() {
           <>
             <button
               onClick={() => setModal(null)}
-              className="px-3 py-1.5 border rounded"
+              className="btn-secondary"
             >
               Cancel
             </button>
             <button
               onClick={save}
-              className="px-3 py-1.5 bg-brand text-white rounded"
+              className="btn-primary"
             >
               Save
             </button>

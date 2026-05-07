@@ -1,8 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import Modal from "../components/Modal";
+import FilterBar, { makeFilter } from "../components/FilterBar";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
+
+const lectureFilter = makeFilter({
+  search: { fields: ["title", "id"] },
+  selects: [
+    { key: "status", field: "status" },
+    { key: "week_id", field: "week_id" },
+  ],
+  dateRange: { key: "scheduled_at" },
+});
 
 export default function DoctorLectures() {
   const [lectures, setLectures] = useState([]);
@@ -12,6 +22,18 @@ export default function DoctorLectures() {
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  const [filters, setFilters] = useState({
+    search: "",
+    status: "",
+    week_id: "",
+    dateFrom: "",
+    dateTo: "",
+  });
+
+  const filteredLectures = useMemo(
+    () => lectures.filter(lectureFilter(filters)),
+    [lectures, filters],
+  );
 
   const fetchData = async () => {
     try {
@@ -116,6 +138,33 @@ export default function DoctorLectures() {
 
       {err && <div className="text-red-600 p-4 bg-red-50 rounded">{err}</div>}
 
+      <FilterBar
+        value={filters}
+        onChange={setFilters}
+        onReset={() =>
+          setFilters({ search: "", status: "", week_id: "", dateFrom: "", dateTo: "" })
+        }
+        searchPlaceholder="Search title..."
+        selects={[
+          {
+            key: "status",
+            label: "Status",
+            options: ["scheduled", "recording", "finished"],
+          },
+          {
+            key: "week_id",
+            label: "Week",
+            options: weeks.map((w) => ({
+              value: w.id,
+              label: `Week ${w.week_number || "?"} - ${w.title || "Untitled"}`,
+            })),
+          },
+        ]}
+        dateRange={{ key: "scheduled_at" }}
+        total={lectures.length}
+        shown={filteredLectures.length}
+      />
+
       <div className="bg-white rounded-lg shadow overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50">
@@ -138,7 +187,7 @@ export default function DoctorLectures() {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {lectures.map((lecture) => (
+            {filteredLectures.map((lecture) => (
               <tr key={v(lecture.id)} className="hover:bg-gray-50">
                 <td className="px-6 py-4 text-sm">{v(lecture.title)}</td>
                 <td className="px-6 py-4 text-sm">

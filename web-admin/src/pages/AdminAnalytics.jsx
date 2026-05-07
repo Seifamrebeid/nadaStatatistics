@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import api from "../services/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
          LineChart, Line } from "recharts";
+import PageHeader from "../components/PageHeader";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 
@@ -50,7 +51,7 @@ export default function AdminAnalytics() {
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-4">System analytics</h1>
-      {err && <div className="mb-4 px-3 py-2 bg-red-100 text-red-900 text-sm rounded">{err}</div>}
+      {err && <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">{err}</div>}
 
       <div className="flex flex-wrap gap-2 mb-6">
         <button onClick={() => download("/api/exports/emotions.csv",   "emotions.csv")}

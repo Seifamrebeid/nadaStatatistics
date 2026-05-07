@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import api from "../services/api";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
+import FilterBar, { makeFilter } from "../components/FilterBar";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 const normalise = (row) => {
@@ -14,6 +15,16 @@ const normalise = (row) => {
   return out;
 };
 
+const classFilter = makeFilter({
+  search: { fields: ["name", "section"] },
+  selects: [
+    { key: "subject_id", field: "subject_id" },
+    { key: "academic_year", field: "academic_year" },
+    { key: "term", field: "term" },
+    { key: "active", field: "active" },
+  ],
+});
+
 export default function DoctorClasses() {
   const [rows, setRows] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -21,6 +32,28 @@ export default function DoctorClasses() {
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
+  const [filters, setFilters] = useState({
+    search: "",
+    subject_id: "",
+    academic_year: "",
+    term: "",
+    active: "",
+  });
+
+  const filteredRows = useMemo(
+    () => rows.filter(classFilter(filters)),
+    [rows, filters],
+  );
+
+  const yearOptions = useMemo(
+    () =>
+      Array.from(new Set(rows.map((r) => r.academic_year).filter(Boolean))).sort(),
+    [rows],
+  );
+  const termOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.term).filter(Boolean))).sort(),
+    [rows],
+  );
 
   async function loadAll() {
     try {
@@ -128,8 +161,36 @@ export default function DoctorClasses() {
         </div>
       )}
 
+      <FilterBar
+        value={filters}
+        onChange={setFilters}
+        onReset={() =>
+          setFilters({ search: "", subject_id: "", academic_year: "", term: "", active: "" })
+        }
+        searchPlaceholder="Search class name or section..."
+        selects={[
+          {
+            key: "subject_id",
+            label: "Subject",
+            options: subjects.map((s) => ({ value: s.id, label: s.name || s.id })),
+          },
+          { key: "academic_year", label: "Year", options: yearOptions },
+          { key: "term", label: "Term", options: termOptions },
+          {
+            key: "active",
+            label: "Active",
+            options: [
+              { value: "true", label: "Yes" },
+              { value: "false", label: "No" },
+            ],
+          },
+        ]}
+        total={rows.length}
+        shown={filteredRows.length}
+      />
+
       <CrudTable
-        rows={rows}
+        rows={filteredRows}
         columns={[
           {
             key: "subject_id",
