@@ -11,7 +11,7 @@ const FS = `http://localhost:8080/v1/projects/${PROJECT}/databases/(default)/doc
 const H = { Authorization: "Bearer owner", "Content-Type": "application/json" };
 
 const COLLECTIONS = [
-  "admins", "doctors", "users", "students",
+  "admins", "doctors", "users", "students", "parents",
   "subjects", "classes", "weeks", "lectures",
   "notifications", "transcripts", "emotions",
 ];

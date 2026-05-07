@@ -4,6 +4,11 @@ import { useChildren } from "../context/ChildContext";
 import { CalendarClock } from "lucide-react";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
+const flatIds = (x) => {
+  if (!Array.isArray(x)) return x ? [x] : [];
+  if (x.length > 0 && Array.isArray(x[0])) return x[0];
+  return x;
+};
 
 export default function ChildLectures() {
   const { selected } = useChildren();
@@ -17,20 +22,39 @@ export default function ChildLectures() {
     (async () => {
       try {
         setBusy(true);
-        const { data } = await api.get("/api/lectures");
-        const list = (Array.isArray(data) ? data : [])
-          .map((l) => ({
-            id: v(l.id),
-            title: v(l.title),
-            status: v(l.status) || "scheduled",
-            scheduled_at: v(l.scheduled_at),
-            enrolled: Array.isArray(l.enrolled_student_ids)
-              ? l.enrolled_student_ids
-              : l.enrolled_student_ids
-              ? [l.enrolled_student_ids]
-              : [],
-          }))
-          .filter((l) => l.enrolled.includes(selected.id));
+        const [lRes, wRes, cRes] = await Promise.all([
+          api.get("/api/lectures"),
+          api.get("/api/weeks"),
+          api.get("/api/classes"),
+        ]);
+        const lectures = (Array.isArray(lRes.data) ? lRes.data : []).map((l) => ({
+          id: v(l.id),
+          title: v(l.title),
+          status: v(l.status) || "scheduled",
+          scheduled_at: v(l.scheduled_at),
+          week_id: v(l.week_id),
+          enrolled: flatIds(l.enrolled_student_ids),
+        }));
+        const weeks = (Array.isArray(wRes.data) ? wRes.data : []).map((w) => ({
+          id: v(w.id),
+          class_id: v(w.class_id),
+        }));
+        const classes = (Array.isArray(cRes.data) ? cRes.data : []).map((c) => ({
+          id: v(c.id),
+          enrolled: flatIds(c.enrolled_student_ids),
+        }));
+
+        // Lecture is for this kid if directly enrolled, OR if its week
+        // belongs to a class the kid is enrolled in.
+        const weekToClass = Object.fromEntries(weeks.map((w) => [w.id, w.class_id]));
+        const kidClassIds = new Set(
+          classes.filter((c) => c.enrolled.includes(selected.id)).map((c) => c.id),
+        );
+        const list = lectures.filter(
+          (l) =>
+            l.enrolled.includes(selected.id) ||
+            kidClassIds.has(weekToClass[l.week_id]),
+        );
         if (!cancelled) setLectures(list);
       } catch (e) {
         if (!cancelled) setErr(e.response?.data?.error || e.message);

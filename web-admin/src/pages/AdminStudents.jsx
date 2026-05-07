@@ -187,8 +187,13 @@ export default function AdminStudents() {
       } else {
         setParentModal(null);
       }
+      await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      const detail =
+        e.response?.data?.error ||
+        (typeof e.response?.data === "string" ? e.response.data : null) ||
+        e.message;
+      alert(`Failed to create parent: ${detail}`);
     }
   }
 

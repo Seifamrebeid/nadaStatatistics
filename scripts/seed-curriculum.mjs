@@ -1,6 +1,8 @@
 // Seeds curriculum into the running Firebase emulator.
 // Usage: node scripts/seed-curriculum.mjs
 
+import { enrollAllStudentsInAllClasses } from "./enroll-all-students.mjs";
+
 const PROJECT = process.env.FIREBASE_PROJECT_ID || "emotion-detection-dev";
 const FS = `http://localhost:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
 const AUTH = `http://localhost:9099/identitytoolkit.googleapis.com/v1`;
@@ -225,6 +227,12 @@ async function main() {
       console.log(`    class: ${section}  (${classId})  +${NUM_WEEKS} weeks`);
     }
   }
+
+  // Enroll every existing student in every class so dashboards have data
+  // to show. Safe to re-run — it overwrites enrolled_student_ids each time.
+  console.log("[seed] enrolling all students in all classes...");
+  const r = await enrollAllStudentsInAllClasses();
+  console.log(`[seed] enrolled ${r.students} students × ${r.classes} classes`);
 
   console.log("[seed] done.");
 }

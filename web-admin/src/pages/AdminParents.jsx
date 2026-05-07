@@ -4,11 +4,16 @@ import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
+const flatIds = (x) => {
+  if (!Array.isArray(x)) return x ? [x] : [];
+  if (x.length > 0 && Array.isArray(x[0])) return x[0];
+  return x;
+};
 const normalise = (row) => {
   const out = {};
   for (const [k, val] of Object.entries(row || {})) {
     if (k === "linked_student_ids") {
-      out[k] = Array.isArray(val) ? val : val ? [val] : [];
+      out[k] = flatIds(val);
     } else {
       out[k] = v(val);
     }
@@ -101,7 +106,11 @@ export default function AdminParents() {
       }
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      const detail =
+        e.response?.data?.error ||
+        (typeof e.response?.data === "string" ? e.response.data : null) ||
+        e.message;
+      alert(`Save failed: ${detail}`);
     }
   }
 

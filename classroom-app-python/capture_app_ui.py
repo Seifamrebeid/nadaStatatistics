@@ -10,6 +10,7 @@ Run:
 
 from __future__ import annotations
 
+import os
 import queue
 import sys
 import threading
@@ -964,14 +965,9 @@ class LiveScreen(ctk.CTkFrame):
     # ----- worker bootstrap -----
     def start_capture(self):
         self._started_at = time.time()
-        self._append_log(f"[{self._now()}] preparing capture (loading models)…")
+        self._append_log(f"[{self._now()}] preparing capture (loading models — first start can take ~30s)…")
         self._tick()  # start UI poll loop
         self._tick_clock()
-
-        # Lazy-import run_capture so we pay the TF/MediaPipe/face_recognition
-        # load cost only when the user actually starts a recording (not on
-        # wizard launch). Done here, off the UI redraw path.
-        from capture_app import run_capture  # type: ignore
 
         sel = self.sel
         push_frame = self._push_frame
@@ -980,6 +976,11 @@ class LiveScreen(ctk.CTkFrame):
 
         def _runner():
             try:
+                # Heavy import inside the worker so the UI doesn't block while
+                # TF / MediaPipe / face_recognition warm up.
+                push_log("loading detection models…")
+                from capture_app import run_capture  # type: ignore
+                push_log("models loaded; opening camera…")
                 run_capture(
                     sel.lecture["id"],
                     sel.lecture,
@@ -988,7 +989,9 @@ class LiveScreen(ctk.CTkFrame):
                     stop_event=stop_event,
                 )
             except Exception as e:
+                import traceback
                 push_log(f"[capture crashed] {e}")
+                push_log(traceback.format_exc())
             finally:
                 push_log("__capture_finished__")
 
@@ -1102,15 +1105,34 @@ class LiveScreen(ctk.CTkFrame):
 
 # ----------------------------------------------------------------------
 def main() -> int:
+    print("[ui] loading .env", flush=True)
     load_dotenv(Path(__file__).with_name(".env"))
+    print(
+        f"[ui] FIRESTORE_EMULATOR_HOST={os.getenv('FIRESTORE_EMULATOR_HOST') or '(unset)'} "
+        f"FIREBASE_PROJECT_ID={os.getenv('FIREBASE_PROJECT_ID') or '(unset)'}",
+        flush=True,
+    )
     try:
+        print("[ui] init firebase…", flush=True)
         db = firebase_writer.init_firebase()
+        print("[ui] firebase ready", flush=True)
     except Exception as e:
-        print(f"Firebase init failed: {e}", file=sys.stderr)
+        import traceback
+        print(f"[ui] Firebase init failed: {e}", file=sys.stderr)
+        traceback.print_exc()
         return 1
-    app = CaptureWizard(db)
-    app.mainloop()
-    return 0
+    try:
+        print("[ui] building wizard…", flush=True)
+        app = CaptureWizard(db)
+        print("[ui] entering mainloop", flush=True)
+        app.mainloop()
+        print("[ui] mainloop returned", flush=True)
+        return 0
+    except Exception as e:
+        import traceback
+        print(f"[ui] wizard crashed: {e}", file=sys.stderr)
+        traceback.print_exc()
+        return 2
 
 
 if __name__ == "__main__":

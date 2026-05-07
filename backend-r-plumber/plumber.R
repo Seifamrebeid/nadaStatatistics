@@ -330,18 +330,24 @@ function(req, res) {
   password  <- body$password  %||% paste0("tmp-", new_id(""))
   linked    <- body$linked_student_ids %||% list()
   if (!is.list(linked)) linked <- as.list(linked)
+  # Drop NULLs / NAs so each entry is a real string id.
+  linked <- Filter(function(x) !is.null(x) && !(length(x) == 1 && is.na(x)) && nzchar(as.character(x)), linked)
   uid <- create_auth_user(email = body$email, password = password,
                           display_name = body$name)
-  fs_create_at("parents", parent_id, drop_empty(list(
-    parent_id          = parent_id,
-    name               = body$name,
-    email              = body$email,
-    relationship       = body$relationship,
-    linked_student_ids = linked,
-    active             = TRUE,
-    created_by         = req$user$uid,
-    created_at         = now_iso()
-  )))
+  data <- list(
+    parent_id    = parent_id,
+    name         = body$name,
+    email        = body$email,
+    relationship = body$relationship,
+    active       = TRUE,
+    created_by   = req$user$uid,
+    created_at   = now_iso()
+  )
+  data <- drop_empty(data)
+  # Always include linked_student_ids — even empty — but as an explicit list
+  # so fs_encode emits a proper Firestore arrayValue.
+  data$linked_student_ids <- linked
+  fs_create_at("parents", parent_id, data)
   fs_create_at("users", uid, list(
     uid = uid, role = "parent", linked_id = parent_id, email = body$email
   ))
@@ -367,11 +373,17 @@ function(req, res, id) {
 function(req, res, id) {
   require_admin(req)
   body <- jsonlite::fromJSON(req$postBody, simplifyVector = FALSE)
-  patch <- drop_empty(body[c("name", "email", "relationship", "linked_student_ids", "active")])
-  if (length(patch) == 0) stop(api_error(400, "nothing to update"))
-  if (!is.null(patch$linked_student_ids) && !is.list(patch$linked_student_ids)) {
-    patch$linked_student_ids <- as.list(patch$linked_student_ids)
+  # Pull linked_student_ids out separately so an empty list ([]) isn't dropped
+  # by drop_empty.
+  has_linked <- "linked_student_ids" %in% names(body)
+  patch <- drop_empty(body[c("name", "email", "relationship", "active")])
+  if (has_linked) {
+    linked <- body$linked_student_ids %||% list()
+    if (!is.list(linked)) linked <- as.list(linked)
+    linked <- Filter(function(x) !is.null(x) && !(length(x) == 1 && is.na(x)) && nzchar(as.character(x)), linked)
+    patch$linked_student_ids <- linked
   }
+  if (length(patch) == 0) stop(api_error(400, "nothing to update"))
   fs_update(sprintf("parents/%s", id), patch)
   list(status = "updated", id = id)
 }
@@ -580,12 +592,32 @@ function(req, res, id) {
     },
     parent = {
       kids <- .parent_linked_student_ids(user$linked_id)
-      active[vapply(active$enrolled_student_ids, function(v) {
+      direct <- vapply(active$enrolled_student_ids, function(v) {
         any(kids %in% unlist(v %||% list()))
-      }, logical(1)), , drop = FALSE]
+      }, logical(1))
+      # Also include classes reached transitively: lecture -> week -> class
+      via_lec <- .parent_class_ids_via_lectures(kids)
+      active[direct | active$id %in% via_lec, , drop = FALSE]
     },
     active[0, , drop = FALSE]
   )
+}
+
+# Helper: class ids reachable from any lecture a kid is enrolled in.
+.parent_class_ids_via_lectures <- function(kids) {
+  if (length(kids) == 0) return(character(0))
+  lectures <- fs_collection_df("lectures")
+  if (nrow(lectures) == 0) return(character(0))
+  enrolled <- vapply(lectures$enrolled_student_ids, function(v) {
+    any(kids %in% unlist(v %||% list()))
+  }, logical(1))
+  if (!any(enrolled)) return(character(0))
+  week_ids <- unique(lectures$week_id[enrolled])
+  week_ids <- week_ids[!is.na(week_ids) & nzchar(as.character(week_ids))]
+  if (length(week_ids) == 0) return(character(0))
+  weeks <- fs_collection_df("weeks")
+  if (nrow(weeks) == 0) return(character(0))
+  unique(weeks$class_id[weeks$id %in% week_ids])
 }
 
 #* @get /api/classes
@@ -712,6 +744,12 @@ function(req, res, id) {
     },
     student = {
       # Students see weeks for classes they are enrolled in
+      classes <- .classes_visible_to(user)
+      my_classes <- if (nrow(classes) > 0) classes$id else character(0)
+      active[active$class_id %in% my_classes, , drop = FALSE]
+    },
+    parent = {
+      # Parents see weeks for classes reachable through their kids' lectures.
       classes <- .classes_visible_to(user)
       my_classes <- if (nrow(classes) > 0) classes$id else character(0)
       active[active$class_id %in% my_classes, , drop = FALSE]
@@ -861,11 +899,22 @@ function(req, res, id) {
     },
     parent = {
       kids <- .parent_linked_student_ids(user$linked_id)
-      enrolled <- vapply(all$enrolled_student_ids, function(v) {
+      direct <- vapply(all$enrolled_student_ids, function(v) {
         if (is.null(v) || length(v) == 0) FALSE
         else any(kids %in% unlist(v))
       }, logical(1))
-      all[enrolled, , drop = FALSE]
+      # Transitive: lectures whose week belongs to a class with any kid enrolled.
+      via_class <- rep(FALSE, nrow(all))
+      classes_df <- fs_collection_df("classes")
+      weeks_df   <- fs_collection_df("weeks")
+      if (nrow(classes_df) > 0 && nrow(weeks_df) > 0) {
+        kid_class_ids <- classes_df$id[vapply(classes_df$enrolled_student_ids, function(v) {
+          if (is.null(v) || length(v) == 0) FALSE else any(kids %in% unlist(v))
+        }, logical(1))]
+        kid_week_ids <- weeks_df$id[weeks_df$class_id %in% kid_class_ids]
+        via_class <- all$week_id %in% kid_week_ids
+      }
+      all[direct | via_class, , drop = FALSE]
     },
     all[0, , drop = FALSE]
   )

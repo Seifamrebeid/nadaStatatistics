@@ -3,6 +3,11 @@ import api from "../services/api";
 import { useChildren } from "../context/ChildContext";
 
 const v = (x) => (Array.isArray(x) ? x[0] : x);
+const flatIds = (x) => {
+  if (!Array.isArray(x)) return x ? [x] : [];
+  if (x.length > 0 && Array.isArray(x[0])) return x[0];
+  return x;
+};
 
 export default function ChildWeeks() {
   const { selected } = useChildren();
@@ -17,33 +22,50 @@ export default function ChildWeeks() {
     (async () => {
       try {
         setBusy(true);
-        const [wRes, cRes] = await Promise.all([
-          api.get("/api/weeks"),
+        const [cRes, wRes, lRes] = await Promise.all([
           api.get("/api/classes"),
+          api.get("/api/weeks"),
+          api.get("/api/lectures"),
         ]);
-        const cls = (Array.isArray(cRes.data) ? cRes.data : [])
-          .map((c) => ({
-            id: v(c.id),
-            name: v(c.name),
-            enrolled: Array.isArray(c.enrolled_student_ids)
-              ? c.enrolled_student_ids
-              : c.enrolled_student_ids
-              ? [c.enrolled_student_ids]
-              : [],
-          }))
-          .filter((c) => c.enrolled.includes(selected.id));
-        const classIds = new Set(cls.map((c) => c.id));
-        const ws = (Array.isArray(wRes.data) ? wRes.data : [])
-          .map((w) => ({
-            id: v(w.id),
-            class_id: v(w.class_id),
-            week_number: v(w.week_number),
-            title: v(w.title),
-          }))
-          .filter((w) => classIds.has(w.class_id));
+        const allClasses = (Array.isArray(cRes.data) ? cRes.data : []).map((c) => ({
+          id: v(c.id),
+          name: v(c.name),
+          enrolled: flatIds(c.enrolled_student_ids),
+        }));
+        const allWeeks = (Array.isArray(wRes.data) ? wRes.data : []).map((w) => ({
+          id: v(w.id),
+          class_id: v(w.class_id),
+          week_number: v(w.week_number),
+          title: v(w.title),
+        }));
+        const lectures = (Array.isArray(lRes.data) ? lRes.data : []).map((l) => ({
+          week_id: v(l.week_id),
+          enrolled: flatIds(l.enrolled_student_ids),
+        }));
+
+        // Reachable classes for this kid: direct enrollment OR via a lecture
+        // (lecture -> week -> class) they're enrolled in.
+        const weekToClass = Object.fromEntries(
+          allWeeks.map((w) => [w.id, w.class_id]),
+        );
+        const reachableViaLectures = new Set(
+          lectures
+            .filter((l) => l.enrolled.includes(selected.id))
+            .map((l) => weekToClass[l.week_id])
+            .filter(Boolean),
+        );
+        const myClassIds = new Set(
+          allClasses
+            .filter(
+              (c) =>
+                c.enrolled.includes(selected.id) || reachableViaLectures.has(c.id),
+            )
+            .map((c) => c.id),
+        );
+
         if (cancelled) return;
-        setClasses(cls);
-        setWeeks(ws);
+        setClasses(allClasses.filter((c) => myClassIds.has(c.id)));
+        setWeeks(allWeeks.filter((w) => myClassIds.has(w.class_id)));
       } catch (e) {
         if (!cancelled) setErr(e.response?.data?.error || e.message);
       } finally {
@@ -95,7 +117,7 @@ export default function ChildWeeks() {
         </div>
       ) : weeks.length === 0 ? (
         <div className="card p-10 text-center text-sm text-slate-500">
-          No weeks visible yet.
+          No weeks yet for this child.
         </div>
       ) : (
         <div className="space-y-4">
