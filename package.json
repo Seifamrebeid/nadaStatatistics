@@ -1,0 +1,12 @@
+{
+  "name": "classroom-emotions-tools",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "emu:start": "node scripts/start-emulators.mjs",
+    "emu:start:fresh": "node scripts/start-emulators.mjs --no-restore",
+    "emu:backup": "node scripts/backup-firestore.mjs && node scripts/backup-auth.mjs",
+    "emu:restore": "node scripts/restore-firestore.mjs && node scripts/restore-auth.mjs"
+  }
+}
