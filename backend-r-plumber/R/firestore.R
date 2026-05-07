@@ -29,7 +29,7 @@ fs_auth_header <- function() {
   if (is_emulator()) {
     add_headers(Authorization = "Bearer owner")
   } else {
-    stop("prod OAuth2 token not implemented yet (Chunk A)")
+    add_headers(Authorization = paste("Bearer", gcp_access_token()))
   }
 }
 

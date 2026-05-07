@@ -1,5 +1,8 @@
 # Secrets — never commit
 firebase/*.json
+firebase-admin-key.json
+service-account*.json
+*-firebase-adminsdk-*.json
 .env
 .env.*
 !.env.example

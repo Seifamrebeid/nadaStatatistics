@@ -13,6 +13,7 @@
 # Helpers live in R/*.R and are sourced once on boot.
 
 source("R/config.R",         local = FALSE)
+source("R/gcp_oauth.R",      local = FALSE)
 source("R/auth.R",           local = FALSE)
 source("R/firestore.R",      local = FALSE)
 source("R/firebase_auth.R",  local = FALSE)

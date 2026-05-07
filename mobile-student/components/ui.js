@@ -1,3 +1,7 @@
+// Student UI kit — modern slate + sky-blue accent. Matches the web student design.
+// Exports kept stable (Screen, Header, Card, Stat, Button, Input, EmptyState,
+// Loading, colors, styles) so all existing screens keep working unchanged.
+
 import React from "react";
 import {
   ActivityIndicator,
@@ -10,25 +14,38 @@ import {
 } from "react-native";
 
 export const colors = {
-  bg: "#f7f8fa",
-  panel: "#ffffff",
-  text: "#17202a",
-  muted: "#657485",
-  border: "#dbe3ea",
-  primary: "#2563eb",
-  primaryDark: "#1d4ed8",
-  danger: "#b42318",
-  warning: "#b7791f",
-  success: "#16803c",
-  ink: "#25313d",
+  // brand (sky)
+  brand50:  "#f0f9ff",
+  brand100: "#e0f2fe",
+  brand500: "#0ea5e9",
+  brand600: "#0284c7",
+  brand700: "#0369a1",
+  primary:     "#0ea5e9",
+  primaryDark: "#0284c7",
+  primarySoft: "#f0f9ff",
+
+  // slate
+  bg:     "#f8fafc",
+  panel:  "#ffffff",
+  card:   "#ffffff",
+  border: "#e2e8f0",
+  text:   "#0f172a",
+  ink:    "#1e293b",
+  muted:  "#64748b",
+  faint:  "#94a3b8",
+
+  // status
+  danger:  "#ef4444",
+  warning: "#f59e0b",
+  success: "#10b981",
+  info:    "#3b82f6",
 };
 
-export function Screen({ children, scroll = true, refreshControl }) {
+export function Screen({ children, scroll = true }) {
   const Wrapper = scroll ? ScrollView : View;
   return (
     <Wrapper
       style={styles.screen}
-      refreshControl={refreshControl}
       contentContainerStyle={scroll ? styles.screenContent : undefined}
     >
       {children}
@@ -53,31 +70,49 @@ export function Card({ children, style }) {
 }
 
 export function Stat({ label, value, tone = "primary" }) {
+  const toneColor = {
+    primary: colors.primary,
+    success: colors.success,
+    warning: colors.warning,
+    danger:  colors.danger,
+    slate:   colors.ink,
+  }[tone] || colors.primary;
   return (
     <Card style={styles.statCard}>
-      <Text style={[styles.statValue, styles[tone] || styles.primary]}>
-        {String(value ?? "-")}
-      </Text>
       <Text style={styles.statLabel}>{label}</Text>
+      <Text style={[styles.statValue, { color: toneColor }]}>
+        {String(value ?? "—")}
+      </Text>
     </Card>
   );
 }
 
-export function Button({ title, onPress, disabled, variant = "primary" }) {
+export function Button({ title, onPress, disabled, variant = "primary", busy }) {
+  const isPrimary = variant === "primary";
+  const isDanger = variant === "danger";
+  const isGhost = variant === "ghost";
+  const labelStyle = isPrimary || isDanger
+    ? { color: "#ffffff" }
+    : { color: colors.ink };
   return (
     <Pressable
       onPress={onPress}
-      disabled={disabled}
+      disabled={disabled || busy}
       style={({ pressed }) => [
         styles.button,
-        styles[`${variant}Button`] || styles.primaryButton,
-        disabled && styles.disabled,
-        pressed && !disabled && styles.pressed,
+        isPrimary && styles.primaryButton,
+        variant === "secondary" && styles.secondaryButton,
+        isGhost && styles.ghostButton,
+        isDanger && styles.dangerButton,
+        (disabled || busy) && styles.disabled,
+        pressed && !(disabled || busy) && styles.pressed,
       ]}
     >
-      <Text style={[styles.buttonText, styles[`${variant}ButtonText`]]}>
-        {title}
-      </Text>
+      {busy ? (
+        <ActivityIndicator size="small" color={isPrimary || isDanger ? "#ffffff" : colors.primary} />
+      ) : (
+        <Text style={[styles.buttonText, labelStyle]}>{title}</Text>
+      )}
     </Pressable>
   );
 }
@@ -85,12 +120,12 @@ export function Button({ title, onPress, disabled, variant = "primary" }) {
 export function Input({ label, value, onChangeText, multiline, ...props }) {
   return (
     <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
+      {label ? <Text style={styles.fieldLabel}>{label}</Text> : null}
       <TextInput
         value={value}
         onChangeText={onChangeText}
         multiline={multiline}
-        placeholderTextColor="#8a97a4"
+        placeholderTextColor={colors.faint}
         style={[styles.input, multiline && styles.textArea]}
         {...props}
       />
@@ -107,10 +142,11 @@ export function EmptyState({ title, body }) {
   );
 }
 
-export function Loading() {
+export function Loading({ label }) {
   return (
     <View style={styles.loading}>
       <ActivityIndicator size="large" color={colors.primary} />
+      {label ? <Text style={styles.loadingLabel}>{label}</Text> : null}
     </View>
   );
 }
@@ -123,131 +159,134 @@ export const styles = StyleSheet.create({
   screenContent: {
     padding: 16,
     paddingBottom: 32,
+    gap: 12,
   },
   header: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
-    marginBottom: 14,
+    marginBottom: 6,
   },
   title: {
     color: colors.text,
-    fontSize: 26,
-    fontWeight: "800",
+    fontSize: 24,
+    fontWeight: "700",
+    letterSpacing: -0.3,
   },
   subtitle: {
     color: colors.muted,
-    fontSize: 14,
-    marginTop: 3,
+    fontSize: 13,
+    marginTop: 4,
   },
   card: {
-    backgroundColor: colors.panel,
+    backgroundColor: colors.card,
     borderColor: colors.border,
     borderWidth: 1,
-    borderRadius: 8,
-    padding: 14,
-    marginBottom: 12,
+    borderRadius: 14,
+    padding: 16,
+    shadowColor: "#0f172a",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
   statCard: {
     flex: 1,
     minWidth: "47%",
   },
-  statValue: {
-    fontSize: 26,
-    fontWeight: "800",
-  },
   statLabel: {
     color: colors.muted,
-    fontSize: 13,
-    marginTop: 4,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    marginBottom: 6,
   },
-  primary: {
-    color: colors.primary,
-  },
-  danger: {
-    color: colors.danger,
-  },
-  warning: {
-    color: colors.warning,
-  },
-  success: {
-    color: colors.success,
+  statValue: {
+    fontSize: 26,
+    fontWeight: "700",
+    letterSpacing: -0.5,
   },
   button: {
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderRadius: 8,
+    minHeight: 46,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
   },
   primaryButton: {
     backgroundColor: colors.primary,
   },
   secondaryButton: {
-    backgroundColor: "#eef3f6",
+    backgroundColor: colors.panel,
     borderColor: colors.border,
     borderWidth: 1,
+  },
+  ghostButton: {
+    backgroundColor: "transparent",
   },
   dangerButton: {
     backgroundColor: colors.danger,
   },
   buttonText: {
     color: "#ffffff",
-    fontWeight: "700",
+    fontWeight: "600",
     fontSize: 15,
   },
-  secondaryButtonText: {
-    color: colors.ink,
-  },
-  disabled: {
-    opacity: 0.55,
-  },
-  pressed: {
-    opacity: 0.88,
-  },
+  disabled: { opacity: 0.5 },
+  pressed:  { opacity: 0.85 },
+
   field: {
-    marginBottom: 12,
+    marginBottom: 4,
   },
-  label: {
-    color: colors.ink,
-    fontSize: 13,
-    fontWeight: "700",
+  fieldLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "600",
     marginBottom: 6,
   },
   input: {
-    minHeight: 44,
+    minHeight: 46,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 8,
-    backgroundColor: "#ffffff",
-    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: colors.panel,
+    paddingHorizontal: 14,
     color: colors.text,
     fontSize: 15,
   },
   textArea: {
     minHeight: 116,
-    paddingTop: 10,
+    paddingTop: 12,
     textAlignVertical: "top",
   },
   empty: {
     alignItems: "center",
-    paddingVertical: 28,
+    paddingVertical: 32,
   },
   emptyTitle: {
     color: colors.text,
-    fontSize: 17,
-    fontWeight: "800",
+    fontSize: 16,
+    fontWeight: "700",
   },
   emptyBody: {
     color: colors.muted,
     textAlign: "center",
     marginTop: 6,
+    fontSize: 13,
   },
   loading: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.bg,
+    gap: 12,
+  },
+  loadingLabel: {
+    color: colors.muted,
+    fontSize: 13,
   },
 });

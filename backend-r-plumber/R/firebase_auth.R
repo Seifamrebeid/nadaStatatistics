@@ -62,15 +62,35 @@ delete_auth_user <- function(uid) {
 
 #' Mint a Firebase custom token for a given uid.
 #'
-#' The emulator accepts unsigned custom tokens (alg="none", empty signature)
-#' — this is the standard, documented emulator behavior. Prod must sign with
-#' the service account's private key (not implemented until Chunk C / Phase 10).
+#' Emulator: alg="none" (empty signature), iss/sub use the emulator pseudo-account.
+#' Prod:     RS256-signed with the service-account private key, iss/sub set to
+#'           the service-account client_email. Firebase Auth accepts only this
+#'           shape from `signInWithCustomToken`.
 mint_custom_token <- function(uid, claims = list()) {
   now <- as.integer(Sys.time())
-  header <- list(alg = "none", typ = "JWT")
+
+  if (is_emulator()) {
+    header <- list(alg = "none", typ = "JWT")
+    payload <- list(
+      iss = "firebase-adminsdk-emulator@system.gserviceaccount.com",
+      sub = "firebase-adminsdk-emulator@system.gserviceaccount.com",
+      aud = "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit",
+      iat = now,
+      exp = now + 3600,
+      uid = uid,
+      claims = claims
+    )
+    h <- .b64url(jsonlite::toJSON(header,  auto_unbox = TRUE))
+    p <- .b64url(jsonlite::toJSON(payload, auto_unbox = TRUE))
+    return(paste(h, p, "", sep = "."))
+  }
+
+  # Prod — RS256-signed custom token using the service account.
+  sa <- .gcp_sa()
+  header <- list(alg = "RS256", typ = "JWT", kid = sa$private_key_id)
   payload <- list(
-    iss = "firebase-adminsdk-emulator@system.gserviceaccount.com",
-    sub = "firebase-adminsdk-emulator@system.gserviceaccount.com",
+    iss = sa$client_email,
+    sub = sa$client_email,
     aud = "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit",
     iat = now,
     exp = now + 3600,
@@ -79,6 +99,8 @@ mint_custom_token <- function(uid, claims = list()) {
   )
   h <- .b64url(jsonlite::toJSON(header,  auto_unbox = TRUE))
   p <- .b64url(jsonlite::toJSON(payload, auto_unbox = TRUE))
-  # With alg="none" the signature must be empty.
-  paste(h, p, "", sep = ".")
+  signing_input <- paste0(h, ".", p)
+  key <- openssl::read_key(sa$private_key)
+  sig <- openssl::signature_create(charToRaw(signing_input), sha256, key = key)
+  paste0(signing_input, ".", .b64url(sig))
 }
