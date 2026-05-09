@@ -8,9 +8,10 @@
     "emu:start:fresh": "node scripts/start-emulators.mjs --no-restore",
     "emu:backup": "node scripts/backup-firestore.mjs && node scripts/backup-auth.mjs",
     "emu:restore": "node scripts/restore-firestore.mjs && node scripts/restore-auth.mjs",
-    "cloud:upload": "node scripts/upload-to-cloud.mjs"
+    "cloud:upload": "node scripts/upload-to-cloud.mjs",
+    "seed:lectures": "node scripts/seed-lectures.mjs"
   },
   "dependencies": {
-    "firebase-admin": "^13.8.0"
+    "firebase-admin": "^13.9.0"
   }
 }

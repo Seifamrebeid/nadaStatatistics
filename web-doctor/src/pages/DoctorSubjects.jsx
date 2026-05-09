@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  doc,
+  serverTimestamp,
+  query,
+  where,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 import FilterBar, { makeFilter } from "../components/FilterBar";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-};
 
 const subjectFilter = makeFilter({
   search: { fields: ["name", "code", "description"] },
@@ -17,6 +21,7 @@ const subjectFilter = makeFilter({
 });
 
 export default function DoctorSubjects() {
+  const { profile } = useAuth();
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState(null);
   const [modal, setModal] = useState(null);
@@ -30,16 +35,24 @@ export default function DoctorSubjects() {
 
   async function load() {
     try {
-      const { data } = await api.get("/api/subjects");
-      setRows((Array.isArray(data) ? data : []).map(normalise));
+      const doctorId = profile?.linked_id;
+      let snap;
+      if (doctorId) {
+        snap = await getDocs(
+          query(collection(db, "subjects"), where("doctor_id", "==", doctorId))
+        );
+      } else {
+        snap = await getDocs(collection(db, "subjects"));
+      }
+      setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
   useEffect(() => {
     load();
-  }, []);
+  }, [profile]);
 
   function openCreate() {
     setForm({ name: "", code: "", description: "" });
@@ -58,14 +71,19 @@ export default function DoctorSubjects() {
 
   async function save() {
     try {
+      const doctorId = profile?.linked_id;
       if (modal === "create") {
-        await api.post("/api/subjects", {
+        await addDoc(collection(db, "subjects"), {
           name: form.name,
           code: form.code,
           description: form.description,
+          doctor_id: doctorId || null,
+          active: true,
+          created_by: profile?.uid || null,
+          created_at: serverTimestamp(),
         });
       } else {
-        await api.put(`/api/subjects/${modal.row.id}`, {
+        await updateDoc(doc(db, "subjects", modal.row.id), {
           name: form.name,
           code: form.code,
           description: form.description,
@@ -75,17 +93,17 @@ export default function DoctorSubjects() {
       }
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Soft-delete subject "${row.name}"?`)) return;
     try {
-      await api.delete(`/api/subjects/${row.id}`);
+      await updateDoc(doc(db, "subjects", row.id), { active: false });
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 

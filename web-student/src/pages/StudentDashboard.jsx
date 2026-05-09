@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import StatCard from "../components/StatCard";
 import { Presentation, Radio, Smile, CalendarClock } from "lucide-react";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
 export default function StudentDashboard() {
+  const { profile } = useAuth();
   const [stats, setStats] = useState(null);
   const [comparison, setComparison] = useState(null);
   const [lectures, setLectures] = useState([]);
@@ -13,48 +14,101 @@ export default function StudentDashboard() {
   const [err, setErr] = useState(null);
 
   useEffect(() => {
+    if (!profile?.linked_id) return;
+
     const fetchDashboard = async () => {
       try {
-        const me = await api.get("/api/me");
-        const studentId = v(me.data.linked_id);
+        const studentId = profile.linked_id;
 
-        const compRes = studentId
-          ? await api.get(`/api/analytics/student/${studentId}/comparison`)
-          : { data: null };
-        const comp = compRes.data;
-        const recRes = studentId
-          ? await api.get(`/api/recommendations/student/${studentId}`)
-          : { data: null };
-        const rec = recRes.data;
-
-        const lecturesRes = await api.get("/api/lectures");
-        const lecturesList = (
-          Array.isArray(lecturesRes.data) ? lecturesRes.data : []
-        ).map(normalise);
-
+        // Load enrolled lectures
+        const lectureSnap = await getDocs(
+          query(
+            collection(db, "lectures"),
+            where("enrolled_student_ids", "array-contains", studentId),
+          ),
+        );
+        const lecturesList = lectureSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
         const recordingLectures = lecturesList.filter(
-          (l) => v(l.status) === "recording",
+          (l) => l.status === "recording",
         );
 
-        setComparison(comp);
-        setRecommendations(
-          Array.isArray(rec?.recommendations) ? rec.recommendations : [],
+        // Load this student's emotions
+        const myEmotionsSnap = await getDocs(
+          query(
+            collection(db, "emotions"),
+            where("student_id", "==", studentId),
+          ),
         );
+        const myData = myEmotionsSnap.docs.map((d) => d.data());
+
+        // Group by lecture
+        const byLecture = {};
+        myData.forEach((e) => {
+          if (!byLecture[e.lecture_id]) byLecture[e.lecture_id] = [];
+          byLecture[e.lecture_id].push(e.engagement_score || 0);
+        });
+
+        const myPerLecture = Object.entries(byLecture).map(([lid, scores]) => ({
+          lecture_id: lid,
+          my_avg: scores.reduce((a, b) => a + b, 0) / scores.length,
+        }));
+
+        // Compute self mean
+        const selfMean =
+          myPerLecture.length > 0
+            ? myPerLecture.reduce((a, b) => a + b.my_avg, 0) /
+              myPerLecture.length
+            : 0;
+
+        // Load class emotions for same lectures
+        let classMean = 0;
+        const lectureIds = Object.keys(byLecture);
+        if (lectureIds.length > 0) {
+          const classSnap = await getDocs(
+            query(
+              collection(db, "emotions"),
+              where("lecture_id", "in", lectureIds.slice(0, 30)),
+            ),
+          );
+          const classData = classSnap.docs.map((d) => d.data());
+          const classScores = classData.map((e) => e.engagement_score || 0);
+          if (classScores.length > 0) {
+            classMean =
+              classScores.reduce((a, b) => a + b, 0) / classScores.length;
+          }
+        }
+
+        // Attendance rate: lectures with emotions / total enrolled
+        const attendedCount = Object.keys(byLecture).length;
+        const attendanceRate =
+          lecturesList.length > 0 ? attendedCount / lecturesList.length : 0;
+
+        // Compute recommendations client-side
+        const recs = [];
+        if (selfMean < 50) recs.push("Try to improve your focus during lectures.");
+        if (attendanceRate < 0.8) recs.push("Try to attend more lectures.");
+        if (recs.length === 0) recs.push("Great work! Keep it up.");
+
+        setComparison({ self_mean: selfMean, class_mean: classMean });
+        setRecommendations(recs);
         setLectures(lecturesList);
         setStats({
           enrolledCount: lecturesList.length,
           recordingCount: recordingLectures.length,
-          averageEngagement: Number(v(comp?.self_mean) ?? 0).toFixed(2),
-          attendanceRate: Number(v(rec?.attendance_rate) || 0),
+          averageEngagement: Number(selfMean).toFixed(2),
+          attendanceRate,
         });
       } catch (error) {
         console.error("Error fetching dashboard:", error);
-        setErr(error.response?.data?.error || error.message);
+        setErr(error.message);
       }
     };
 
     fetchDashboard();
-  }, []);
+  }, [profile?.linked_id]);
 
   if (err) {
     return (
@@ -78,8 +132,8 @@ export default function StudentDashboard() {
   }
 
   const live = stats.recordingCount > 0;
-  const selfPct = Number(v(comparison?.self_mean) || 0);
-  const classPct = Number(v(comparison?.class_mean) || 0);
+  const selfPct = Number(comparison?.self_mean || 0);
+  const classPct = Number(comparison?.class_mean || 0);
   const ratio = classPct > 0 ? Math.min(150, (selfPct / classPct) * 100) : 0;
 
   return (
@@ -222,7 +276,7 @@ export default function StudentDashboard() {
         </div>
         <div className="divide-y divide-slate-100">
           {lectures.slice(0, 6).map((l) => {
-            const status = v(l.status) || "scheduled";
+            const status = l.status || "scheduled";
             const statusStyle =
               status === "recording"
                 ? "bg-red-50 text-red-700 ring-red-100"
@@ -231,7 +285,7 @@ export default function StudentDashboard() {
                   : "bg-slate-100 text-slate-600 ring-slate-200";
             return (
               <div
-                key={v(l.id)}
+                key={l.id}
                 className="flex justify-between items-center py-3"
               >
                 <div className="flex items-center gap-3 min-w-0">
@@ -240,11 +294,11 @@ export default function StudentDashboard() {
                   </div>
                   <div className="min-w-0">
                     <div className="font-medium text-slate-900 truncate">
-                      {v(l.title)}
+                      {l.title}
                     </div>
                     <div className="text-xs text-slate-500">
-                      {l.scheduled_at
-                        ? new Date(v(l.scheduled_at)).toLocaleDateString()
+                      {l.date
+                        ? new Date(l.date).toLocaleDateString()
                         : "—"}
                     </div>
                   </div>
@@ -267,10 +321,4 @@ export default function StudentDashboard() {
       </div>
     </div>
   );
-}
-
-function normalise(row) {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
 }

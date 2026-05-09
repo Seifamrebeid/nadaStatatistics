@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, getCountFromServer } from "firebase/firestore";
+import { db } from "../firebase";
 import StatCard from "../components/StatCard";
 import {
   GraduationCap,
@@ -19,45 +20,70 @@ import {
   CartesianGrid,
 } from "recharts";
 
-// Plumber wraps scalars as length-1 arrays; unwrap for display.
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
-  const [attendance, setAttendance] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/admin/stats"),
-      api.get("/api/attendance/current"),
-      api.get("/api/emotions"),
-    ])
-      .then(([statsRes, attendanceRes, emotionsRes]) => {
-        setStats(statsRes.data);
-        const emotions = emotionsRes.data || [];
-        const attendanceData = attendanceRes.data || {};
-        setAttendance({
-          present: v(attendanceData.summary?.present) || 0,
-          absent: v(attendanceData.summary?.absent) || 0,
-          attendanceRate: Number(
-            v(attendanceData.summary?.attendance_rate) || 0,
-          ),
-          attentionAlertsCount: emotions.filter(
-            (e) =>
-              Number(v(e.attention_warning)) === 1 ||
-              v(e.attention_warning) === true ||
-              (Number(v(e.attention_score)) || 0) < 45,
-          ).length,
-          cheatAlertsCount: emotions.filter(
-            (e) =>
-              Number(v(e.cheat_warning)) === 1 ||
-              v(e.cheat_warning) === true ||
-              (Number(v(e.cheat_score)) || 0) >= 60,
-          ).length,
+    async function load() {
+      try {
+        const [studentsSnap, doctorsSnap, lecturesSnap, emotionsSnap] =
+          await Promise.all([
+            getCountFromServer(collection(db, "students")),
+            getCountFromServer(collection(db, "doctors")),
+            getCountFromServer(collection(db, "lectures")),
+            getDocs(collection(db, "emotions")),
+          ]);
+
+        const emotions = emotionsSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+
+        const totalObservations = emotions.length;
+
+        // Mean engagement score
+        const meanEngagement =
+          totalObservations > 0
+            ? emotions.reduce(
+                (a, e) => a + (Number(e.engagement_score) || 0),
+                0,
+              ) / totalObservations
+            : 0;
+
+        // Sleep rate
+        const sleepCount = emotions.filter(
+          (e) => e.state === "sleeping",
+        ).length;
+        const sleepRate =
+          totalObservations > 0 ? sleepCount / totalObservations : 0;
+
+        // Top gestures
+        const gestureCounts = {};
+        emotions.forEach((e) => {
+          if (e.gesture) {
+            gestureCounts[e.gesture] = (gestureCounts[e.gesture] || 0) + 1;
+          }
         });
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
+        const topGestures = Object.entries(gestureCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 6)
+          .map(([gesture, n]) => ({ gesture, n }));
+
+        setStats({
+          total_students: studentsSnap.data().count,
+          total_doctors: doctorsSnap.data().count,
+          total_lectures: lecturesSnap.data().count,
+          total_observations: totalObservations,
+          mean_engagement: meanEngagement,
+          sleep_rate: sleepRate,
+          top_gestures: topGestures,
+        });
+      } catch (e) {
+        setErr(e.message);
+      }
+    }
+    load();
   }, []);
 
   if (err) {
@@ -80,17 +106,9 @@ export default function AdminDashboard() {
     );
   }
 
-  const sleepPct = (v(stats.sleep_rate) * 100).toFixed(1);
-  const meanEng = Number(v(stats.mean_engagement)).toFixed(2);
-
-  const gestures = (() => {
-    const g = stats.top_gestures;
-    if (!g) return [];
-    if (Array.isArray(g?.gesture) && Array.isArray(g?.n)) {
-      return g.gesture.map((name, i) => ({ gesture: name, n: g.n[i] }));
-    }
-    return [];
-  })();
+  const sleepPct = (stats.sleep_rate * 100).toFixed(1);
+  const meanEng = Number(stats.mean_engagement).toFixed(2);
+  const gestures = stats.top_gestures || [];
 
   return (
     <div>
@@ -106,82 +124,29 @@ export default function AdminDashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           label="Total students"
-          value={v(stats.total_students)}
+          value={stats.total_students}
           accent="brand"
           icon={GraduationCap}
         />
         <StatCard
           label="Total doctors"
-          value={v(stats.total_doctors)}
+          value={stats.total_doctors}
           accent="slate"
           icon={Stethoscope}
         />
         <StatCard
           label="Total lectures"
-          value={v(stats.total_lectures)}
+          value={stats.total_lectures}
           accent="slate"
           icon={Presentation}
         />
         <StatCard
           label="Observations"
-          value={v(stats.total_observations)}
+          value={stats.total_observations}
           accent="slate"
           icon={Activity}
         />
       </div>
-
-      {attendance && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
-          <StatCard
-            label="Present now"
-            value={attendance.present}
-            accent="green"
-            icon={GraduationCap}
-          />
-          <StatCard
-            label="Absent now"
-            value={attendance.absent}
-            accent="red"
-            icon={Presentation}
-          />
-          <StatCard
-            label="Attendance rate"
-            value={`${Math.round(attendance.attendanceRate * 100)}%`}
-            accent={
-              attendance.attendanceRate >= 0.8
-                ? "green"
-                : attendance.attendanceRate >= 0.6
-                  ? "amber"
-                  : "red"
-            }
-            icon={Activity}
-          />
-          <StatCard
-            label="Attention alerts"
-            value={attendance.attentionAlertsCount}
-            accent={attendance.attentionAlertsCount > 0 ? "amber" : "green"}
-            icon={Smile}
-          />
-        </div>
-      )}
-
-      {attendance && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-          <StatCard
-            label="Cheat alerts"
-            value={attendance.cheatAlertsCount}
-            accent={attendance.cheatAlertsCount > 0 ? "red" : "green"}
-            icon={Stethoscope}
-          />
-          <StatCard
-            label="Live attendance coverage"
-            value={`${Math.round(attendance.attendanceRate * 100)}%`}
-            accent="brand"
-            icon={Presentation}
-            hint="Derived from the last few minutes of live observations"
-          />
-        </div>
-      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
         <StatCard

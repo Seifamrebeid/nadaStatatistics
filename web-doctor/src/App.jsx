@@ -13,6 +13,7 @@ import DoctorAnalytics from "./pages/DoctorAnalytics";
 import DoctorNotifications from "./pages/DoctorNotifications";
 import DoctorStudentSearch from "./pages/DoctorStudentSearch";
 import DoctorGrades from "./pages/DoctorGrades";
+import DoctorAttendance from "./pages/DoctorAttendance";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
@@ -33,6 +34,7 @@ function Gate() {
         <Route path="lectures" element={<DoctorLectures />} />
         <Route path="analytics" element={<DoctorAnalytics />} />
         <Route path="grades" element={<DoctorGrades />} />
+        <Route path="attendance" element={<DoctorAttendance />} />
         <Route path="student-search" element={<DoctorStudentSearch />} />
         <Route path="notifications" element={<DoctorNotifications />} />
         <Route path="profile" element={<Profile />} />

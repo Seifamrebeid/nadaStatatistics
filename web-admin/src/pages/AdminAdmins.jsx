@@ -1,14 +1,52 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  doc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { initializeApp, deleteApp } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
+import { db } from "../firebase";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
+import PageHeader from "../components/PageHeader";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
+const firebaseConfig = {
+  apiKey: "AIzaSyAqNZKRY002a7KWct5qQLhz0hBHzRIxpXo",
+  authDomain: "fridgechef-jt50c.firebaseapp.com",
+  projectId: "fridgechef-jt50c",
+  storageBucket: "fridgechef-jt50c.firebasestorage.app",
+  messagingSenderId: "975789258089",
+  appId: "1:975789258089:web:49f21ec3da6a11bce939f8",
 };
+
+async function createAuthUser(email, password) {
+  const appName = `secondary-${Date.now()}`;
+  const secondaryApp = initializeApp(firebaseConfig, appName);
+  const secondaryAuth = getAuth(secondaryApp);
+  try {
+    const { user } = await createUserWithEmailAndPassword(
+      secondaryAuth,
+      email,
+      password,
+    );
+    return user.uid;
+  } finally {
+    await deleteApp(secondaryApp);
+  }
+}
+
+function generatePassword() {
+  return (
+    Math.random().toString(36).slice(-6) +
+    Math.random().toString(36).slice(-6).toUpperCase()
+  );
+}
 
 export default function AdminAdmins() {
   const [rows, setRows] = useState([]);
@@ -19,11 +57,10 @@ export default function AdminAdmins() {
 
   async function load() {
     try {
-      const { data } = await api.get("/api/admins");
-      const list = Array.isArray(data) ? data : [];
-      setRows(list.map(normalise));
+      const snap = await getDocs(collection(db, "admins"));
+      setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
@@ -41,7 +78,6 @@ export default function AdminAdmins() {
     setForm({
       name: row.name || "",
       email: row.email || "",
-      active: row.active !== false,
     });
     setModal({ mode: "edit", row });
   }
@@ -49,32 +85,40 @@ export default function AdminAdmins() {
   async function save() {
     try {
       if (modal === "create") {
-        const payload = { name: form.name, email: form.email };
-        if (form.password) payload.password = form.password;
-        const { data } = await api.post("/api/admins", payload);
-        const pw = v(data.temporary_password);
-        if (typeof pw === "string" && pw.length > 0) setSavedTempPw(pw);
-      } else {
-        await api.put(`/api/admins/${modal.row.id}`, {
+        const pw = form.password || generatePassword();
+        const uid = await createAuthUser(form.email, pw);
+        const newDocRef = await addDoc(collection(db, "admins"), {
           name: form.name,
           email: form.email,
-          active: !!form.active,
+          created_at: serverTimestamp(),
+        });
+        await setDoc(doc(db, "users", uid), {
+          uid,
+          role: "admin",
+          linked_id: newDocRef.id,
+        });
+        setSavedTempPw(pw);
+      } else {
+        await updateDoc(doc(db, "admins", modal.row.id), {
+          name: form.name,
+          email: form.email,
         });
         setModal(null);
       }
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
+  // Admins collection has no active field — use hard delete.
   async function remove(row) {
-    if (!confirm(`Soft-delete admin "${row.name}"?`)) return;
+    if (!confirm(`Delete admin "${row.name}"? This cannot be undone.`)) return;
     try {
-      await api.delete(`/api/admins/${row.id}`);
+      await deleteDoc(doc(db, "admins", row.id));
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -82,11 +126,6 @@ export default function AdminAdmins() {
     { key: "id", label: "ID" },
     { key: "name", label: "Name" },
     { key: "email", label: "Email" },
-    {
-      key: "active",
-      label: "Active",
-      render: (r) => (r.active === false ? "no" : "yes"),
-    },
   ];
 
   const actions = (r) => (
@@ -97,10 +136,7 @@ export default function AdminAdmins() {
       >
         Edit
       </button>
-      <button
-        onClick={() => remove(r)}
-        className="text-red-600 hover:underline"
-      >
+      <button onClick={() => remove(r)} className="text-red-600 hover:underline">
         Delete
       </button>
     </div>
@@ -130,16 +166,10 @@ export default function AdminAdmins() {
         title="Create admin"
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Create
             </button>
           </>
@@ -148,8 +178,9 @@ export default function AdminAdmins() {
         <AdminForm form={form} setForm={setForm} showPasswordField />
         {savedTempPw && (
           <div className="mt-3 p-3 bg-emerald-50 border border-emerald-300 text-sm rounded">
-            Temporary password: <code className="font-mono">{savedTempPw}</code>{" "}
-            - share with the new admin.
+            Temporary password:{" "}
+            <code className="font-mono">{savedTempPw}</code> - share with the
+            new admin.
           </div>
         )}
       </Modal>
@@ -160,28 +191,22 @@ export default function AdminAdmins() {
         title={`Edit ${modal?.row?.name || ""}`}
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Save
             </button>
           </>
         }
       >
-        <AdminForm form={form} setForm={setForm} showActive />
+        <AdminForm form={form} setForm={setForm} />
       </Modal>
     </div>
   );
 }
 
-function AdminForm({ form, setForm, showPasswordField, showActive }) {
+function AdminForm({ form, setForm, showPasswordField }) {
   return (
     <div className="space-y-3">
       <Field
@@ -201,16 +226,6 @@ function AdminForm({ form, setForm, showPasswordField, showActive }) {
           value={form.password ?? ""}
           onChange={(v) => setForm({ ...form, password: v })}
         />
-      )}
-      {showActive && (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={!!form.active}
-            onChange={(e) => setForm({ ...form, active: e.target.checked })}
-          />
-          Active
-        </label>
       )}
     </div>
   );

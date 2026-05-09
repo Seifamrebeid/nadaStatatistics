@@ -1,18 +1,32 @@
 import { useState } from "react";
-import api from "../services/api";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
-import PageHeader from "../components/PageHeader";
 
-// Admin settings: mostly config the backend owns. Showing what we can
-// inspect via /health + letting the admin regenerate reports globally.
 export default function AdminSettings() {
   const { profile } = useAuth();
-  const [health, setHealth] = useState(null);
+  const [status, setStatus] = useState(null);
   const [err, setErr] = useState(null);
+  const [checking, setChecking] = useState(false);
 
-  async function refresh() {
-    try { setHealth((await api.get("/health")).data); }
-    catch (e) { setErr(e.response?.data?.error || e.message); }
+  async function checkConnectivity() {
+    setChecking(true);
+    setStatus(null);
+    setErr(null);
+    try {
+      // Attempt a lightweight Firestore read to verify connectivity.
+      await getDoc(doc(db, "_health", "ping"));
+      setStatus("Connected to Firebase");
+    } catch (e) {
+      // A "not-found" error still means we reached Firestore successfully.
+      if (e.code === "not-found" || e.message?.includes("No document")) {
+        setStatus("Connected to Firebase");
+      } else {
+        setErr(e.message);
+      }
+    } finally {
+      setChecking(false);
+    }
   }
 
   return (
@@ -22,29 +36,35 @@ export default function AdminSettings() {
         <h2 className="font-semibold mb-2">Environment</h2>
         <table className="text-sm">
           <tbody>
-            <Row k="Admin" v={profile?.email}/>
-            <Row k="API base URL" v={import.meta.env.VITE_API_URL}/>
-            <Row k="Student app URL" v={import.meta.env.VITE_STUDENT_URL}/>
-            <Row k="Doctor app URL" v={import.meta.env.VITE_DOCTOR_URL}/>
-            <Row k="Firebase project ID" v={import.meta.env.VITE_FIREBASE_PROJECT_ID}/>
+            <Row k="Admin" v={profile?.email} />
+            <Row k="Firebase project ID" v="fridgechef-jt50c" />
+            <Row k="Student app URL" v={import.meta.env.VITE_STUDENT_URL} />
+            <Row k="Doctor app URL" v={import.meta.env.VITE_DOCTOR_URL} />
           </tbody>
         </table>
-        <button onClick={refresh}
-          className="mt-3 px-3 py-1.5 bg-brand text-white rounded hover:bg-brand-dark">
-          Fetch backend /health
+        <button
+          onClick={checkConnectivity}
+          disabled={checking}
+          className="mt-3 px-3 py-1.5 bg-brand text-white rounded hover:bg-brand-dark disabled:opacity-50"
+        >
+          {checking ? "Checking…" : "Check Firebase connectivity"}
         </button>
-        {health && (
-          <pre className="mt-3 bg-slate-100 p-2 rounded text-xs overflow-auto">
-            {JSON.stringify(health, null, 2)}
-          </pre>
+        {status && (
+          <div className="mt-3 px-3 py-2 bg-emerald-50 border border-emerald-300 text-emerald-800 text-sm rounded">
+            {status}
+          </div>
         )}
-        {err && <div className="mt-2 text-red-600 text-sm">{err}</div>}
+        {err && (
+          <div className="mt-2 text-red-600 text-sm">{err}</div>
+        )}
       </div>
 
       <div className="bg-white rounded-lg shadow p-4 text-sm text-slate-600">
-        <p>Engagement + sleep thresholds, CSV backup path, and live-capture tuning live
-           in the classroom app's <code>.env</code> (not in the backend config). Change
-           them there and restart the Python capture app.</p>
+        <p>
+          Engagement + sleep thresholds, CSV backup path, and live-capture
+          tuning live in the classroom app's <code>.env</code> (not in the
+          backend config). Change them there and restart the Python capture app.
+        </p>
       </div>
     </div>
   );

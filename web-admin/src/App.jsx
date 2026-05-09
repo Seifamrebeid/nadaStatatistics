@@ -16,6 +16,7 @@ import AdminAnalytics from "./pages/AdminAnalytics";
 import AdminSettings from "./pages/AdminSettings";
 import AdminStudentSearch from "./pages/AdminStudentSearch";
 import AdminGrades from "./pages/AdminGrades";
+import AdminAttendance from "./pages/AdminAttendance";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
@@ -40,6 +41,7 @@ function Gate() {
         <Route path="lectures" element={<AdminLectures />} />
         <Route path="analytics" element={<AdminAnalytics />} />
         <Route path="grades" element={<AdminGrades />} />
+        <Route path="attendance" element={<AdminAttendance />} />
         <Route path="settings" element={<AdminSettings />} />
         <Route path="profile" element={<Profile />} />
       </Route>

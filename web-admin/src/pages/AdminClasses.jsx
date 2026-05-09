@@ -1,22 +1,19 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  doc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) {
-    if (k === "enrolled_student_ids" && Array.isArray(val)) {
-      out[k] = val.flat(2).filter(Boolean);
-    } else {
-      out[k] = v(val);
-    }
-  }
-  return out;
-};
-
 export default function AdminClasses() {
+  const { profile } = useAuth();
   const [rows, setRows] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
@@ -27,23 +24,16 @@ export default function AdminClasses() {
 
   async function load() {
     try {
-      const [classesRes, subjectsRes, studentsRes] = await Promise.all([
-        api.get("/api/classes"),
-        api.get("/api/subjects"),
-        api.get("/api/students"),
+      const [classesSnap, subjectsSnap, studentsSnap] = await Promise.all([
+        getDocs(collection(db, "classes")),
+        getDocs(collection(db, "subjects")),
+        getDocs(collection(db, "students")),
       ]);
-      const classesList = Array.isArray(classesRes.data) ? classesRes.data : [];
-      const subjectsList = Array.isArray(subjectsRes.data)
-        ? subjectsRes.data
-        : [];
-      const studentsList = Array.isArray(studentsRes.data)
-        ? studentsRes.data
-        : [];
-      setRows(classesList.map(normalise));
-      setSubjects(subjectsList.map(normalise));
-      setStudents(studentsList.map(normalise));
+      setRows(classesSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setSubjects(subjectsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setStudents(studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
@@ -70,7 +60,9 @@ export default function AdminClasses() {
       section: row.section || "",
       academic_year: row.academic_year || "",
       term: row.term || "",
-      enrolled_student_ids: row.enrolled_student_ids || [],
+      enrolled_student_ids: Array.isArray(row.enrolled_student_ids)
+        ? row.enrolled_student_ids
+        : [],
       active: row.active !== false,
     });
     setModal({ mode: "edit", row });
@@ -79,16 +71,19 @@ export default function AdminClasses() {
   async function save() {
     try {
       if (modal === "create") {
-        await api.post("/api/classes", {
+        await addDoc(collection(db, "classes"), {
           subject_id: form.subject_id,
           name: form.name,
           section: form.section,
           academic_year: form.academic_year,
           term: form.term,
           enrolled_student_ids: form.enrolled_student_ids || [],
+          active: true,
+          created_by: profile?.uid || "",
+          created_at: serverTimestamp(),
         });
       } else {
-        await api.put(`/api/classes/${modal.row.id}`, {
+        await updateDoc(doc(db, "classes", modal.row.id), {
           subject_id: form.subject_id,
           name: form.name,
           section: form.section,
@@ -101,17 +96,17 @@ export default function AdminClasses() {
       }
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Soft-delete class "${row.name}"?`)) return;
     try {
-      await api.delete(`/api/classes/${row.id}`);
+      await updateDoc(doc(db, "classes", row.id), { active: false });
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -131,7 +126,8 @@ export default function AdminClasses() {
     {
       key: "enrolled_student_ids",
       label: "Roster",
-      render: (r) => `${(r.enrolled_student_ids || []).length} students`,
+      render: (r) =>
+        `${(Array.isArray(r.enrolled_student_ids) ? r.enrolled_student_ids : []).length} students`,
     },
     {
       key: "active",
@@ -148,10 +144,7 @@ export default function AdminClasses() {
       >
         Edit
       </button>
-      <button
-        onClick={() => remove(r)}
-        className="text-red-600 hover:underline"
-      >
+      <button onClick={() => remove(r)} className="text-red-600 hover:underline">
         Delete
       </button>
     </div>
@@ -161,10 +154,7 @@ export default function AdminClasses() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-semibold">Classes</h1>
-        <button
-          onClick={openCreate}
-          className="btn-primary"
-        >
+        <button onClick={openCreate} className="btn-primary">
           + New class
         </button>
       </div>
@@ -191,7 +181,11 @@ export default function AdminClasses() {
         </label>
       </div>
       <CrudTable
-        rows={filterSubject ? rows.filter((r) => r.subject_id === filterSubject) : rows}
+        rows={
+          filterSubject
+            ? rows.filter((r) => r.subject_id === filterSubject)
+            : rows
+        }
         columns={columns}
         actions={actions}
       />
@@ -202,16 +196,10 @@ export default function AdminClasses() {
         title="Create class"
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Create
             </button>
           </>
@@ -231,16 +219,10 @@ export default function AdminClasses() {
         title={`Edit ${modal?.row?.name || ""}`}
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Save
             </button>
           </>
@@ -312,7 +294,10 @@ function ClassForm({ form, setForm, subjects, students, showActive }) {
                     const cur = new Set(form.enrolled_student_ids || []);
                     if (e.target.checked) cur.add(s.id);
                     else cur.delete(s.id);
-                    setForm({ ...form, enrolled_student_ids: Array.from(cur) });
+                    setForm({
+                      ...form,
+                      enrolled_student_ids: Array.from(cur),
+                    });
                   }}
                 />
                 {s.name} <span className="text-slate-400">({s.id})</span>

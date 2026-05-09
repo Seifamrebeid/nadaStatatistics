@@ -9,15 +9,14 @@ import {
   RefreshControl,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { getLectures } from "../../api";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../../firebase";
 import Screen from "../../components/Screen";
 import ScreenHeader from "../../components/ScreenHeader";
 import SearchBar from "../../components/SearchBar";
 import FilterChips from "../../components/FilterChips";
 import EmptyState from "../../components/EmptyState";
 import { colors, radii, shadow, spacing } from "../../components/theme";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
 
 const STATUS_COLORS = {
   scheduled: { bg: colors.slate100, fg: colors.slate700 },
@@ -34,8 +33,9 @@ export default function LecturesScreen() {
 
   const fetchLectures = useCallback(async () => {
     try {
-      const response = await getLectures();
-      setLectures(Array.isArray(response.data) ? response.data : []);
+      const snap = await getDocs(collection(db, "lectures"));
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setLectures(data);
     } catch (error) {
       Alert.alert("Error", "Failed to fetch lectures");
       console.error(error);
@@ -59,9 +59,9 @@ export default function LecturesScreen() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return lectures.filter((l) => {
-      if (status && String(v(l.status) || "") !== status) return false;
+      if (status && String(l.status || "") !== status) return false;
       if (!q) return true;
-      const hay = `${v(l.subject_name) || v(l.title) || ""} ${v(l.doctor_name) || ""} ${v(l.lecture_id) || l.id || ""}`.toLowerCase();
+      const hay = `${l.title || ""} ${l.doctor_id || ""} ${l.id || ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [lectures, search, status]);
@@ -71,7 +71,7 @@ export default function LecturesScreen() {
       <ScreenHeader title="Lectures" subtitle={`${filtered.length} of ${lectures.length}`} />
 
       <View style={styles.controls}>
-        <SearchBar value={search} onChangeText={setSearch} placeholder="Search subject, doctor..." />
+        <SearchBar value={search} onChangeText={setSearch} placeholder="Search title, doctor..." />
       </View>
       <FilterChips
         value={status}
@@ -90,30 +90,33 @@ export default function LecturesScreen() {
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(item) => String(v(item.lecture_id) || item.id)}
+          keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand600} />
           }
           renderItem={({ item }) => {
-            const st = String(v(item.status) || "scheduled");
+            const st = String(item.status || "scheduled");
             const sc = STATUS_COLORS[st] || STATUS_COLORS.scheduled;
+            const enrolledCount = Array.isArray(item.enrolled_student_ids)
+              ? item.enrolled_student_ids.length
+              : 0;
             return (
               <View style={styles.card}>
                 <View style={styles.cardTop}>
                   <Text style={styles.subject} numberOfLines={1}>
-                    {v(item.subject_name) || v(item.title) || "Untitled lecture"}
+                    {item.title || "Untitled lecture"}
                   </Text>
                   <View style={[styles.pill, { backgroundColor: sc.bg }]}>
                     <Text style={[styles.pillText, { color: sc.fg }]}>{st}</Text>
                   </View>
                 </View>
-                <Text style={styles.doctor}>🩺 {v(item.doctor_name) || "Unassigned"}</Text>
+                <Text style={styles.doctor}>🩺 {item.doctor_id || "Unassigned"}</Text>
                 <View style={styles.meta}>
-                  <Text style={styles.metaText}>📅 {v(item.date) || "No date"}</Text>
-                  <Text style={styles.metaText}>👥 {v(item.enrolled_count) || 0} students</Text>
+                  <Text style={styles.metaText}>📅 {item.date || "No date"}</Text>
+                  <Text style={styles.metaText}>👥 {enrolledCount} students</Text>
                 </View>
-                <Text style={styles.id} numberOfLines={1}>ID: {v(item.lecture_id) || item.id}</Text>
+                <Text style={styles.id} numberOfLines={1}>ID: {item.id}</Text>
               </View>
             );
           }}

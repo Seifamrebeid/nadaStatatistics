@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../firebase";
 import {
   BarChart,
   Bar,
@@ -11,22 +12,6 @@ import {
   Line,
 } from "recharts";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
-// Normalise Plumber's column-oriented payloads {colA: [...], colB: [...]} into
-// row-oriented [{colA: x, colB: y}, ...] for Recharts.
-function columnsToRows(obj) {
-  if (!obj) return [];
-  const keys = Object.keys(obj).filter((k) => Array.isArray(obj[k]));
-  if (keys.length === 0) return [];
-  const n = obj[keys[0]].length;
-  return Array.from({ length: n }, (_, i) => {
-    const row = {};
-    for (const k of keys) row[k] = obj[k][i];
-    return row;
-  });
-}
-
 export default function AdminAnalytics() {
   const [engagement, setEngagement] = useState([]);
   const [sleep, setSleep] = useState([]);
@@ -34,32 +19,55 @@ export default function AdminAnalytics() {
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/analytics/engagement"),
-      api.get("/api/analytics/sleep"),
-      api.get("/api/analytics/gestures"),
-    ])
-      .then(([e, s, g]) => {
-        setEngagement(columnsToRows(e.data));
-        setSleep(columnsToRows(s.data));
-        setGestures(columnsToRows(g.data));
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
-  }, []);
+    const fetchAnalytics = async () => {
+      try {
+        const snap = await getDocs(collection(db, "emotions"));
+        const rows = snap.docs.map((d) => d.data());
 
-  async function download(path, filename) {
-    try {
-      const { data } = await api.get(path, { responseType: "blob" });
-      const url = URL.createObjectURL(data);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      alert(e.message);
-    }
-  }
+        // Group by lecture for engagement and sleep
+        const byLecture = {};
+        rows.forEach((e) => {
+          if (!byLecture[e.lecture_id]) {
+            byLecture[e.lecture_id] = { scores: [], yawning: 0, total: 0 };
+          }
+          byLecture[e.lecture_id].scores.push(e.engagement_score || 0);
+          byLecture[e.lecture_id].total += 1;
+          if (e.yawning) byLecture[e.lecture_id].yawning += 1;
+        });
+
+        const engagementData = Object.entries(byLecture).map(([lid, d]) => ({
+          lecture_id: lid,
+          mean_engagement:
+            d.scores.reduce((a, b) => a + b, 0) / d.scores.length,
+        }));
+
+        const sleepData = Object.entries(byLecture).map(([lid, d]) => ({
+          lecture_id: lid,
+          sleep_rate: d.total > 0 ? d.yawning / d.total : 0,
+        }));
+
+        // Count gestures
+        const gestureCounts = {};
+        rows.forEach((e) => {
+          if (e.gesture) {
+            gestureCounts[e.gesture] = (gestureCounts[e.gesture] || 0) + 1;
+          }
+        });
+        const gestureData = Object.entries(gestureCounts).map(([gesture, count]) => ({
+          gesture,
+          count,
+        }));
+
+        setEngagement(engagementData);
+        setSleep(sleepData);
+        setGestures(gestureData);
+      } catch (e) {
+        setErr(e.message);
+      }
+    };
+
+    fetchAnalytics();
+  }, []);
 
   return (
     <div>
@@ -69,39 +77,6 @@ export default function AdminAnalytics() {
           {err}
         </div>
       )}
-
-      <div className="flex flex-wrap gap-2 mb-6">
-        <button
-          onClick={() => download("/api/exports/emotions.csv", "emotions.csv")}
-          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
-        >
-          Export emotions (CSV)
-        </button>
-        <button
-          onClick={() =>
-            download("/api/exports/emotions.xlsx", "emotions.xlsx")
-          }
-          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
-        >
-          Export emotions (Excel)
-        </button>
-        <button
-          onClick={() =>
-            download("/api/exports/engagement.csv", "engagement.csv")
-          }
-          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
-        >
-          Export engagement (CSV)
-        </button>
-        <button
-          onClick={() =>
-            download("/api/exports/attendance.csv", "attendance.csv")
-          }
-          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
-        >
-          Export attendance (CSV)
-        </button>
-      </div>
 
       <Section title="Engagement per lecture">
         {engagement.length === 0 ? (

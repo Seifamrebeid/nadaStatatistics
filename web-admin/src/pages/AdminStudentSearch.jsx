@@ -1,52 +1,48 @@
 import { useEffect, useMemo, useState } from "react";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../firebase";
 import { Search, RefreshCw } from "lucide-react";
-import api from "../services/api";
-
-const normalise = (row) => {
-  const v = (x) => (Array.isArray(x) ? x[0] : x);
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-};
 
 export default function AdminStudentSearch() {
   const [query, setQuery] = useState("");
-  const [rows, setRows] = useState([]);
+  const [allRows, setAllRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  async function load(q = query) {
+  async function load() {
     setLoading(true);
     setError(null);
     try {
-      const { data } = await api.get("/api/students/directory", {
-        params: { q: q.trim(), include_inactive: true },
-      });
-      const list = Array.isArray(data) ? data : [];
-      setRows(list.map(normalise));
+      const snap = await getDocs(collection(db, "students"));
+      setAllRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setError(e.response?.data?.error || e.message);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    load("");
+    load();
   }, []);
 
-  useEffect(() => {
-    const h = setTimeout(() => {
-      load(query);
-    }, 220);
-    return () => clearTimeout(h);
-  }, [query]);
+  // Client-side search: filter by student doc id or name, case-insensitive.
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return allRows;
+    return allRows.filter(
+      (r) =>
+        (r.id || "").toLowerCase().includes(q) ||
+        (r.name || "").toLowerCase().includes(q) ||
+        (r.email || "").toLowerCase().includes(q),
+    );
+  }, [allRows, query]);
 
   const summary = useMemo(() => {
-    const total = rows.length;
-    const active = rows.filter((r) => r.active !== false).length;
+    const total = allRows.length;
+    const active = allRows.filter((r) => r.active !== false).length;
     return { total, active, inactive: total - active };
-  }, [rows]);
+  }, [allRows]);
 
   return (
     <div className="space-y-5">
@@ -62,7 +58,7 @@ export default function AdminStudentSearch() {
             </p>
           </div>
           <button
-            onClick={() => load(query)}
+            onClick={load}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             disabled={loading}
           >
@@ -125,15 +121,14 @@ export default function AdminStudentSearch() {
             </thead>
             <tbody>
               {rows.map((r) => {
-                const sid = r.student_id || r.id || "-";
                 const active = r.active !== false;
                 return (
                   <tr
-                    key={`${sid}-${r.email || ""}`}
+                    key={r.id}
                     className="border-t border-slate-100"
                   >
                     <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-700">
-                      {sid}
+                      {r.id}
                     </td>
                     <td className="px-4 py-3 text-slate-900">
                       {r.name || "-"}

@@ -1,142 +1,126 @@
-// Creates one lecture per week, linking it to the doctor who owns the
-// week's subject. Run after seed-curriculum.mjs.
-// Usage: node scripts/seed-lectures.mjs
+// Creates one lecture doc per week for every class in every course.
+// Reads weeks/classes/subjects from the real Firebase project via Admin SDK.
+//
+// Usage:
+//   node scripts/seed-lectures.mjs
+//
+// Options:
+//   --key <path>   service-account JSON (default: ./firebaseservice_account.json)
+//   --no-clear     skip deleting existing lectures first
 
-const PROJECT = process.env.FIREBASE_PROJECT_ID || "emotion-detection-dev";
-const FS = `http://localhost:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
-const H = { Authorization: "Bearer owner", "Content-Type": "application/json" };
+import admin from "firebase-admin";
+import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 
-const nowIso = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
-const newId = (p) => `${p}_${Math.random().toString(16).slice(2, 12)}`;
+const argv      = process.argv.slice(2);
+const KEY       = argv[argv.indexOf("--key") + 1] || "./firebaseservice_account.json";
+const SKIP_CLEAR = argv.includes("--no-clear");
 
-function encode(v) {
-  if (v === null || v === undefined) return { nullValue: null };
-  if (typeof v === "boolean") return { booleanValue: v };
-  if (typeof v === "number")
-    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
-  if (typeof v === "string") return { stringValue: v };
-  if (Array.isArray(v)) return { arrayValue: { values: v.map(encode) } };
-  if (typeof v === "object") {
-    const fields = {};
-    for (const [k, val] of Object.entries(v)) fields[k] = encode(val);
-    return { mapValue: { fields } };
-  }
-  throw new Error(`unsupported value: ${v}`);
+if (!existsSync(KEY)) {
+  console.error(`Service-account not found: ${KEY}`);
+  process.exit(1);
 }
 
-function fields(obj) {
-  const out = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === undefined) continue;
-    out[k] = encode(v);
+admin.initializeApp({
+  credential: admin.credential.cert(JSON.parse(await readFile(KEY, "utf8"))),
+});
+const db = admin.firestore();
+console.log("[seed-lectures] project:", admin.app().options.credential.projectId ?? "unknown");
+
+const newId = (p) => `${p}_${Math.random().toString(16).slice(2, 10)}`;
+const ts    = admin.firestore.Timestamp.now();
+
+// ── clear existing lectures ───────────────────────────────────────────────────
+if (!SKIP_CLEAR) {
+  console.log("[seed-lectures] clearing existing lectures…");
+  let total = 0;
+  while (true) {
+    const snap = await db.collection("lectures").limit(400).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    total += snap.size;
+    process.stdout.write(`\r  cleared ${total}`);
   }
-  return out;
+  if (total) process.stdout.write("\n");
+} else {
+  console.log("[seed-lectures] --no-clear: keeping existing lectures.");
 }
 
-function decode(field) {
-  if (!field) return undefined;
-  if (field.stringValue !== undefined) return field.stringValue;
-  if (field.integerValue !== undefined) return Number(field.integerValue);
-  if (field.doubleValue !== undefined) return field.doubleValue;
-  if (field.booleanValue !== undefined) return field.booleanValue;
-  if (field.nullValue !== undefined) return null;
-  if (field.arrayValue) return (field.arrayValue.values || []).map(decode);
-  if (field.mapValue) {
-    const out = {};
-    for (const [k, v] of Object.entries(field.mapValue.fields || {})) out[k] = decode(v);
-    return out;
-  }
-  return undefined;
+// ── load source data ──────────────────────────────────────────────────────────
+console.log("[seed-lectures] loading data…");
+const [weeksSnap, classesSnap, subjectsSnap] = await Promise.all([
+  db.collection("weeks").get(),
+  db.collection("classes").get(),
+  db.collection("subjects").get(),
+]);
+
+const weeks       = weeksSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+const classById   = Object.fromEntries(classesSnap.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+const subjectById = Object.fromEntries(subjectsSnap.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
+
+console.log(`  ${weeks.length} weeks across ${classesSnap.size} classes in ${subjectsSnap.size} subjects`);
+
+// ── create one lecture per week ───────────────────────────────────────────────
+console.log("[seed-lectures] creating lectures…");
+
+let count      = 0;
+let skipped    = 0;
+let batch      = db.batch();
+let batchCount = 0;
+
+async function flushBatch() {
+  if (batchCount === 0) return;
+  await batch.commit();
+  batch = db.batch();
+  batchCount = 0;
 }
 
-async function listAll(collection) {
-  const r = await fetch(`${FS}:runQuery`, {
-    method: "POST", headers: H,
-    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: collection }] } }),
+for (const week of weeks) {
+  const cls  = classById[week.class_id];
+  if (!cls) { skipped++; continue; }
+
+  const subj = subjectById[cls.subject_id];
+  if (!subj || !subj.doctor_id) { skipped++; continue; }
+
+  const lectureId  = newId("lec");
+  const sectionTag = cls.section ? ` (${cls.section})` : "";
+
+  batch.set(db.collection("lectures").doc(lectureId), {
+    lecture_id:           lectureId,
+    week_id:              week.id,
+    class_id:             week.class_id,
+    subject_id:           cls.subject_id,
+    doctor_id:            subj.doctor_id,
+    title:                `${subj.name} — Week ${week.week_number ?? "?"}${sectionTag}`,
+    week_number:          week.week_number          ?? null,
+    date:                 week.date                 ?? null,
+    scheduled_start:      week.scheduled_start      ?? null,
+    scheduled_end:        week.scheduled_end        ?? null,
+    status:               "scheduled",
+    enrolled_student_ids: Array.isArray(cls.enrolled_student_ids) ? cls.enrolled_student_ids : [],
+    active:               true,
+    created_at:           ts,
   });
-  if (!r.ok) throw new Error(`list ${collection}: ${r.status} ${await r.text()}`);
-  const arr = await r.json();
-  return (arr || [])
-    .filter((x) => x.document)
-    .map((x) => {
-      const id = x.document.name.split("/").pop();
-      const data = {};
-      for (const [k, v] of Object.entries(x.document.fields || {})) data[k] = decode(v);
-      return { id, ...data };
-    });
-}
 
-async function fsCreateAt(collection, docId, data) {
-  const r = await fetch(`${FS}/${collection}?documentId=${encodeURIComponent(docId)}`, {
-    method: "POST", headers: H,
-    body: JSON.stringify({ fields: fields(data) }),
-  });
-  if (!r.ok) throw new Error(`create ${collection}/${docId}: ${r.status} ${await r.text()}`);
-  return r.json();
-}
+  // back-link the week to its lecture
+  batch.update(db.collection("weeks").doc(week.id), { lecture_id: lectureId });
 
-async function fsPatch(collection, docId, data) {
-  const mask = Object.keys(data).map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
-  const r = await fetch(`${FS}/${collection}/${encodeURIComponent(docId)}?${mask}`, {
-    method: "PATCH", headers: H,
-    body: JSON.stringify({ fields: fields(data) }),
-  });
-  if (!r.ok) throw new Error(`patch ${collection}/${docId}: ${r.status} ${await r.text()}`);
-  return r.json();
-}
+  count++;
+  batchCount += 2; // two ops per iteration
 
-async function main() {
-  console.log(`[seed-lectures] project=${PROJECT}`);
-
-  const [weeks, classes, subjects] = await Promise.all([
-    listAll("weeks"), listAll("classes"), listAll("subjects"),
-  ]);
-  console.log(`  weeks=${weeks.length}  classes=${classes.length}  subjects=${subjects.length}`);
-
-  const classById = new Map(classes.map((c) => [c.id, c]));
-  const subjectById = new Map(subjects.map((s) => [s.id, s]));
-
-  // Skip weeks that already have a lecture linked.
-  const todo = weeks.filter((w) => !w.lecture_id);
-  console.log(`  weeks needing a lecture: ${todo.length}`);
-
-  const ts = nowIso();
-  let ok = 0, skipped = 0, errors = 0;
-
-  for (const wk of todo) {
-    const cls = classById.get(wk.class_id);
-    const subj = cls ? subjectById.get(cls.subject_id) : null;
-    if (!cls || !subj || !subj.doctor_id) {
-      skipped += 1;
-      continue;
-    }
-    const lectureId = newId("lec");
-    const title = `${subj.name} — Week ${wk.week_number ?? "?"}${cls.section ? ` (${cls.section})` : ""}`;
-    try {
-      await fsCreateAt("lectures", lectureId, {
-        lecture_id: lectureId,
-        title,
-        doctor_id: subj.doctor_id,
-        week_id: wk.id,
-        class_id: cls.id,
-        subject_id: subj.id,
-        status: "scheduled",
-        scheduled_at: wk.scheduled_start || wk.date || null,
-        enrolled_student_ids: Array.isArray(cls.enrolled_student_ids)
-          ? cls.enrolled_student_ids
-          : [],
-        created_at: ts,
-      });
-      await fsPatch("weeks", wk.id, { lecture_id: lectureId });
-      ok += 1;
-      if (ok % 30 === 0) console.log(`  ...${ok} lectures created`);
-    } catch (e) {
-      errors += 1;
-      console.error(`  error on week ${wk.id}: ${e.message}`);
-    }
+  if (batchCount >= 400) {
+    await flushBatch();
+    process.stdout.write(`\r  created ${count}…`);
   }
-
-  console.log(`[seed-lectures] done. created=${ok}  skipped=${skipped}  errors=${errors}`);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+await flushBatch();
+
+console.log(`
+[seed-lectures] done.
+
+  lectures created : ${count}
+  weeks skipped    : ${skipped} (missing class or subject)
+`);

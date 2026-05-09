@@ -12,7 +12,8 @@ import {
   Platform,
 } from "react-native";
 import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
-import { getStudent, updateStudent, deleteStudent } from "../../../api";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { db } from "../../../firebase";
 import Screen from "../../../components/Screen";
 import ScreenHeader from "../../../components/ScreenHeader";
 import Button from "../../../components/Button";
@@ -27,8 +28,13 @@ export default function StudentDetailScreen() {
 
   const fetchStudent = useCallback(async () => {
     try {
-      const response = await getStudent(id);
-      const d = response.data || {};
+      const snap = await getDoc(doc(db, "students", id));
+      if (!snap.exists()) {
+        Alert.alert("Error", "Student not found");
+        router.back();
+        return;
+      }
+      const d = snap.data();
       setForm({
         name: d.name || "",
         email: d.email || "",
@@ -55,27 +61,31 @@ export default function StudentDetailScreen() {
     }
     setSaving(true);
     try {
-      await updateStudent(id, form);
+      await updateDoc(doc(db, "students", id), {
+        name: form.name,
+        email: form.email,
+        active: form.active,
+      });
       Alert.alert("Saved", "Student updated.", [{ text: "OK", onPress: () => router.back() }]);
     } catch (error) {
-      Alert.alert("Error", error.response?.data?.message || error.message);
+      Alert.alert("Error", error.message);
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = () => {
-    Alert.alert("Delete student", "This action cannot be undone.", [
+    Alert.alert("Deactivate student", "The student will be marked inactive.", [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Delete",
+        text: "Deactivate",
         style: "destructive",
         onPress: async () => {
           try {
-            await deleteStudent(id);
+            await updateDoc(doc(db, "students", id), { active: false });
             router.back();
           } catch (error) {
-            Alert.alert("Error", error.response?.data?.message || error.message);
+            Alert.alert("Error", error.message);
           }
         },
       },
@@ -145,7 +155,7 @@ export default function StudentDetailScreen() {
               style={{ marginTop: spacing.lg }}
             />
             <Button
-              title="Delete student"
+              title="Deactivate student"
               onPress={handleDelete}
               variant="danger"
               disabled={saving}

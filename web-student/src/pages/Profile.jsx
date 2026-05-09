@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 
 export default function Profile() {
@@ -10,20 +11,21 @@ export default function Profile() {
 
   useEffect(() => {
     if (!profile?.linked_id) return;
-    api
-      .get(`/api/students/${profile.linked_id}`)
-      .then(({ data }) => setName(data.name || ""))
-      .catch((e) => setErr(e.response?.data?.error || e.message));
+    getDoc(doc(db, "students", profile.linked_id))
+      .then((snap) => {
+        if (snap.exists()) setName(snap.data().name || "");
+      })
+      .catch((e) => setErr(e.message));
   }, [profile?.linked_id]);
 
   async function save() {
     try {
       setErr(null);
       setStatus(null);
-      await api.put(`/api/students/${profile.linked_id}`, { name });
+      await updateDoc(doc(db, "students", profile.linked_id), { name });
       setStatus("Profile updated.");
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 

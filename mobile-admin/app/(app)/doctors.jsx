@@ -10,7 +10,8 @@ import {
   RefreshControl,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { getDoctors } from "../../api";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../../firebase";
 import Screen from "../../components/Screen";
 import ScreenHeader from "../../components/ScreenHeader";
 import SearchBar from "../../components/SearchBar";
@@ -27,8 +28,9 @@ export default function DoctorsScreen() {
 
   const fetchDoctors = useCallback(async () => {
     try {
-      const response = await getDoctors();
-      setDoctors(Array.isArray(response.data) ? response.data : []);
+      const snap = await getDocs(collection(db, "doctors"));
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setDoctors(data);
     } catch (error) {
       Alert.alert("Error", "Failed to fetch doctors");
       console.error(error);
@@ -60,7 +62,7 @@ export default function DoctorsScreen() {
     return doctors.filter((d) => {
       if (dept && String(d.department || "") !== dept) return false;
       if (!q) return true;
-      const hay = `${d.name || ""} ${d.email || ""} ${d.doctor_id || d.id || ""}`.toLowerCase();
+      const hay = `${d.name || ""} ${d.email || ""} ${d.id || ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [doctors, search, dept]);
@@ -88,7 +90,7 @@ export default function DoctorsScreen() {
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(item) => String(item.doctor_id || item.id)}
+          keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand600} />
@@ -106,7 +108,7 @@ export default function DoctorsScreen() {
                 {item.department ? (
                   <Text style={styles.dept} numberOfLines={1}>Dept: {item.department}</Text>
                 ) : null}
-                <Text style={styles.id} numberOfLines={1}>ID: {item.doctor_id || item.id}</Text>
+                <Text style={styles.id} numberOfLines={1}>ID: {item.id}</Text>
               </View>
             </View>
           )}

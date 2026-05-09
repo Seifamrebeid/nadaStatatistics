@@ -1,111 +1,190 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-         LineChart, Line } from "recharts";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../firebase";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import PageHeader from "../components/PageHeader";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
+function arrayToCSV(rows) {
+  if (!rows.length) return "";
+  const headers = Object.keys(rows[0]);
+  const lines = [
+    headers.join(","),
+    ...rows.map((r) =>
+      headers
+        .map((h) => {
+          const v = r[h] ?? "";
+          const s = String(v).replace(/"/g, '""');
+          return s.includes(",") || s.includes('"') || s.includes("\n")
+            ? `"${s}"`
+            : s;
+        })
+        .join(","),
+    ),
+  ];
+  return lines.join("\n");
+}
 
-// Normalise Plumber's column-oriented payloads {colA: [...], colB: [...]} into
-// row-oriented [{colA: x, colB: y}, ...] for Recharts.
-function columnsToRows(obj) {
-  if (!obj) return [];
-  const keys = Object.keys(obj).filter((k) => Array.isArray(obj[k]));
-  if (keys.length === 0) return [];
-  const n = obj[keys[0]].length;
-  return Array.from({ length: n }, (_, i) => {
-    const row = {};
-    for (const k of keys) row[k] = obj[k][i];
-    return row;
-  });
+function downloadCSV(rows, filename) {
+  const csv = arrayToCSV(rows);
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function AdminAnalytics() {
   const [engagement, setEngagement] = useState([]);
   const [sleep, setSleep] = useState([]);
   const [gestures, setGestures] = useState([]);
+  const [rawEmotions, setRawEmotions] = useState([]);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/analytics/engagement"),
-      api.get("/api/analytics/sleep"),
-      api.get("/api/analytics/gestures"),
-    ]).then(([e, s, g]) => {
-      setEngagement(columnsToRows(e.data));
-      setSleep(columnsToRows(s.data));
-      setGestures(columnsToRows(g.data));
-    }).catch((e) => setErr(e.response?.data?.error || e.message));
-  }, []);
+    async function load() {
+      try {
+        const snap = await getDocs(collection(db, "emotions"));
+        const emotions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setRawEmotions(emotions);
 
-  async function download(path, filename) {
-    try {
-      const { data } = await api.get(path, { responseType: "blob" });
-      const url = URL.createObjectURL(data);
-      const a = document.createElement("a");
-      a.href = url; a.download = filename; a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) { alert(e.message); }
-  }
+        // Group by lecture_id
+        const byLecture = {};
+        emotions.forEach((e) => {
+          const lid = e.lecture_id || "unknown";
+          if (!byLecture[lid]) byLecture[lid] = [];
+          byLecture[lid].push(e);
+        });
+
+        // Engagement per lecture
+        const engagementRows = Object.entries(byLecture).map(
+          ([lid, records]) => ({
+            lecture_id: lid,
+            mean_engagement:
+              records.reduce(
+                (a, e) => a + (Number(e.engagement_score) || 0),
+                0,
+              ) / records.length,
+            count: records.length,
+          }),
+        );
+        setEngagement(engagementRows);
+
+        // Sleep rate per lecture
+        const sleepRows = Object.entries(byLecture).map(([lid, records]) => ({
+          lecture_id: lid,
+          sleep_rate:
+            records.filter((e) => e.state === "sleeping").length /
+            records.length,
+          count: records.length,
+        }));
+        setSleep(sleepRows);
+
+        // Gesture counts
+        const gestureCounts = {};
+        emotions.forEach((e) => {
+          if (e.gesture) {
+            gestureCounts[e.gesture] =
+              (gestureCounts[e.gesture] || 0) + 1;
+          }
+        });
+        setGestures(
+          Object.entries(gestureCounts).map(([gesture, count]) => ({
+            gesture,
+            count,
+          })),
+        );
+      } catch (e) {
+        setErr(e.message);
+      }
+    }
+    load();
+  }, []);
 
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-4">System analytics</h1>
-      {err && <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">{err}</div>}
+      {err && (
+        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg">
+          {err}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 mb-6">
-        <button onClick={() => download("/api/exports/emotions.csv",   "emotions.csv")}
-                className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50">
+        <button
+          onClick={() => downloadCSV(rawEmotions, "emotions.csv")}
+          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
+        >
           Export emotions (CSV)
         </button>
-        <button onClick={() => download("/api/exports/emotions.xlsx",  "emotions.xlsx")}
-                className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50">
-          Export emotions (Excel)
-        </button>
-        <button onClick={() => download("/api/exports/engagement.csv", "engagement.csv")}
-                className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50">
+        <button
+          onClick={() => downloadCSV(engagement, "engagement.csv")}
+          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
+        >
           Export engagement (CSV)
         </button>
-        <button onClick={() => download("/api/exports/attendance.csv", "attendance.csv")}
-                className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50">
-          Export attendance (CSV)
+        <button
+          onClick={() => downloadCSV(sleep, "sleep_rate.csv")}
+          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
+        >
+          Export sleep rate (CSV)
+        </button>
+        <button
+          onClick={() => downloadCSV(gestures, "gestures.csv")}
+          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
+        >
+          Export gestures (CSV)
         </button>
       </div>
 
       <Section title="Engagement per lecture">
-        {engagement.length === 0 ? <Empty/> : (
+        {engagement.length === 0 ? (
+          <Empty />
+        ) : (
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={engagement}>
-              <XAxis dataKey="lecture_id"/>
-              <YAxis domain={[0, 1]}/>
-              <Tooltip/>
-              <Bar dataKey="mean_engagement" fill="#2a7ae2"/>
+              <XAxis dataKey="lecture_id" />
+              <YAxis domain={[0, 1]} />
+              <Tooltip />
+              <Bar dataKey="mean_engagement" fill="#2a7ae2" />
             </BarChart>
           </ResponsiveContainer>
         )}
       </Section>
 
       <Section title="Sleep rate per lecture">
-        {sleep.length === 0 ? <Empty/> : (
+        {sleep.length === 0 ? (
+          <Empty />
+        ) : (
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={sleep}>
-              <XAxis dataKey="lecture_id"/>
-              <YAxis domain={[0, 1]}/>
-              <Tooltip/>
-              <Bar dataKey="sleep_rate" fill="#ef4444"/>
+              <XAxis dataKey="lecture_id" />
+              <YAxis domain={[0, 1]} />
+              <Tooltip />
+              <Bar dataKey="sleep_rate" fill="#ef4444" />
             </BarChart>
           </ResponsiveContainer>
         )}
       </Section>
 
       <Section title="Gesture counts">
-        {gestures.length === 0 ? <Empty/> : (
+        {gestures.length === 0 ? (
+          <Empty />
+        ) : (
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={gestures}>
-              <XAxis dataKey="gesture"/>
-              <YAxis/>
-              <Tooltip/>
-              <Bar dataKey="count" fill="#6a51a3"/>
+              <XAxis dataKey="gesture" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="count" fill="#6a51a3" />
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -122,6 +201,11 @@ function Section({ title, children }) {
     </div>
   );
 }
+
 function Empty() {
-  return <div className="text-slate-500 text-sm">No data yet. Record a lecture first.</div>;
+  return (
+    <div className="text-slate-500 text-sm">
+      No data yet. Record a lecture first.
+    </div>
+  );
 }

@@ -1,15 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
-function normalise(row) {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-}
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 
 export default function StudentHierarchy() {
+  const { profile } = useAuth();
   const [subjects, setSubjects] = useState([]);
   const [classes, setClasses] = useState([]);
   const [weeks, setWeeks] = useState([]);
@@ -20,33 +15,73 @@ export default function StudentHierarchy() {
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/subjects"),
-      api.get("/api/classes"),
-      api.get("/api/weeks"),
-      api.get("/api/lectures"),
-    ])
-      .then(([sRes, cRes, wRes, lRes]) => {
-        const subjectRows = (Array.isArray(sRes.data) ? sRes.data : []).map(
-          normalise,
+    if (!profile?.linked_id) return;
+
+    const fetchAll = async () => {
+      try {
+        const studentId = profile.linked_id;
+
+        // Load lectures this student is enrolled in
+        const lectureSnap = await getDocs(
+          query(
+            collection(db, "lectures"),
+            where("enrolled_student_ids", "array-contains", studentId),
+          ),
         );
-        const classRows = (Array.isArray(cRes.data) ? cRes.data : []).map(
-          normalise,
+        const lectureRows = lectureSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+
+        // Load classes this student is enrolled in
+        const classSnap = await getDocs(
+          query(
+            collection(db, "classes"),
+            where("enrolled_student_ids", "array-contains", studentId),
+          ),
         );
-        const weekRows = (Array.isArray(wRes.data) ? wRes.data : []).map(
-          normalise,
-        );
-        const lectureRows = (Array.isArray(lRes.data) ? lRes.data : []).map(
-          normalise,
-        );
+        const classRows = classSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const classIds = classRows.map((c) => c.id);
+
+        // Load subjects for those classes
+        const subjectIds = [...new Set(classRows.map((c) => c.subject_id).filter(Boolean))];
+        let subjectRows = [];
+        if (subjectIds.length > 0) {
+          const subjectSnap = await getDocs(
+            query(
+              collection(db, "subjects"),
+              where("active", "==", true),
+            ),
+          );
+          subjectRows = subjectSnap.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            .filter((s) => subjectIds.includes(s.id));
+        }
+
+        // Load weeks for those classes
+        let weekRows = [];
+        if (classIds.length > 0) {
+          const weekSnap = await getDocs(
+            query(
+              collection(db, "weeks"),
+              where("class_id", "in", classIds.slice(0, 30)),
+            ),
+          );
+          weekRows = weekSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        }
+
         setSubjects(subjectRows);
         setClasses(classRows);
         setWeeks(weekRows);
         setLectures(lectureRows);
         setSelectedSubjectId(subjectRows[0]?.id || null);
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
-  }, []);
+      } catch (e) {
+        setErr(e.message);
+      }
+    };
+
+    fetchAll();
+  }, [profile?.linked_id]);
 
   const selectedSubject = useMemo(
     () => subjects.find((subject) => subject.id === selectedSubjectId) || null,
@@ -189,7 +224,7 @@ export default function StudentHierarchy() {
                 <tr>
                   <th className="text-left px-4 py-3">Title</th>
                   <th className="text-left px-4 py-3">Status</th>
-                  <th className="text-left px-4 py-3">Starts</th>
+                  <th className="text-left px-4 py-3">Date</th>
                   <th className="text-left px-4 py-3">Lecture ID</th>
                 </tr>
               </thead>
@@ -201,8 +236,8 @@ export default function StudentHierarchy() {
                       {lecture.status || "scheduled"}
                     </td>
                     <td className="px-4 py-3">
-                      {lecture.starts_at
-                        ? new Date(lecture.starts_at).toLocaleString()
+                      {lecture.date
+                        ? new Date(lecture.date).toLocaleString()
                         : "-"}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">

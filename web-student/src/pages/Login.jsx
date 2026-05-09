@@ -1,14 +1,9 @@
 import { useState } from "react";
-import {
-  signInWithCustomToken,
-  signInWithEmailAndPassword,
-} from "firebase/auth";
+import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../firebase";
 import { useAuth } from "../context/AuthContext";
-import api from "../services/api";
 import {
   GraduationCap,
-  ScanFace,
   BookOpen,
   Trophy,
   Sparkles,
@@ -16,13 +11,16 @@ import {
 } from "lucide-react";
 import Spinner from "../components/Spinner";
 
+const QUICK = { email: "nadasoska2005@gmail.com", password: "123456789" };
+
 export default function Login() {
   const { mismatchError, setMismatchError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [faceBusy, setFaceBusy] = useState(false);
   const [err, setErr] = useState(null);
+
+  function quickFill() { setEmail(QUICK.email); setPassword(QUICK.password); setErr(null); setMismatchError(null); }
 
   async function submit(e) {
     e.preventDefault();
@@ -35,53 +33,6 @@ export default function Login() {
       setErr(ex.message.replace(/^Firebase:\s*/, ""));
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function signInWithFace() {
-    setErr(null);
-    setMismatchError(null);
-    setFaceBusy(true);
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      const video = document.createElement("video");
-      video.srcObject = stream;
-      video.playsInline = true;
-      video.muted = true;
-      await video.play();
-      await new Promise((resolve) => {
-        if (video.readyState >= 2) resolve();
-        else video.onloadedmetadata = () => resolve();
-      });
-
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      canvas
-        .getContext("2d")
-        .drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", 0.92),
-      );
-      if (!blob) throw new Error("Failed to capture face image");
-
-      const fd = new FormData();
-      fd.append("role", "student");
-      fd.append("file", blob, "face.jpg");
-      const { data } = await api.post("/api/auth/face-login", fd);
-      const token = Array.isArray(data.custom_token)
-        ? data.custom_token[0]
-        : data.custom_token;
-      if (!token) throw new Error("No custom token returned");
-      await signInWithCustomToken(auth, token);
-    } catch (ex) {
-      setErr(
-        ex.response?.data?.error || ex.message.replace(/^Firebase:\s*/, ""),
-      );
-    } finally {
-      if (stream) stream.getTracks().forEach((track) => track.stop());
-      setFaceBusy(false);
     }
   }
 
@@ -121,7 +72,7 @@ export default function Login() {
             </li>
             <li className="flex items-center gap-3">
               <Sparkles className="h-4 w-4 text-sky-300" />
-              <span className="text-white/80">Sign in instantly with your face</span>
+              <span className="text-white/80">Sign in with your student account</span>
             </li>
           </ul>
         </div>
@@ -141,9 +92,14 @@ export default function Login() {
           </div>
 
           <h1 className="text-2xl font-semibold text-slate-900">Welcome back</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Sign in to join your lectures.
-          </p>
+          <p className="mt-1 text-sm text-slate-500">Sign in to join your lectures.</p>
+
+          <div className="mt-4 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-3 text-sm text-sky-900">
+            <div className="font-medium">{QUICK.email}</div>
+            <button type="button" onClick={quickFill} className="mt-1.5 text-xs font-semibold text-sky-700 hover:text-sky-900">
+              Fill credentials
+            </button>
+          </div>
 
           {mismatchError && (
             <div className="mt-5 px-3.5 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg flex gap-2">
@@ -187,24 +143,8 @@ export default function Login() {
             {busy ? "Signing in…" : "Sign in"}
           </button>
 
-          <div className="my-4 flex items-center gap-3 text-xs text-slate-400">
-            <div className="flex-1 h-px bg-slate-200" />
-            <span>OR</span>
-            <div className="flex-1 h-px bg-slate-200" />
-          </div>
-
-          <button
-            type="button"
-            onClick={signInWithFace}
-            disabled={faceBusy}
-            className="btn-secondary w-full py-2.5"
-          >
-            {faceBusy ? <Spinner size="sm" /> : <ScanFace className="h-4 w-4" />}
-            {faceBusy ? "Scanning face…" : "Sign in with face"}
-          </button>
-
           <p className="text-xs text-slate-400 text-center mt-6">
-            Students can sign in with email/password or face recognition.
+            Students sign in with their email and password.
           </p>
         </form>
       </div>

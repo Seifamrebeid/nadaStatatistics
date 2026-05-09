@@ -3,26 +3,47 @@ import { Alert, RefreshControl, Text, View } from "react-native";
 import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { useFocusEffect } from "expo-router";
-import { getEmotions, getEngagementAnalytics, getLectures, normalize } from "../../api";
+import {
+  collection,
+  getDocs,
+  getDoc,
+  doc,
+  query,
+  where,
+} from "firebase/firestore";
+import { auth, db } from "../../firebase";
 import { Button, Card, EmptyState, Header, Screen, Stat, colors, styles } from "../../components/ui";
 
 export default function DoctorAnalyticsScreen() {
   const [lectures, setLectures] = useState([]);
   const [emotions, setEmotions] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const [lectureRows, emotionRows, engagement] = await Promise.all([
-        getLectures(),
-        getEmotions().catch(() => []),
-        getEngagementAnalytics().catch(() => null),
-      ]);
-      setLectures(lectureRows.map(normalize));
-      setEmotions(emotionRows.map(normalize));
-      setAnalytics(engagement);
+      const user = auth.currentUser;
+      if (!user) { setLoading(false); return; }
+
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      const doctorId = userSnap.exists() ? userSnap.data().linked_id : null;
+      if (!doctorId) { setLoading(false); return; }
+
+      const lecSnap = await getDocs(
+        query(collection(db, "lectures"), where("doctor_id", "==", doctorId))
+      );
+      const lectureRows = lecSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setLectures(lectureRows);
+
+      const lectureIds = lectureRows.map((l) => l.id);
+      let emotionRows = [];
+      if (lectureIds.length > 0) {
+        const emotionsSnap = await getDocs(
+          query(collection(db, "emotions"), where("lecture_id", "in", lectureIds.slice(0, 30)))
+        );
+        emotionRows = emotionsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      }
+      setEmotions(emotionRows);
     } catch (error) {
       Alert.alert("Analytics error", error.message);
     } finally {
@@ -40,7 +61,7 @@ export default function DoctorAnalyticsScreen() {
     const scores = emotions
       .map((row) => Number(row.engagement_score))
       .filter((score) => Number.isFinite(score));
-    const sleepCount = emotions.filter((row) => row.emotion === "sleepy" || row.state === "sleeping").length;
+    const sleepCount = emotions.filter((row) => row.state === "sleeping").length;
     return {
       avg: scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : 0,
       sleepRate: emotions.length ? Math.round((sleepCount / emotions.length) * 100) : 0,
@@ -50,14 +71,14 @@ export default function DoctorAnalyticsScreen() {
 
   const exportCsv = async () => {
     const rows = [
-      ["lecture_id", "student_id", "engagement_score", "emotion", "gesture", "created_at"],
+      ["lecture_id", "student_id", "engagement_score", "state", "gesture", "timestamp"],
       ...emotions.map((row) => [
         row.lecture_id || "",
         row.student_id || "",
         row.engagement_score || "",
-        row.emotion || "",
+        row.state || "",
         row.gesture || "",
-        row.created_at || "",
+        row.timestamp ? String(row.timestamp.toDate ? row.timestamp.toDate().toISOString() : row.timestamp) : "",
       ]),
     ];
     const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
@@ -83,33 +104,19 @@ export default function DoctorAnalyticsScreen() {
       <Card>
         <Text style={styles.emptyTitle}>Gesture Timeline</Text>
         {emotions.slice(0, 8).map((row, index) => (
-          <Text key={`${row.id || row.created_at || index}`} style={{ color: colors.muted, marginTop: 8 }}>
-            {row.created_at || "sample"} | {row.gesture || "none"} | {row.emotion || "unknown"}
+          <Text key={`${row.id || index}`} style={{ color: colors.muted, marginTop: 8 }}>
+            {row.timestamp
+              ? String(row.timestamp.toDate ? row.timestamp.toDate().toISOString() : row.timestamp)
+              : "sample"}{" "}
+            | {row.gesture || "none"} | {row.state || "unknown"}
           </Text>
         ))}
         {!emotions.length ? <Text style={{ color: colors.muted, marginTop: 8 }}>No emotion samples yet.</Text> : null}
       </Card>
 
-      <Card>
-        <Text style={styles.emptyTitle}>Transcript Panel</Text>
-        {emotions.filter((row) => row.transcript || row.text).slice(0, 5).map((row, index) => (
-          <Text key={`${row.id || index}-text`} style={{ color: colors.muted, marginTop: 8 }}>
-            {row.transcript || row.text}
-          </Text>
-        ))}
-        {!emotions.some((row) => row.transcript || row.text) ? (
-          <Text style={{ color: colors.muted, marginTop: 8 }}>No transcript segments available.</Text>
-        ) : null}
-      </Card>
-
-      {analytics ? (
-        <Card>
-          <Text style={styles.emptyTitle}>Backend Analytics</Text>
-          <Text style={{ color: colors.muted, marginTop: 8 }}>{JSON.stringify(analytics).slice(0, 500)}</Text>
-        </Card>
-      ) : (
-        <EmptyState title="Analytics endpoint pending" body="Local emotion samples are shown until aggregate data is available." />
-      )}
+      {!emotions.length && !loading ? (
+        <EmptyState title="No emotion data" body="Emotion samples from your lectures will appear here." />
+      ) : null}
     </Screen>
   );
 }

@@ -1,46 +1,40 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, RefreshCw } from "lucide-react";
-import api from "../services/api";
-
-const normalise = (row) => {
-  const v = (x) => (Array.isArray(x) ? x[0] : x);
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-};
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
 
 export default function StudentDoctorSearch() {
-  const [query, setQuery] = useState("");
-  const [rows, setRows] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [allDoctors, setAllDoctors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  async function load(q = query) {
+  async function load() {
     setLoading(true);
     setError(null);
     try {
-      const { data } = await api.get("/api/doctors/directory", {
-        params: { q: q.trim(), include_inactive: false },
-      });
-      const list = Array.isArray(data) ? data : [];
-      setRows(list.map(normalise));
+      const snap = await getDocs(
+        query(collection(db, "doctors"), where("active", "==", true)),
+      );
+      setAllDoctors(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setError(e.response?.data?.error || e.message);
+      setError(e.message);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    load("");
+    load();
   }, []);
 
-  useEffect(() => {
-    const h = setTimeout(() => {
-      load(query);
-    }, 220);
-    return () => clearTimeout(h);
-  }, [query]);
+  const rows = useMemo(() => {
+    if (!searchTerm.trim()) return allDoctors;
+    const term = searchTerm.toLowerCase();
+    return allDoctors.filter((d) =>
+      (d.name || "").toLowerCase().includes(term),
+    );
+  }, [allDoctors, searchTerm]);
 
   const summary = useMemo(() => {
     const total = rows.length;
@@ -62,7 +56,7 @@ export default function StudentDoctorSearch() {
             </p>
           </div>
           <button
-            onClick={() => load(query)}
+            onClick={load}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             disabled={loading}
           >
@@ -79,8 +73,8 @@ export default function StudentDoctorSearch() {
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
               <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Try: Mona or Saeed"
                 className="w-full rounded-lg border border-slate-300 py-2 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
               />
@@ -118,25 +112,22 @@ export default function StudentDoctorSearch() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
-                const did = r.doctor_id || r.id || "-";
-                return (
-                  <tr
-                    key={`${did}-${r.name || ""}`}
-                    className="border-t border-slate-100"
-                  >
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-700">
-                      {did}
-                    </td>
-                    <td className="px-4 py-3 text-slate-900">
-                      {r.name || "-"}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {r.department || "-"}
-                    </td>
-                  </tr>
-                );
-              })}
+              {rows.map((r) => (
+                <tr
+                  key={r.id}
+                  className="border-t border-slate-100"
+                >
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-slate-700">
+                    {r.id}
+                  </td>
+                  <td className="px-4 py-3 text-slate-900">
+                    {r.name || "-"}
+                  </td>
+                  <td className="px-4 py-3 text-slate-600">
+                    {r.department || "-"}
+                  </td>
+                </tr>
+              ))}
               {!loading && rows.length === 0 && (
                 <tr>
                   <td

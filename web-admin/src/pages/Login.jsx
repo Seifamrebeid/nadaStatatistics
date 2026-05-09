@@ -5,12 +5,16 @@ import { useAuth } from "../context/AuthContext";
 import { LayoutDashboard, ShieldCheck, Sparkles, BarChart3, AlertCircle } from "lucide-react";
 import Spinner from "../components/Spinner";
 
+const QUICK = { email: "admin@classroom.local", password: "admin-password-change-me" };
+
 export default function Login() {
   const { mismatchError, setMismatchError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+
+  function quickFill() { setEmail(QUICK.email); setPassword(QUICK.password); setErr(null); setMismatchError(null); }
 
   async function submit(e) {
     e.preventDefault();
@@ -83,6 +87,13 @@ export default function Login() {
 
           <h1 className="text-2xl font-semibold text-slate-900">Welcome back</h1>
           <p className="mt-1 text-sm text-slate-500">Sign in to your admin account to continue.</p>
+
+          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm text-emerald-900">
+            <div className="font-medium">{QUICK.email}</div>
+            <button type="button" onClick={quickFill} className="mt-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-900">
+              Fill credentials
+            </button>
+          </div>
 
           {mismatchError && (
             <div className="mt-5 px-3.5 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg flex gap-2">

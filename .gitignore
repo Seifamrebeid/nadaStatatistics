@@ -15,7 +15,7 @@ __pycache__/
 *.pyo
 .pytest_cache/
 classroom-app-python/recordings/
-
+firebaseservice_account.json
 # Node / React / React Native
 node_modules/
 dist/

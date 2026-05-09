@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, RefreshControl, ScrollView, Text, View } from "react-native";
-import { collection, doc, onSnapshot, orderBy, query } from "firebase/firestore";
+import { collection, doc, getDocs, getDoc, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 import { useLocalSearchParams } from "expo-router";
-import { db } from "../../firebase";
-import { getLectures, normalize } from "../../api";
+import { auth, db } from "../../firebase";
 import { Button, Card, EmptyState, Header, Screen, colors, styles } from "../../components/ui";
 
-const isRtl = (text = "") => /[\u0600-\u06FF]/.test(text);
+const isRtl = (text = "") => /[؀-ۿ]/.test(text);
 
 export default function StudentLiveScreen() {
   const params = useLocalSearchParams();
@@ -16,22 +16,43 @@ export default function StudentLiveScreen() {
   const [selectedId, setSelectedId] = useState(params.lectureId || "");
   const [segments, setSegments] = useState([]);
   const [completed, setCompleted] = useState(false);
+  const [studentId, setStudentId] = useState(null);
+
+  // Resolve the linked student ID once from auth + users collection
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) return;
+      try {
+        const snap = await getDoc(doc(db, "users", user.uid));
+        if (snap.exists()) {
+          setStudentId(snap.data().linked_id || null);
+        }
+      } catch {
+        // silently ignore
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const loadLectures = useCallback(async () => {
+    if (!studentId) return;
     try {
       setLoading(true);
-      const rows = (await getLectures()).map(normalize);
+      const snap = await getDocs(
+        query(collection(db, "lectures"), where("enrolled_student_ids", "array-contains", studentId))
+      );
+      const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setLectures(rows);
       if (!selectedId) {
         const live = rows.find((lecture) => lecture.status === "recording");
-        if (live) setSelectedId(live.id || live.lecture_id);
+        if (live) setSelectedId(live.id);
       }
     } catch (error) {
       Alert.alert("Live lecture error", error.message);
     } finally {
       setLoading(false);
     }
-  }, [selectedId]);
+  }, [studentId, selectedId]);
 
   useEffect(() => {
     loadLectures();
@@ -60,24 +81,24 @@ export default function StudentLiveScreen() {
 
   const liveLectures = useMemo(
     () => lectures.filter((lecture) => lecture.status === "recording"),
-    [lectures],
+    [lectures]
   );
-  const selectedLecture = lectures.find((lecture) => String(lecture.id || lecture.lecture_id) === String(selectedId));
+  const selectedLecture = lectures.find((lecture) => String(lecture.id) === String(selectedId));
 
   return (
     <Screen refreshControl={<RefreshControl refreshing={loading} onRefresh={loadLectures} />}>
       <Header
         title="Live"
-        subtitle={selectedLecture ? selectedLecture.title || selectedLecture.subject_name : "Live captions"}
+        subtitle={selectedLecture ? selectedLecture.title : "Live captions"}
       />
 
       {!selectedId ? (
         <>
           <EmptyState title="No live lecture" body="When one of your enrolled lectures starts recording, it will appear here." />
           {liveLectures.map((lecture) => (
-            <Card key={lecture.id || lecture.lecture_id}>
-              <Text style={styles.emptyTitle}>{lecture.title || lecture.subject_name}</Text>
-              <Button title="Open captions" onPress={() => setSelectedId(lecture.id || lecture.lecture_id)} />
+            <Card key={lecture.id}>
+              <Text style={styles.emptyTitle}>{lecture.title}</Text>
+              <Button title="Open captions" onPress={() => setSelectedId(lecture.id)} />
             </Card>
           ))}
         </>

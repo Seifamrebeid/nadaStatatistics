@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import StatCard from "../components/StatCard";
 import { CalendarCheck, Smile, Users } from "lucide-react";
 import {
@@ -13,55 +15,94 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
 export default function StudentHistory() {
+  const { profile } = useAuth();
   const [historyData, setHistoryData] = useState([]);
   const [stats, setStats] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
+    if (!profile?.linked_id) return;
+
     const fetchHistory = async () => {
       try {
-        // Get current user
-        const me = await api.get("/api/me");
-        const studentId = v(me.data.linked_id);
-        if (!studentId) {
+        const studentId = profile.linked_id;
+
+        // Load this student's emotions
+        const mySnap = await getDocs(
+          query(
+            collection(db, "emotions"),
+            where("student_id", "==", studentId),
+          ),
+        );
+        const myData = mySnap.docs.map((d) => d.data());
+
+        if (myData.length === 0) {
           setStats({ averageEngagement: 0, lectureCount: 0, classAverage: 0 });
           return;
         }
 
-        const compRes = await api.get(
-          `/api/analytics/student/${studentId}/comparison`,
-        );
-        const comparison = compRes.data;
+        // Group this student's scores by lecture
+        const myByLecture = {};
+        myData.forEach((e) => {
+          if (!myByLecture[e.lecture_id]) myByLecture[e.lecture_id] = [];
+          myByLecture[e.lecture_id].push(e.engagement_score || 0);
+        });
 
-        const perLecture = Array.isArray(comparison?.per_lecture)
-          ? comparison.per_lecture
-          : [];
-        if (perLecture.length > 0) {
-          const chartData = perLecture.map((item, idx) => ({
+        const lectureIds = Object.keys(myByLecture);
+
+        // Load class emotions for those same lectures
+        const classSnap = await getDocs(
+          query(
+            collection(db, "emotions"),
+            where("lecture_id", "in", lectureIds.slice(0, 30)),
+          ),
+        );
+        const classData = classSnap.docs.map((d) => d.data());
+
+        // Group class scores by lecture
+        const classByLecture = {};
+        classData.forEach((e) => {
+          if (!classByLecture[e.lecture_id]) classByLecture[e.lecture_id] = [];
+          classByLecture[e.lecture_id].push(e.engagement_score || 0);
+        });
+
+        // Build per-lecture chart data
+        const chartData = lectureIds.map((lid, idx) => {
+          const myScores = myByLecture[lid];
+          const classScores = classByLecture[lid] || myScores;
+          const myAvg =
+            myScores.reduce((a, b) => a + b, 0) / myScores.length;
+          const classAvg =
+            classScores.reduce((a, b) => a + b, 0) / classScores.length;
+          return {
             name: `Lecture ${idx + 1}`,
-            lecture_id: v(item.lecture_id),
-            self: Number(v(item.self) || 0),
-            class_mean: Number(v(item.class_mean) || 0),
-          }));
-          setHistoryData(chartData);
-        }
+            lecture_id: lid,
+            self: Number(myAvg.toFixed(2)),
+            class_mean: Number(classAvg.toFixed(2)),
+          };
+        });
+
+        setHistoryData(chartData);
+
+        const selfMean =
+          chartData.reduce((a, b) => a + b.self, 0) / chartData.length;
+        const classMean =
+          chartData.reduce((a, b) => a + b.class_mean, 0) / chartData.length;
 
         setStats({
-          averageEngagement: Number(v(comparison?.self_mean) ?? 0).toFixed(2),
-          lectureCount: perLecture.length,
-          classAverage: Number(v(comparison?.class_mean) ?? 0).toFixed(2),
+          averageEngagement: selfMean.toFixed(2),
+          lectureCount: chartData.length,
+          classAverage: classMean.toFixed(2),
         });
       } catch (error) {
         console.error("Error fetching engagement history:", error);
-        setErr(error.response?.data?.error || error.message);
+        setErr(error.message);
       }
     };
 
     fetchHistory();
-  }, []);
+  }, [profile?.linked_id]);
 
   if (err) {
     return (

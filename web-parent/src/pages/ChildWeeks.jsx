@@ -1,13 +1,7 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
 import { useChildren } from "../context/ChildContext";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const flatIds = (x) => {
-  if (!Array.isArray(x)) return x ? [x] : [];
-  if (x.length > 0 && Array.isArray(x[0])) return x[0];
-  return x;
-};
 
 export default function ChildWeeks() {
   const { selected } = useChildren();
@@ -22,52 +16,72 @@ export default function ChildWeeks() {
     (async () => {
       try {
         setBusy(true);
-        const [cRes, wRes, lRes] = await Promise.all([
-          api.get("/api/classes"),
-          api.get("/api/weeks"),
-          api.get("/api/lectures"),
-        ]);
-        const allClasses = (Array.isArray(cRes.data) ? cRes.data : []).map((c) => ({
-          id: v(c.id),
-          name: v(c.name),
-          enrolled: flatIds(c.enrolled_student_ids),
-        }));
-        const allWeeks = (Array.isArray(wRes.data) ? wRes.data : []).map((w) => ({
-          id: v(w.id),
-          class_id: v(w.class_id),
-          week_number: v(w.week_number),
-          title: v(w.title),
-        }));
-        const lectures = (Array.isArray(lRes.data) ? lRes.data : []).map((l) => ({
-          week_id: v(l.week_id),
-          enrolled: flatIds(l.enrolled_student_ids),
-        }));
 
-        // Reachable classes for this kid: direct enrollment OR via a lecture
-        // (lecture -> week -> class) they're enrolled in.
-        const weekToClass = Object.fromEntries(
-          allWeeks.map((w) => [w.id, w.class_id]),
+        // Determine which class IDs belong to this child:
+        // 1. Direct class enrollment
+        const directSnap = await getDocs(
+          query(
+            collection(db, "classes"),
+            where("enrolled_student_ids", "array-contains", selected.id),
+          ),
         );
-        const reachableViaLectures = new Set(
-          lectures
-            .filter((l) => l.enrolled.includes(selected.id))
-            .map((l) => weekToClass[l.week_id])
-            .filter(Boolean),
+        const directClassIds = new Set(directSnap.docs.map((d) => d.id));
+
+        // 2. Via lecture enrollment: lecture -> week_id -> class_id
+        const lectSnap = await getDocs(
+          query(
+            collection(db, "lectures"),
+            where("enrolled_student_ids", "array-contains", selected.id),
+          ),
         );
-        const myClassIds = new Set(
-          allClasses
-            .filter(
-              (c) =>
-                c.enrolled.includes(selected.id) || reachableViaLectures.has(c.id),
-            )
-            .map((c) => c.id),
+        const lectWeekIds = new Set(
+          lectSnap.docs.map((d) => d.data().week_id).filter(Boolean),
         );
 
-        if (cancelled) return;
-        setClasses(allClasses.filter((c) => myClassIds.has(c.id)));
-        setWeeks(allWeeks.filter((w) => myClassIds.has(w.class_id)));
+        // Load all weeks once, derive class_ids from weeks matching lectWeekIds
+        const allWeeksSnap = await getDocs(collection(db, "weeks"));
+        const allWeekDocs = allWeeksSnap.docs.map((d) => ({
+          id: d.id,
+          class_id: d.data().class_id,
+          week_number: d.data().week_number,
+          title: d.data().title,
+        }));
+
+        // Collect class_ids reached via lectures
+        allWeekDocs.forEach((w) => {
+          if (lectWeekIds.has(w.id)) directClassIds.add(w.class_id);
+        });
+
+        const myClassIds = directClassIds;
+
+        // Filter weeks belonging to child's classes
+        const myWeeks = allWeekDocs.filter((w) => myClassIds.has(w.class_id));
+
+        // Load the class docs for display names
+        const myClassDocs = directSnap.docs.map((d) => ({
+          id: d.id,
+          name: d.data().name,
+        }));
+        // Add any extra classes not in the direct snap
+        const extraClassIds = [...myClassIds].filter(
+          (id) => !directSnap.docs.find((d) => d.id === id),
+        );
+        const extraClassDocs = await Promise.all(
+          extraClassIds.map(async (cid) => {
+            const snap = await getDocs(
+              query(collection(db, "classes"), where("__name__", "==", cid)),
+            );
+            if (snap.empty) return { id: cid, name: cid };
+            return { id: snap.docs[0].id, name: snap.docs[0].data().name };
+          }),
+        );
+
+        if (!cancelled) {
+          setClasses([...myClassDocs, ...extraClassDocs]);
+          setWeeks(myWeeks);
+        }
       } catch (e) {
-        if (!cancelled) setErr(e.response?.data?.error || e.message);
+        if (!cancelled) setErr(e.message);
       } finally {
         if (!cancelled) setBusy(false);
       }

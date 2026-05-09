@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  doc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-};
-
 export default function AdminWeeks() {
+  const { profile } = useAuth();
   const [rows, setRows] = useState([]);
   const [classes, setClasses] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -19,31 +22,26 @@ export default function AdminWeeks() {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
 
-  // Filters — required so the table never renders all 240 weeks at once.
+  // Filters
   const [filterSubject, setFilterSubject] = useState("");
   const [filterClass, setFilterClass] = useState("");
   const [filterWeek, setFilterWeek] = useState("1");
 
   async function load() {
     try {
-      const [weeksRes, classesRes, subjectsRes, lecturesRes] = await Promise.all([
-        api.get("/api/weeks"),
-        api.get("/api/classes"),
-        api.get("/api/subjects"),
-        api.get("/api/lectures"),
-      ]);
-      const weeksList = Array.isArray(weeksRes.data) ? weeksRes.data : [];
-      const classesList = Array.isArray(classesRes.data) ? classesRes.data : [];
-      const subjectsList = Array.isArray(subjectsRes.data) ? subjectsRes.data : [];
-      const lecturesList = Array.isArray(lecturesRes.data)
-        ? lecturesRes.data
-        : [];
-      setRows(weeksList.map(normalise));
-      setClasses(classesList.map(normalise));
-      setSubjects(subjectsList.map(normalise));
-      setLectures(lecturesList.map(normalise));
+      const [weeksSnap, classesSnap, subjectsSnap, lecturesSnap] =
+        await Promise.all([
+          getDocs(collection(db, "weeks")),
+          getDocs(collection(db, "classes")),
+          getDocs(collection(db, "subjects")),
+          getDocs(collection(db, "lectures")),
+        ]);
+      setRows(weeksSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setClasses(classesSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setSubjects(subjectsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setLectures(lecturesSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
@@ -89,11 +87,15 @@ export default function AdminWeeks() {
         status: form.status,
         notes: form.notes,
       };
-
       if (modal === "create") {
-        await api.post("/api/weeks", payload);
+        await addDoc(collection(db, "weeks"), {
+          ...payload,
+          active: true,
+          created_by: profile?.uid || "",
+          created_at: serverTimestamp(),
+        });
       } else {
-        await api.put(`/api/weeks/${modal.row.id}`, {
+        await updateDoc(doc(db, "weeks", modal.row.id), {
           ...payload,
           active: !!form.active,
         });
@@ -101,17 +103,17 @@ export default function AdminWeeks() {
       }
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Soft-delete week ${row.week_number}?`)) return;
     try {
-      await api.delete(`/api/weeks/${row.id}`);
+      await updateDoc(doc(db, "weeks", row.id), { active: false });
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -152,29 +154,24 @@ export default function AdminWeeks() {
       >
         Edit
       </button>
-      <button
-        onClick={() => remove(r)}
-        className="text-red-600 hover:underline"
-      >
+      <button onClick={() => remove(r)} className="text-red-600 hover:underline">
         Delete
       </button>
     </div>
   );
 
-  // Classes filtered by selected subject — drives the class dropdown.
   const classesForSubject = filterSubject
     ? classes.filter((c) => c.subject_id === filterSubject)
     : classes;
 
-  // Weeks visible after all filters applied. Subject + class + week-number must
-  // narrow to at most one week per class so the table never shows >1 week.
   const filteredRows = rows.filter((r) => {
     if (filterClass && r.class_id !== filterClass) return false;
     if (!filterClass && filterSubject) {
       const cls = classes.find((c) => c.id === r.class_id);
       if (!cls || cls.subject_id !== filterSubject) return false;
     }
-    if (filterWeek && String(r.week_number) !== String(filterWeek)) return false;
+    if (filterWeek && String(r.week_number) !== String(filterWeek))
+      return false;
     return true;
   });
 
@@ -182,10 +179,7 @@ export default function AdminWeeks() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-semibold">Weeks</h1>
-        <button
-          onClick={openCreate}
-          className="btn-primary"
-        >
+        <button onClick={openCreate} className="btn-primary">
           + New week
         </button>
       </div>
@@ -253,16 +247,10 @@ export default function AdminWeeks() {
         title="Create week"
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Create
             </button>
           </>
@@ -282,16 +270,10 @@ export default function AdminWeeks() {
         title={`Edit Week ${modal?.row?.week_number || ""}`}
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Save
             </button>
           </>
@@ -347,9 +329,7 @@ function WeekForm({ form, setForm, classes, lectures, showActive }) {
         type="date"
       />
       <label className="block">
-        <span className="text-sm text-slate-600">
-          Linked Lecture (optional)
-        </span>
+        <span className="text-sm text-slate-600">Linked Lecture (optional)</span>
         <select
           value={form.lecture_id ?? ""}
           onChange={(e) => setForm({ ...form, lecture_id: e.target.value })}

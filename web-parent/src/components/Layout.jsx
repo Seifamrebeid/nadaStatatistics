@@ -17,6 +17,7 @@ import {
   BookOpen,
   CalendarDays,
   Award,
+  ClipboardList,
 } from "lucide-react";
 
 const navItems = [
@@ -26,6 +27,7 @@ const navItems = [
   { to: "/weeks", label: "Weeks", icon: CalendarDays },
   { to: "/lectures", label: "Lectures", icon: Presentation },
   { to: "/grades", label: "Grades", icon: Award },
+  { to: "/attendance", label: "Attendance", icon: ClipboardList },
   { to: "/history", label: "History", icon: History },
   { to: "/profile", label: "Profile", icon: UserCircle },
 ];

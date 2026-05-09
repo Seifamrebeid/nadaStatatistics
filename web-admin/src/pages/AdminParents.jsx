@@ -1,25 +1,50 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  doc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { initializeApp, deleteApp } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
+import { db } from "../firebase";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const flatIds = (x) => {
-  if (!Array.isArray(x)) return x ? [x] : [];
-  if (x.length > 0 && Array.isArray(x[0])) return x[0];
-  return x;
+const firebaseConfig = {
+  apiKey: "AIzaSyAqNZKRY002a7KWct5qQLhz0hBHzRIxpXo",
+  authDomain: "fridgechef-jt50c.firebaseapp.com",
+  projectId: "fridgechef-jt50c",
+  storageBucket: "fridgechef-jt50c.firebasestorage.app",
+  messagingSenderId: "975789258089",
+  appId: "1:975789258089:web:49f21ec3da6a11bce939f8",
 };
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) {
-    if (k === "linked_student_ids") {
-      out[k] = flatIds(val);
-    } else {
-      out[k] = v(val);
-    }
+
+async function createAuthUser(email, password) {
+  const appName = `secondary-${Date.now()}`;
+  const secondaryApp = initializeApp(firebaseConfig, appName);
+  const secondaryAuth = getAuth(secondaryApp);
+  try {
+    const { user } = await createUserWithEmailAndPassword(
+      secondaryAuth,
+      email,
+      password,
+    );
+    return user.uid;
+  } finally {
+    await deleteApp(secondaryApp);
   }
-  return out;
-};
+}
+
+function generatePassword() {
+  return (
+    Math.random().toString(36).slice(-6) +
+    Math.random().toString(36).slice(-6).toUpperCase()
+  );
+}
 
 export default function AdminParents() {
   const [rows, setRows] = useState([]);
@@ -31,18 +56,16 @@ export default function AdminParents() {
 
   async function load() {
     try {
-      const [{ data: parents }, { data: studs }] = await Promise.all([
-        api.get("/api/parents"),
-        api.get("/api/students"),
+      const [parentsSnap, studentsSnap] = await Promise.all([
+        getDocs(collection(db, "parents")),
+        getDocs(collection(db, "students")),
       ]);
-      setRows((Array.isArray(parents) ? parents : []).map(normalise));
-      setStudents((Array.isArray(studs) ? studs : []).map((s) => ({
-        id: v(s.id),
-        name: v(s.name),
-        email: v(s.email),
-      })));
+      setRows(parentsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setStudents(
+        studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() })),
+      );
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
@@ -84,21 +107,27 @@ export default function AdminParents() {
   async function save() {
     try {
       if (modal === "create") {
-        const payload = {
+        const pw = form.password || generatePassword();
+        const uid = await createAuthUser(form.email, pw);
+        const newDocRef = await addDoc(collection(db, "parents"), {
           name: form.name,
           email: form.email,
-          relationship: form.relationship || undefined,
+          relationship: form.relationship || "",
           linked_student_ids: form.linked_student_ids || [],
-        };
-        if (form.password) payload.password = form.password;
-        const { data } = await api.post("/api/parents", payload);
-        const pw = v(data.temporary_password);
-        if (typeof pw === "string" && pw.length > 0) setSavedTempPw(pw);
+          active: true,
+          created_at: serverTimestamp(),
+        });
+        await setDoc(doc(db, "users", uid), {
+          uid,
+          role: "parent",
+          linked_id: newDocRef.id,
+        });
+        setSavedTempPw(pw);
       } else {
-        await api.put(`/api/parents/${modal.row.id}`, {
+        await updateDoc(doc(db, "parents", modal.row.id), {
           name: form.name,
           email: form.email,
-          relationship: form.relationship || undefined,
+          relationship: form.relationship || "",
           linked_student_ids: form.linked_student_ids || [],
           active: !!form.active,
         });
@@ -106,21 +135,17 @@ export default function AdminParents() {
       }
       await load();
     } catch (e) {
-      const detail =
-        e.response?.data?.error ||
-        (typeof e.response?.data === "string" ? e.response.data : null) ||
-        e.message;
-      alert(`Save failed: ${detail}`);
+      alert(`Save failed: ${e.message}`);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Soft-delete parent "${row.name}"?`)) return;
     try {
-      await api.delete(`/api/parents/${row.id}`);
+      await updateDoc(doc(db, "parents", row.id), { active: false });
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -133,8 +158,11 @@ export default function AdminParents() {
       key: "linked_student_ids",
       label: "Children",
       render: (r) => {
-        const ids = Array.isArray(r.linked_student_ids) ? r.linked_student_ids : [];
-        if (ids.length === 0) return <span className="text-slate-400">none</span>;
+        const ids = Array.isArray(r.linked_student_ids)
+          ? r.linked_student_ids
+          : [];
+        if (ids.length === 0)
+          return <span className="text-slate-400">none</span>;
         return ids.map((id) => studentNameById[id] || id).join(", ");
       },
     },
@@ -147,7 +175,10 @@ export default function AdminParents() {
 
   const actions = (r) => (
     <div className="flex gap-2 justify-end items-center">
-      <button onClick={() => openEdit(r)} className="text-slate-700 hover:underline">
+      <button
+        onClick={() => openEdit(r)}
+        className="text-slate-700 hover:underline"
+      >
         Edit
       </button>
       <button onClick={() => remove(r)} className="text-red-600 hover:underline">
@@ -194,8 +225,9 @@ export default function AdminParents() {
         />
         {savedTempPw && (
           <div className="mt-3 p-3 bg-emerald-50 border border-emerald-300 text-sm rounded">
-            Temporary password: <code className="font-mono">{savedTempPw}</code> —
-            share with the new parent.
+            Temporary password:{" "}
+            <code className="font-mono">{savedTempPw}</code> — share with the
+            new parent.
           </div>
         )}
       </Modal>
@@ -215,14 +247,21 @@ export default function AdminParents() {
           </>
         }
       >
-        <ParentForm form={form} setForm={setForm} students={students} showActive />
+        <ParentForm
+          form={form}
+          setForm={setForm}
+          students={students}
+          showActive
+        />
       </Modal>
     </div>
   );
 }
 
 function ParentForm({ form, setForm, students, showPasswordField, showActive }) {
-  const linked = Array.isArray(form.linked_student_ids) ? form.linked_student_ids : [];
+  const linked = Array.isArray(form.linked_student_ids)
+    ? form.linked_student_ids
+    : [];
 
   function toggleStudent(id) {
     const set = new Set(linked);

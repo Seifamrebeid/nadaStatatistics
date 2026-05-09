@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  doc,
+  serverTimestamp,
+  query,
+  where,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 import FilterBar, { makeFilter } from "../components/FilterBar";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) {
-    if (k === "enrolled_student_ids" && Array.isArray(val))
-      out[k] = val.flat(2).filter(Boolean);
-    else out[k] = v(val);
-  }
-  return out;
-};
 
 const classFilter = makeFilter({
   search: { fields: ["name", "section"] },
@@ -26,6 +26,7 @@ const classFilter = makeFilter({
 });
 
 export default function DoctorClasses() {
+  const { profile } = useAuth();
   const [rows, setRows] = useState([]);
   const [subjects, setSubjects] = useState([]);
   const [students, setStudents] = useState([]);
@@ -57,32 +58,49 @@ export default function DoctorClasses() {
 
   async function loadAll() {
     try {
-      const [classesRes, subjectsRes, studentsRes] = await Promise.all([
-        api.get("/api/classes"),
-        api.get("/api/subjects"),
-        api.get("/api/students"),
-      ]);
-      setRows(
-        (Array.isArray(classesRes.data) ? classesRes.data : []).map(normalise),
-      );
-      setSubjects(
-        (Array.isArray(subjectsRes.data) ? subjectsRes.data : []).map(
-          normalise,
-        ),
-      );
-      setStudents(
-        (Array.isArray(studentsRes.data) ? studentsRes.data : []).map(
-          normalise,
-        ),
-      );
+      const doctorId = profile?.linked_id;
+
+      // Load subjects for this doctor
+      let subjectsSnap;
+      if (doctorId) {
+        subjectsSnap = await getDocs(
+          query(collection(db, "subjects"), where("doctor_id", "==", doctorId))
+        );
+      } else {
+        subjectsSnap = await getDocs(collection(db, "subjects"));
+      }
+      const subjectRows = subjectsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const subjectIds = subjectRows.map((s) => s.id);
+
+      // Load classes for these subjects
+      let classRows = [];
+      if (subjectIds.length > 0) {
+        const chunks = [];
+        for (let i = 0; i < subjectIds.length; i += 30) {
+          chunks.push(subjectIds.slice(i, i + 30));
+        }
+        for (const chunk of chunks) {
+          const snap = await getDocs(
+            query(collection(db, "classes"), where("subject_id", "in", chunk))
+          );
+          classRows.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        }
+      }
+
+      const studentsSnap = await getDocs(collection(db, "students"));
+      const studentRows = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      setRows(classRows);
+      setSubjects(subjectRows);
+      setStudents(studentRows);
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
   useEffect(() => {
     loadAll();
-  }, []);
+  }, [profile]);
 
   function openCreate() {
     setForm({
@@ -120,9 +138,14 @@ export default function DoctorClasses() {
         enrolled_student_ids: form.enrolled_student_ids || [],
       };
       if (modal === "create") {
-        await api.post("/api/classes", payload);
+        await addDoc(collection(db, "classes"), {
+          ...payload,
+          active: true,
+          created_by: profile?.uid || null,
+          created_at: serverTimestamp(),
+        });
       } else {
-        await api.put(`/api/classes/${modal.row.id}`, {
+        await updateDoc(doc(db, "classes", modal.row.id), {
           ...payload,
           active: !!form.active,
         });
@@ -130,17 +153,17 @@ export default function DoctorClasses() {
       }
       await loadAll();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Soft-delete class "${row.name}"?`)) return;
     try {
-      await api.delete(`/api/classes/${row.id}`);
+      await updateDoc(doc(db, "classes", row.id), { active: false });
       await loadAll();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -295,9 +318,7 @@ export default function DoctorClasses() {
             <div className="text-sm text-slate-600 mb-1">Enrolled students</div>
             <div className="border rounded p-2 max-h-40 overflow-auto space-y-1">
               {students.map((s) => {
-                const checked = (form.enrolled_student_ids || []).includes(
-                  s.id,
-                );
+                const checked = (form.enrolled_student_ids || []).includes(s.id);
                 return (
                   <label key={s.id} className="flex items-center gap-2 text-sm">
                     <input

@@ -10,15 +10,13 @@ import {
   RefreshControl,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { auth } from "../../firebase";
+import { auth, db } from "../../firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import axios from "axios";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import Screen from "../../components/Screen";
 import Card from "../../components/Card";
 import Button from "../../components/Button";
 import { colors, radii, spacing, shadow } from "../../components/theme";
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const TILES = [
   { key: "students", label: "Students",  icon: "👥", route: "/(app)/students", accent: colors.brand500 },
@@ -34,15 +32,20 @@ export default function AdminHomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [user, setUser] = useState(null);
 
-  const fetchDashboardData = useCallback(async (currentUser) => {
+  const fetchStats = useCallback(async () => {
     try {
-      const token = await currentUser.getIdToken();
-      const res = await axios.get(`${API_URL}/health`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const [studSnap, docSnap, lecSnap] = await Promise.all([
+        getDocs(query(collection(db, "students"), where("active", "==", true))),
+        getDocs(query(collection(db, "doctors"), where("active", "==", true))),
+        getDocs(collection(db, "lectures")),
+      ]);
+      setStats({
+        students: studSnap.size,
+        doctors: docSnap.size,
+        lectures: lecSnap.size,
       });
-      setStats(res.data);
     } catch (error) {
-      console.error("Failed to fetch dashboard data:", error);
+      console.error("Failed to fetch dashboard stats:", error);
     }
   }, []);
 
@@ -50,17 +53,17 @@ export default function AdminHomeScreen() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setUser(currentUser);
-        await fetchDashboardData(currentUser);
+        await fetchStats();
       }
       setLoading(false);
     });
     return unsubscribe;
-  }, [fetchDashboardData]);
+  }, [fetchStats]);
 
   const onRefresh = async () => {
     if (!user) return;
     setRefreshing(true);
-    await fetchDashboardData(user);
+    await fetchStats();
     setRefreshing(false);
   };
 
@@ -125,11 +128,11 @@ export default function AdminHomeScreen() {
 
         {stats && (
           <Card style={{ marginTop: spacing.md }}>
-            <Text style={styles.sectionTitle}>API status</Text>
+            <Text style={styles.sectionTitle}>Overview</Text>
             <View style={styles.statsRow}>
-              <Stat label="Status"  value={String(stats.status ?? "—")} />
-              <Stat label="Mode"    value={String(stats.mode ?? "—")} />
-              <Stat label="Project" value={String(stats.project ?? "—")} />
+              <Stat label="Students" value={String(stats.students)} />
+              <Stat label="Doctors"  value={String(stats.doctors)} />
+              <Stat label="Lectures" value={String(stats.lectures)} />
             </View>
           </Card>
         )}

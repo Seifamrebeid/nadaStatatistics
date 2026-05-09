@@ -1,14 +1,7 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
 import { useChildren } from "../context/ChildContext";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-// Plumber wraps list-columns in an outer 1-element array: [[ "stu_x" ]] -> ["stu_x"].
-const flatIds = (x) => {
-  if (!Array.isArray(x)) return x ? [x] : [];
-  if (x.length > 0 && Array.isArray(x[0])) return x[0];
-  return x;
-};
 
 export default function ChildSubjects() {
   const { selected } = useChildren();
@@ -22,43 +15,76 @@ export default function ChildSubjects() {
     (async () => {
       try {
         setBusy(true);
-        const [cRes, wRes, lRes] = await Promise.all([
-          api.get("/api/classes"),
-          api.get("/api/weeks"),
-          api.get("/api/lectures"),
-        ]);
-        const allClasses = (Array.isArray(cRes.data) ? cRes.data : []).map((c) => ({
-          id: v(c.id),
-          name: v(c.name),
-          term: v(c.term),
-          section: v(c.section),
-          subject_id: v(c.subject_id),
-          enrolled: flatIds(c.enrolled_student_ids),
-        }));
-        const weeks = (Array.isArray(wRes.data) ? wRes.data : []).map((w) => ({
-          id: v(w.id),
-          class_id: v(w.class_id),
-        }));
-        const lectures = (Array.isArray(lRes.data) ? lRes.data : []).map((l) => ({
-          week_id: v(l.week_id),
-          enrolled: flatIds(l.enrolled_student_ids),
-        }));
 
-        // Class ids reachable for the selected kid: direct enrollment OR
-        // via a lecture they're enrolled in (lecture -> week -> class).
-        const weekToClass = Object.fromEntries(weeks.map((w) => [w.id, w.class_id]));
-        const reachableViaLectures = new Set(
-          lectures
-            .filter((l) => l.enrolled.includes(selected.id))
-            .map((l) => weekToClass[l.week_id])
-            .filter(Boolean),
+        // Classes where child is directly enrolled
+        const directSnap = await getDocs(
+          query(
+            collection(db, "classes"),
+            where("enrolled_student_ids", "array-contains", selected.id),
+          ),
         );
-        const filtered = allClasses.filter(
-          (c) => c.enrolled.includes(selected.id) || reachableViaLectures.has(c.id),
+        const directClasses = directSnap.docs.map((d) => ({
+          id: d.id,
+          name: d.data().name,
+          term: d.data().term,
+          section: d.data().section,
+          subject_id: d.data().subject_id,
+        }));
+        const directClassIds = new Set(directClasses.map((c) => c.id));
+
+        // Also find classes reachable via lecture enrollment:
+        // lectures where child is enrolled -> week_id -> class_id
+        const lectSnap = await getDocs(
+          query(
+            collection(db, "lectures"),
+            where("enrolled_student_ids", "array-contains", selected.id),
+          ),
         );
-        if (!cancelled) setClasses(filtered);
+        const weekIds = [
+          ...new Set(
+            lectSnap.docs
+              .map((d) => d.data().week_id)
+              .filter(Boolean),
+          ),
+        ];
+
+        // Load weeks to get class_ids
+        let viaLectureClassIds = new Set();
+        if (weekIds.length > 0) {
+          const weeksSnap = await getDocs(collection(db, "weeks"));
+          weeksSnap.docs.forEach((w) => {
+            if (weekIds.includes(w.id)) {
+              viaLectureClassIds.add(w.data().class_id);
+            }
+          });
+        }
+
+        // Load extra classes not already in directClasses
+        const extraClassIds = [...viaLectureClassIds].filter(
+          (id) => !directClassIds.has(id),
+        );
+        const extraClasses = await Promise.all(
+          extraClassIds.map(async (cid) => {
+            const snap = await getDocs(
+              query(collection(db, "classes"), where("__name__", "==", cid)),
+            );
+            if (snap.empty) return null;
+            const d = snap.docs[0];
+            return {
+              id: d.id,
+              name: d.data().name,
+              term: d.data().term,
+              section: d.data().section,
+              subject_id: d.data().subject_id,
+            };
+          }),
+        );
+
+        if (!cancelled) {
+          setClasses([...directClasses, ...extraClasses.filter(Boolean)]);
+        }
       } catch (e) {
-        if (!cancelled) setErr(e.response?.data?.error || e.message);
+        if (!cancelled) setErr(e.message);
       } finally {
         if (!cancelled) setBusy(false);
       }

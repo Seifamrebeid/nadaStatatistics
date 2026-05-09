@@ -15,6 +15,8 @@ import Screen from "../../components/Screen";
 import Button from "../../components/Button";
 import { colors, radii, spacing, shadow } from "../../components/theme";
 
+const QUICK = { email: "admin@classroom.local", password: "admin-password-change-me" };
+
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -80,11 +82,18 @@ export default function LoginScreen() {
             />
 
             <Button
+              title="Quick fill"
+              onPress={() => { setEmail(QUICK.email); setPassword(QUICK.password); }}
+              variant="ghost"
+              size="sm"
+              style={{ marginTop: spacing.sm }}
+            />
+            <Button
               title={loading ? "Signing in…" : "Sign in"}
               onPress={handleLogin}
               loading={loading}
               size="lg"
-              style={{ marginTop: spacing.lg }}
+              style={{ marginTop: spacing.md }}
             />
           </View>
 

@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import FilterBar, { makeFilter } from "../components/FilterBar";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
 
 const subjectFilter = makeFilter({
   search: { fields: ["name", "code"] },
@@ -13,19 +18,8 @@ const studentRowFilter = makeFilter({
   search: { fields: ["name", "email", "id"] },
 });
 
-function normalise(row) {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) {
-    if (k === "enrolled_student_ids" && Array.isArray(val)) {
-      out[k] = val.flat(2).filter(Boolean);
-    } else {
-      out[k] = v(val);
-    }
-  }
-  return out;
-}
-
 export default function DoctorHierarchy() {
+  const { profile } = useAuth();
   const [subjects, setSubjects] = useState([]);
   const [classes, setClasses] = useState([]);
   const [weeks, setWeeks] = useState([]);
@@ -39,36 +33,73 @@ export default function DoctorHierarchy() {
   const [studentFilters, setStudentFilters] = useState({ search: "" });
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/subjects"),
-      api.get("/api/classes"),
-      api.get("/api/weeks"),
-      api.get("/api/students"),
-    ])
-      .then(([subjectsRes, classesRes, weeksRes, studentsRes]) => {
-        const subjectRows = (
-          Array.isArray(subjectsRes.data) ? subjectsRes.data : []
-        ).map(normalise);
-        const classRows = (
-          Array.isArray(classesRes.data) ? classesRes.data : []
-        ).map(normalise);
-        const weekRows = (
-          Array.isArray(weeksRes.data) ? weeksRes.data : []
-        ).map(normalise);
-        const studentRows = (
-          Array.isArray(studentsRes.data) ? studentsRes.data : []
-        ).map(normalise);
+    const fetchAll = async () => {
+      try {
+        const doctorId = profile?.linked_id;
+
+        let subSnap;
+        if (doctorId) {
+          subSnap = await getDocs(
+            query(collection(db, "subjects"), where("doctor_id", "==", doctorId))
+          );
+        } else {
+          subSnap = await getDocs(collection(db, "subjects"));
+        }
+        const subjectRows = subSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const subjectIds = subjectRows.map((s) => s.id);
+
+        let classRows = [];
+        if (subjectIds.length > 0) {
+          const chunks = [];
+          for (let i = 0; i < subjectIds.length; i += 30) {
+            chunks.push(subjectIds.slice(i, i + 30));
+          }
+          for (const chunk of chunks) {
+            const snap = await getDocs(
+              query(collection(db, "classes"), where("subject_id", "in", chunk))
+            );
+            classRows.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          }
+        } else if (!doctorId) {
+          const snap = await getDocs(collection(db, "classes"));
+          classRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        }
+
+        const classIds = classRows.map((c) => c.id);
+        let weekRows = [];
+        if (classIds.length > 0) {
+          const chunks = [];
+          for (let i = 0; i < classIds.length; i += 30) {
+            chunks.push(classIds.slice(i, i + 30));
+          }
+          for (const chunk of chunks) {
+            const snap = await getDocs(
+              query(collection(db, "weeks"), where("class_id", "in", chunk))
+            );
+            weekRows.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          }
+        } else if (!doctorId) {
+          const snap = await getDocs(collection(db, "weeks"));
+          weekRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        }
+
+        const studentsSnap = await getDocs(collection(db, "students"));
+        const studentRows = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
         setSubjects(subjectRows);
         setClasses(classRows);
         setWeeks(weekRows);
         setStudents(studentRows);
         setSelectedSubjectId(subjectRows[0]?.id || null);
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
-  }, []);
+      } catch (e) {
+        setErr(e.message);
+      }
+    };
+    fetchAll();
+  }, [profile]);
 
   const selectedSubject = useMemo(
-    () => subjects.find((subject) => subject.id === selectedSubjectId) || null,
+    () => subjects.find((s) => s.id === selectedSubjectId) || null,
     [subjects, selectedSubjectId],
   );
   const subjectClasses = useMemo(
@@ -97,7 +128,7 @@ export default function DoctorHierarchy() {
   useEffect(() => {
     if (
       selectedSubjectId &&
-      !subjects.some((subject) => subject.id === selectedSubjectId)
+      !subjects.some((s) => s.id === selectedSubjectId)
     ) {
       setSelectedSubjectId(subjects[0]?.id || null);
     }
@@ -122,17 +153,22 @@ export default function DoctorHierarchy() {
       setEmotions([]);
       return;
     }
-    api
-      .get("/api/emotions", { params: { lecture_id: linkedLectureId } })
-      .then(({ data }) =>
-        setEmotions((Array.isArray(data) ? data : []).map(normalise)),
-      )
-      .catch((e) => setErr(e.response?.data?.error || e.message));
+    const fetchEmotions = async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db, "emotions"), where("lecture_id", "==", linkedLectureId))
+        );
+        setEmotions(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      } catch (e) {
+        setErr(e.message);
+      }
+    };
+    fetchEmotions();
   }, [linkedLectureId]);
 
   const enrolledStudents = useMemo(() => {
     const roster = new Set(selectedClass?.enrolled_student_ids || []);
-    return students.filter((student) => roster.has(student.id));
+    return students.filter((s) => roster.has(s.id));
   }, [students, selectedClass]);
 
   const filteredSubjects = useMemo(
@@ -143,9 +179,7 @@ export default function DoctorHierarchy() {
   const studentRowsAll = useMemo(() => {
     if (!selectedWeek) return [];
     return enrolledStudents.map((student) => {
-      const rows = emotions.filter(
-        (emotion) => emotion.student_id === student.id,
-      );
+      const rows = emotions.filter((e) => e.student_id === student.id);
       const engagement = rows
         .map((row) => Number(row.engagement_score))
         .filter(Number.isFinite);
@@ -211,7 +245,9 @@ export default function DoctorHierarchy() {
       key: "date",
       label: "Date",
       render: (row) =>
-        row.date ? new Date(row.date).toLocaleDateString() : "—",
+        row.date
+          ? (row.date?.toDate ? row.date.toDate() : new Date(row.date)).toLocaleDateString()
+          : "—",
     },
     {
       key: "lecture_id",

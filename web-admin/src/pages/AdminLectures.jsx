@@ -1,23 +1,19 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  doc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) {
-    // enrolled_student_ids comes through as [["id1"],["id2"]] — flatten.
-    if (k === "enrolled_student_ids" && Array.isArray(val)) {
-      out[k] = val.flat(2).filter(Boolean);
-    } else {
-      out[k] = v(val);
-    }
-  }
-  return out;
-};
-
 export default function AdminLectures() {
+  const { profile } = useAuth();
   const [rows, setRows] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [students, setStudents] = useState([]);
@@ -32,8 +28,7 @@ export default function AdminLectures() {
   const [filterWeek, setFilterWeek] = useState("");
   const [filterDoctor, setFilterDoctor] = useState("");
 
-  // Resolve a week_id back to its subject's owning doctor — so a lecture's
-  // doctor stays consistent with the subject the week belongs to.
+  // Resolve a week_id back to its subject's owning doctor.
   function doctorForWeek(weekId) {
     const wk = weeks.find((w) => w.id === weekId);
     if (!wk) return "";
@@ -45,24 +40,25 @@ export default function AdminLectures() {
 
   async function loadAll() {
     try {
-      const [l, d, s, w, c, subj] = await Promise.all([
-        api.get("/api/lectures"),
-        api.get("/api/doctors"),
-        api.get("/api/students"),
-        api.get("/api/weeks"),
-        api.get("/api/classes"),
-        api.get("/api/subjects"),
+      const [lSnap, dSnap, sSnap, wSnap, cSnap, subjSnap] = await Promise.all([
+        getDocs(collection(db, "lectures")),
+        getDocs(collection(db, "doctors")),
+        getDocs(collection(db, "students")),
+        getDocs(collection(db, "weeks")),
+        getDocs(collection(db, "classes")),
+        getDocs(collection(db, "subjects")),
       ]);
-      setRows((Array.isArray(l.data) ? l.data : []).map(normalise));
-      setDoctors((Array.isArray(d.data) ? d.data : []).map(normalise));
-      setStudents((Array.isArray(s.data) ? s.data : []).map(normalise));
-      setWeeks((Array.isArray(w.data) ? w.data : []).map(normalise));
-      setClasses((Array.isArray(c.data) ? c.data : []).map(normalise));
-      setSubjects((Array.isArray(subj.data) ? subj.data : []).map(normalise));
+      setRows(lSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setDoctors(dSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setStudents(sSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setWeeks(wSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setClasses(cSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setSubjects(subjSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
+
   useEffect(() => {
     loadAll();
   }, []);
@@ -78,6 +74,7 @@ export default function AdminLectures() {
     });
     setModal("create");
   }
+
   function openEdit(row) {
     setForm({
       title: row.title || "",
@@ -85,44 +82,45 @@ export default function AdminLectures() {
       week_id: row.week_id || "",
       status: row.status || "scheduled",
       scheduled_at: row.scheduled_at || "",
-      enrolled_student_ids: row.enrolled_student_ids || [],
+      enrolled_student_ids: Array.isArray(row.enrolled_student_ids)
+        ? row.enrolled_student_ids
+        : [],
     });
     setModal({ mode: "edit", row });
   }
 
   async function save() {
     try {
+      const payload = {
+        title: form.title,
+        doctor_id: form.doctor_id,
+        week_id: form.week_id,
+        status: form.status,
+        scheduled_at: form.scheduled_at,
+        enrolled_student_ids: form.enrolled_student_ids || [],
+      };
       if (modal === "create") {
-        await api.post("/api/lectures", form);
+        await addDoc(collection(db, "lectures"), {
+          ...payload,
+          created_at: serverTimestamp(),
+        });
       } else {
-        await api.put(`/api/lectures/${modal.row.id}`, form);
+        await updateDoc(doc(db, "lectures", modal.row.id), payload);
       }
       setModal(null);
       await loadAll();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Delete lecture "${row.title}"?`)) return;
     try {
-      await api.delete(`/api/lectures/${row.id}`);
+      await updateDoc(doc(db, "lectures", row.id), { active: false });
       await loadAll();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
-    }
-  }
-
-  async function regenerateReport(row) {
-    try {
-      await api.post(`/api/lectures/${row.id}/generate-report`);
-      const { data } = await api.get(`/api/lectures/${row.id}/report`);
-      const url = v(data.url);
-      if (url) window.open(url, "_blank");
-      else alert("Report generated — no URL returned");
-    } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -143,7 +141,14 @@ export default function AdminLectures() {
         const expected = doctorForWeek(r.week_id);
         const mismatch = expected && expected !== r.doctor_id;
         return (
-          <span className={mismatch ? "text-red-700" : ""} title={mismatch ? `Subject is owned by ${doctorName(expected)}` : ""}>
+          <span
+            className={mismatch ? "text-red-700" : ""}
+            title={
+              mismatch
+                ? `Subject is owned by ${doctorName(expected)}`
+                : ""
+            }
+          >
             {doctorName(r.doctor_id)}
             {mismatch ? " ⚠" : ""}
           </span>
@@ -167,28 +172,22 @@ export default function AdminLectures() {
     {
       key: "count",
       label: "Enrolled",
-      render: (r) => r.enrolled_student_ids?.length ?? 0,
+      render: (r) =>
+        Array.isArray(r.enrolled_student_ids)
+          ? r.enrolled_student_ids.length
+          : 0,
     },
   ];
 
   const actions = (r) => (
     <div className="flex gap-2 justify-end">
       <button
-        onClick={() => regenerateReport(r)}
-        className="text-brand hover:underline"
-      >
-        Report
-      </button>
-      <button
         onClick={() => openEdit(r)}
         className="text-slate-700 hover:underline"
       >
         Edit
       </button>
-      <button
-        onClick={() => remove(r)}
-        className="text-red-600 hover:underline"
-      >
+      <button onClick={() => remove(r)} className="text-red-600 hover:underline">
         Delete
       </button>
     </div>
@@ -198,10 +197,7 @@ export default function AdminLectures() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-semibold">Lectures</h1>
-        <button
-          onClick={openCreate}
-          className="btn-primary"
-        >
+        <button onClick={openCreate} className="btn-primary">
           + New lecture
         </button>
       </div>
@@ -224,7 +220,9 @@ export default function AdminLectures() {
           >
             <option value="">All subjects</option>
             {subjects.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
             ))}
           </select>
         </label>
@@ -232,12 +230,20 @@ export default function AdminLectures() {
           <span className="text-xs text-slate-600">Class</span>
           <select
             value={filterClass}
-            onChange={(e) => { setFilterClass(e.target.value); setFilterWeek(""); }}
+            onChange={(e) => {
+              setFilterClass(e.target.value);
+              setFilterWeek("");
+            }}
             className="mt-1 block w-full border rounded px-3 py-2 text-sm"
           >
             <option value="">All classes</option>
-            {(filterSubject ? classes.filter((c) => c.subject_id === filterSubject) : classes).map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+            {(filterSubject
+              ? classes.filter((c) => c.subject_id === filterSubject)
+              : classes
+            ).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </select>
         </label>
@@ -250,7 +256,9 @@ export default function AdminLectures() {
           >
             <option value="">All weeks</option>
             {Array.from({ length: 16 }, (_, i) => i + 1).map((n) => (
-              <option key={n} value={String(n)}>Week {n}</option>
+              <option key={n} value={String(n)}>
+                Week {n}
+              </option>
             ))}
           </select>
         </label>
@@ -263,7 +271,9 @@ export default function AdminLectures() {
           >
             <option value="">All doctors</option>
             {doctors.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
             ))}
           </select>
         </label>
@@ -272,9 +282,14 @@ export default function AdminLectures() {
         rows={rows.filter((r) => {
           const wk = weeks.find((w) => w.id === r.week_id);
           const cls = wk ? classes.find((c) => c.id === wk.class_id) : null;
-          if (filterSubject && (!cls || cls.subject_id !== filterSubject)) return false;
+          if (filterSubject && (!cls || cls.subject_id !== filterSubject))
+            return false;
           if (filterClass && (!cls || cls.id !== filterClass)) return false;
-          if (filterWeek && (!wk || String(wk.week_number) !== String(filterWeek))) return false;
+          if (
+            filterWeek &&
+            (!wk || String(wk.week_number) !== String(filterWeek))
+          )
+            return false;
           if (filterDoctor && r.doctor_id !== filterDoctor) return false;
           return true;
         })}
@@ -292,16 +307,10 @@ export default function AdminLectures() {
         }
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Save
             </button>
           </>
@@ -349,7 +358,8 @@ export default function AdminLectures() {
               {weeks.map((w) => {
                 const cls = classes.find((c) => c.id === w.class_id);
                 const subj = subjects.find((s) => s.id === cls?.subject_id);
-                const ctx = subj && cls ? `${subj.name} / ${cls.name} — ` : "";
+                const ctx =
+                  subj && cls ? `${subj.name} / ${cls.name} — ` : "";
                 return (
                   <option key={w.id} value={w.id}>
                     {ctx}Week {w.week_number || "?"}
@@ -360,7 +370,8 @@ export default function AdminLectures() {
             </select>
             {form.week_id && (
               <span className="text-xs text-slate-500 mt-1 block">
-                Doctor auto-set from this week's subject. Override below if needed.
+                Doctor auto-set from this week's subject. Override below if
+                needed.
               </span>
             )}
           </label>
@@ -398,7 +409,10 @@ export default function AdminLectures() {
                   s.id,
                 );
                 return (
-                  <label key={s.id} className="flex items-center gap-2 text-sm">
+                  <label
+                    key={s.id}
+                    className="flex items-center gap-2 text-sm"
+                  >
                     <input
                       type="checkbox"
                       checked={checked}

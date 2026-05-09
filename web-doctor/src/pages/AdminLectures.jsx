@@ -1,23 +1,19 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  doc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) {
-    // enrolled_student_ids comes through as [["id1"],["id2"]] — flatten.
-    if (k === "enrolled_student_ids" && Array.isArray(val)) {
-      out[k] = val.flat(2).filter(Boolean);
-    } else {
-      out[k] = v(val);
-    }
-  }
-  return out;
-};
-
 export default function AdminLectures() {
+  const { profile } = useAuth();
   const [rows, setRows] = useState([]);
   const [students, setStudents] = useState([]);
   const [subjects, setSubjects] = useState([]);
@@ -29,30 +25,24 @@ export default function AdminLectures() {
 
   async function loadAll() {
     try {
-      const [l, s] = await Promise.all([
-        api.get("/api/lectures"),
-        api.get("/api/students"),
-      ]);
-      const [subRes, classRes, weekRes] = await Promise.all([
-        api.get("/api/subjects"),
-        api.get("/api/classes"),
-        api.get("/api/weeks"),
-      ]);
-      setRows((Array.isArray(l.data) ? l.data : []).map(normalise));
-      setStudents((Array.isArray(s.data) ? s.data : []).map(normalise));
-      setSubjects(
-        (Array.isArray(subRes.data) ? subRes.data : []).map(normalise),
-      );
-      setClasses(
-        (Array.isArray(classRes.data) ? classRes.data : []).map(normalise),
-      );
-      setWeeks(
-        (Array.isArray(weekRes.data) ? weekRes.data : []).map(normalise),
-      );
+      const [lecturesSnap, studentsSnap, subjectsSnap, classesSnap, weeksSnap] =
+        await Promise.all([
+          getDocs(collection(db, "lectures")),
+          getDocs(collection(db, "students")),
+          getDocs(collection(db, "subjects")),
+          getDocs(collection(db, "classes")),
+          getDocs(collection(db, "weeks")),
+        ]);
+      setRows(lecturesSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setStudents(studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setSubjects(subjectsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setClasses(classesSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setWeeks(weeksSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
+
   useEffect(() => {
     loadAll();
   }, []);
@@ -66,6 +56,7 @@ export default function AdminLectures() {
     });
     setModal("create");
   }
+
   function openEdit(row) {
     setForm({
       week_id: row.week_id || "",
@@ -79,36 +70,28 @@ export default function AdminLectures() {
   async function save() {
     try {
       if (modal === "create") {
-        await api.post("/api/lectures", form);
+        await addDoc(collection(db, "lectures"), {
+          ...form,
+          doctor_id: profile?.linked_id || null,
+          created_at: serverTimestamp(),
+        });
       } else {
-        await api.put(`/api/lectures/${modal.row.id}`, form);
+        await updateDoc(doc(db, "lectures", modal.row.id), form);
       }
       setModal(null);
       await loadAll();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Delete lecture "${row.title}"?`)) return;
     try {
-      await api.delete(`/api/lectures/${row.id}`);
+      await updateDoc(doc(db, "lectures", row.id), { active: false });
       await loadAll();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
-    }
-  }
-
-  async function regenerateReport(row) {
-    try {
-      await api.post(`/api/lectures/${row.id}/generate-report`);
-      const { data } = await api.get(`/api/lectures/${row.id}/report`);
-      const url = v(data.url);
-      if (url) window.open(url, "_blank");
-      else alert("Report generated — no URL returned");
-    } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -152,12 +135,6 @@ export default function AdminLectures() {
 
   const actions = (r) => (
     <div className="flex gap-2 justify-end">
-      <button
-        onClick={() => regenerateReport(r)}
-        className="text-brand hover:underline"
-      >
-        Report
-      </button>
       <button
         onClick={() => openEdit(r)}
         className="text-slate-700 hover:underline"
@@ -262,9 +239,7 @@ export default function AdminLectures() {
             <div className="text-sm text-slate-600 mb-1">Enrolled students</div>
             <div className="border rounded p-2 max-h-40 overflow-auto space-y-1">
               {students.map((s) => {
-                const checked = (form.enrolled_student_ids || []).includes(
-                  s.id,
-                );
+                const checked = (form.enrolled_student_ids || []).includes(s.id);
                 return (
                   <label key={s.id} className="flex items-center gap-2 text-sm">
                     <input

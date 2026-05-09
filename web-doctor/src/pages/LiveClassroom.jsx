@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import api from "../services/api";
 import { db } from "../firebase";
-import { onSnapshot, collection, query, orderBy } from "firebase/firestore";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  where,
+  limit,
+} from "firebase/firestore";
 
 export default function LiveClassroom() {
   const { lectureId } = useParams();
@@ -20,69 +24,85 @@ export default function LiveClassroom() {
   const [transcriptSegments, setTranscriptSegments] = useState([]);
   const [err, setErr] = useState(null);
 
-  // Poll emotions for real-time status
+  // Real-time emotions via Firestore onSnapshot
   useEffect(() => {
     if (!lectureId) return;
 
-    const pollStatus = async () => {
-      try {
-        const res = await api.get(`/api/emotions?lecture_id=${lectureId}`);
-        const emotions = res.data || [];
+    try {
+      const q = query(
+        collection(db, "emotions"),
+        where("lecture_id", "==", lectureId),
+        orderBy("timestamp", "desc"),
+        limit(50),
+      );
 
-        let awake = 0,
-          sleeping = 0,
-          handRaised = 0,
-          toiletRequest = 0;
+      const unsub = onSnapshot(
+        q,
+        (snap) => {
+          const emotions = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-        emotions.forEach((e) => {
-          if (v(e.state) === "sleeping") {
-            sleeping++;
-          } else {
-            awake++;
-          }
-          if (v(e.gesture) === "hand_raised") handRaised++;
-          if (v(e.gesture) === "toilet_request") toiletRequest++;
-        });
+          let awake = 0,
+            sleeping = 0,
+            handRaised = 0,
+            toiletRequest = 0;
 
-        const attendanceRes = await api.get(
-          `/api/attendance/current?lecture_id=${lectureId}`,
-        );
-        const attendanceData = attendanceRes.data || {};
+          emotions.forEach((e) => {
+            if (e.state === "sleeping") {
+              sleeping++;
+            } else {
+              awake++;
+            }
+            if (e.gesture === "hand_raised") handRaised++;
+            if (e.gesture === "toilet_request") toiletRequest++;
+          });
 
-        setCurrentState({
-          awakeCount: awake,
-          sleepingCount: sleeping,
-          handRaisedCount: handRaised,
-          toiletRequestCount: toiletRequest,
-          attentionAlertsCount: emotions.filter(
-            (e) =>
-              Number(v(e.attention_warning)) === 1 ||
-              v(e.attention_warning) === true ||
-              (Number(v(e.attention_score)) || 0) < 45,
-          ).length,
-          cheatAlertsCount: emotions.filter(
-            (e) =>
-              Number(v(e.cheat_warning)) === 1 ||
-              v(e.cheat_warning) === true ||
-              (Number(v(e.cheat_score)) || 0) >= 60,
-          ).length,
-        });
-        setAttendance({
-          present: v(attendanceData.summary?.present) || 0,
-          absent: v(attendanceData.summary?.absent) || 0,
-          attendanceRate: Number(
-            v(attendanceData.summary?.attendance_rate) || 0,
-          ),
-        });
-      } catch (error) {
-        console.error("Error polling emotions:", error);
-        setErr(error.message);
-      }
-    };
+          // Attendance: students with emotion record in last 10 minutes
+          const tenMinAgo = Date.now() - 10 * 60 * 1000;
+          const recentStudents = new Set();
+          const allStudentIds = new Set();
+          emotions.forEach((e) => {
+            if (e.student_id) allStudentIds.add(e.student_id);
+            const ts = e.timestamp?.toMillis
+              ? e.timestamp.toMillis()
+              : e.timestamp
+                ? new Date(e.timestamp).getTime()
+                : 0;
+            if (ts > tenMinAgo && e.student_id) {
+              recentStudents.add(e.student_id);
+            }
+          });
+          const presentCount = recentStudents.size;
+          const absentCount = allStudentIds.size - presentCount;
+          const attendanceRate =
+            allStudentIds.size > 0 ? presentCount / allStudentIds.size : 0;
 
-    pollStatus();
-    const interval = setInterval(pollStatus, 3000);
-    return () => clearInterval(interval);
+          setCurrentState({
+            awakeCount: awake,
+            sleepingCount: sleeping,
+            handRaisedCount: handRaised,
+            toiletRequestCount: toiletRequest,
+            attentionAlertsCount: emotions.filter(
+              (e) => (Number(e.engagement_score) || 0) < 45,
+            ).length,
+            cheatAlertsCount: 0,
+          });
+          setAttendance({
+            present: presentCount,
+            absent: absentCount,
+            attendanceRate,
+          });
+        },
+        (error) => {
+          console.error("Error subscribing to emotions:", error);
+          setErr(error.message);
+        },
+      );
+
+      return unsub;
+    } catch (error) {
+      console.error("Error setting up emotions listener:", error);
+      setErr(error.message);
+    }
   }, [lectureId]);
 
   // Subscribe to live transcripts

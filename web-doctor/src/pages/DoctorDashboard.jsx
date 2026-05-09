@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import StatCard from "../components/StatCard";
 import { Presentation, Radio, Smile, Hand, Bath } from "lucide-react";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
 export default function DoctorDashboard() {
+  const { profile } = useAuth();
   const [stats, setStats] = useState(null);
   const [attendance, setAttendance] = useState(null);
   const [err, setErr] = useState(null);
@@ -13,61 +19,84 @@ export default function DoctorDashboard() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const lecturesRes = await api.get("/api/lectures");
-        const lectures = lecturesRes.data || [];
+        const doctorId = profile?.linked_id;
 
+        // Fetch lectures for this doctor
+        let lecturesSnap;
+        if (doctorId) {
+          lecturesSnap = await getDocs(
+            query(collection(db, "lectures"), where("doctor_id", "==", doctorId))
+          );
+        } else {
+          lecturesSnap = await getDocs(collection(db, "lectures"));
+        }
+        const lectures = lecturesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        const today = new Date().toDateString();
         const todayLectures = lectures.filter((l) => {
-          const lecDate = new Date(v(l.scheduled_at)).toDateString();
-          return lecDate === new Date().toDateString();
+          if (!l.date) return false;
+          const d = l.date?.toDate ? l.date.toDate() : new Date(l.date);
+          return d.toDateString() === today;
         });
+        const recordingLectures = lectures.filter((l) => l.status === "recording");
 
-        const recordingLectures = lectures.filter(
-          (l) => v(l.status) === "recording",
-        );
+        // Fetch all emotions for this doctor's lectures
+        const lectureIds = lectures.map((l) => l.id);
+        let emotions = [];
+        if (lectureIds.length > 0) {
+          // Firestore 'in' query supports up to 30 items; chunk if needed
+          const chunks = [];
+          for (let i = 0; i < lectureIds.length; i += 30) {
+            chunks.push(lectureIds.slice(i, i + 30));
+          }
+          for (const chunk of chunks) {
+            const snap = await getDocs(
+              query(collection(db, "emotions"), where("lecture_id", "in", chunk))
+            );
+            emotions.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          }
+        }
 
-        const emotionsRes = await api.get("/api/emotions");
-        const emotions = emotionsRes.data || [];
-        const attendanceRes = await api.get("/api/attendance/current");
-        const attendanceData = attendanceRes.data || {};
         const avgEngagement =
           emotions.length > 0
             ? (
-                emotions.reduce(
-                  (sum, e) => sum + (v(e.engagement_score) || 0),
-                  0,
-                ) / emotions.length
+                emotions.reduce((sum, e) => sum + (e.engagement_score || 0), 0) /
+                emotions.length
               ).toFixed(2)
             : 0;
+
+        // Attendance: students with emotion record in last 10 minutes are present
+        const tenMinAgo = Date.now() - 10 * 60 * 1000;
+        const recentStudents = new Set();
+        emotions.forEach((e) => {
+          const ts = e.timestamp?.toMillis
+            ? e.timestamp.toMillis()
+            : e.timestamp
+              ? new Date(e.timestamp).getTime()
+              : 0;
+          if (ts > tenMinAgo) recentStudents.add(e.student_id);
+        });
+        const allStudentIds = new Set(emotions.map((e) => e.student_id).filter(Boolean));
+        const presentCount = recentStudents.size;
+        const absentCount = allStudentIds.size - presentCount;
+        const attendanceRate =
+          allStudentIds.size > 0 ? presentCount / allStudentIds.size : 0;
 
         setStats({
           todayCount: todayLectures.length,
           recordingCount: recordingLectures.length,
           avgEngagement,
-          raisedHandsCount: emotions.filter(
-            (e) => v(e.gesture) === "hand_raised",
-          ).length,
-          toiletRequestsCount: emotions.filter(
-            (e) => v(e.gesture) === "toilet_request",
-          ).length,
+          raisedHandsCount: emotions.filter((e) => e.gesture === "hand_raised").length,
+          toiletRequestsCount: emotions.filter((e) => e.gesture === "toilet_request").length,
           attentionAlertsCount: emotions.filter(
-            (e) =>
-              Number(v(e.attention_warning)) === 1 ||
-              v(e.attention_warning) === true ||
-              (Number(v(e.attention_score)) || 0) < 45,
+            (e) => (Number(e.engagement_score) || 0) < 45
           ).length,
-          cheatAlertsCount: emotions.filter(
-            (e) =>
-              Number(v(e.cheat_warning)) === 1 ||
-              v(e.cheat_warning) === true ||
-              (Number(v(e.cheat_score)) || 0) >= 60,
-          ).length,
+          cheatAlertsCount: 0,
         });
         setAttendance({
-          present: v(attendanceData.summary?.present) || 0,
-          absent: v(attendanceData.summary?.absent) || 0,
-          attendanceRate: Number(
-            v(attendanceData.summary?.attendance_rate) || 0,
-          ),
+          present: presentCount,
+          absent: absentCount,
+          attendanceRate,
         });
       } catch (error) {
         console.error("Error fetching dashboard stats:", error);
@@ -78,7 +107,7 @@ export default function DoctorDashboard() {
     fetchStats();
     const interval = setInterval(fetchStats, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [profile]);
 
   if (err) {
     return (

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
 import StatCard from "../components/StatCard";
 import { CalendarCheck, Smile, Users } from "lucide-react";
 import {
@@ -14,8 +15,6 @@ import {
 } from "recharts";
 import { useChildren } from "../context/ChildContext";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
 export default function ChildHistory() {
   const { selected } = useChildren();
   const [chart, setChart] = useState([]);
@@ -27,27 +26,77 @@ export default function ChildHistory() {
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await api.get(
-          `/api/analytics/student/${selected.id}/comparison`,
+        // Get lectures for this child
+        const lectSnap = await getDocs(
+          query(
+            collection(db, "lectures"),
+            where("enrolled_student_ids", "array-contains", selected.id),
+          ),
         );
-        const perLecture = Array.isArray(data?.per_lecture)
-          ? data.per_lecture
-          : [];
-        const chartData = perLecture.map((item, idx) => ({
-          name: `Lecture ${idx + 1}`,
-          lecture_id: v(item.lecture_id),
-          self: Number(v(item.self) || 0),
-          class_mean: Number(v(item.class_mean) || 0),
-        }));
+        const childLectures = lectSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        // Get this child's emotions
+        const mySnap = await getDocs(
+          query(collection(db, "emotions"), where("student_id", "==", selected.id)),
+        );
+        const myEmotions = mySnap.docs.map((d) => d.data());
+
+        // Group child emotions by lecture
+        const myByLecture = {};
+        myEmotions.forEach((e) => {
+          if (!myByLecture[e.lecture_id]) myByLecture[e.lecture_id] = [];
+          myByLecture[e.lecture_id].push(e.engagement_score || 0);
+        });
+
+        // Get all emotions for each lecture to compute class mean
+        const lectureIds = childLectures.map((l) => l.id);
+        const classAvgByLecture = {};
+        await Promise.all(
+          lectureIds.map(async (lid) => {
+            const snap = await getDocs(
+              query(collection(db, "emotions"), where("lecture_id", "==", lid)),
+            );
+            const allScores = snap.docs.map((d) => d.data().engagement_score || 0);
+            classAvgByLecture[lid] =
+              allScores.length > 0
+                ? allScores.reduce((a, b) => a + b, 0) / allScores.length
+                : 0;
+          }),
+        );
+
+        // Build chart data
+        const chartData = childLectures.map((l, idx) => {
+          const myScores = myByLecture[l.id] || [];
+          const myAvg =
+            myScores.length > 0
+              ? myScores.reduce((a, b) => a + b, 0) / myScores.length
+              : 0;
+          return {
+            name: `Lecture ${idx + 1}`,
+            lecture_id: l.id,
+            self: myAvg,
+            class_mean: classAvgByLecture[l.id] || 0,
+          };
+        });
+
         if (cancelled) return;
         setChart(chartData);
+
+        const selfMean =
+          chartData.length > 0
+            ? chartData.reduce((s, l) => s + l.self, 0) / chartData.length
+            : 0;
+        const classMean =
+          chartData.length > 0
+            ? chartData.reduce((s, l) => s + l.class_mean, 0) / chartData.length
+            : 0;
         setStats({
-          self: Number(v(data?.self_mean) ?? 0),
-          classMean: Number(v(data?.class_mean) ?? 0),
-          count: perLecture.length,
+          self: selfMean,
+          classMean,
+          count: chartData.length,
         });
       } catch (e) {
-        if (!cancelled) setErr(e.response?.data?.error || e.message);
+        if (!cancelled) setErr(e.message);
       }
     })();
     return () => {

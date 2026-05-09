@@ -14,6 +14,7 @@ import {
   Users,
   Search,
   Award,
+  ClipboardList,
   Presentation,
   BarChart3,
   Settings,
@@ -36,6 +37,7 @@ const navItems = [
   { to: "/lectures", label: "Lectures", icon: Presentation },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/grades", label: "Grades", icon: Award },
+  { to: "/attendance", label: "Attendance", icon: ClipboardList },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/profile", label: "Profile", icon: UserCircle },
 ];

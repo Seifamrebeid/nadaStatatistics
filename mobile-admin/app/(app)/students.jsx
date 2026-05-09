@@ -10,8 +10,8 @@ import {
   RefreshControl,
 } from "react-native";
 import { useRouter, useFocusEffect } from "expo-router";
-import { auth } from "../../firebase";
-import axios from "axios";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../../firebase";
 import Screen from "../../components/Screen";
 import ScreenHeader from "../../components/ScreenHeader";
 import SearchBar from "../../components/SearchBar";
@@ -19,8 +19,6 @@ import FilterChips from "../../components/FilterChips";
 import EmptyState from "../../components/EmptyState";
 import Button from "../../components/Button";
 import { colors, radii, shadow, spacing } from "../../components/theme";
-
-const API_URL = process.env.EXPO_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function StudentsScreen() {
   const router = useRouter();
@@ -32,13 +30,9 @@ export default function StudentsScreen() {
 
   const fetchStudents = useCallback(async () => {
     try {
-      const user = auth.currentUser;
-      if (!user) return;
-      const token = await user.getIdToken();
-      const res = await axios.get(`${API_URL}/api/students`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setStudents(Array.isArray(res.data) ? res.data : []);
+      const snap = await getDocs(collection(db, "students"));
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setStudents(data);
     } catch (error) {
       Alert.alert("Error", "Failed to fetch students");
       console.error(error);
@@ -64,9 +58,9 @@ export default function StudentsScreen() {
     return students.filter((s) => {
       if (statusFilter === "active"   && s.active === false) return false;
       if (statusFilter === "inactive" && s.active !== false) return false;
-      if (statusFilter === "enrolled" && !s.face_encoding && !s.face_photo_url) return false;
+      if (statusFilter === "enrolled" && !s.face_photo_url) return false;
       if (!q) return true;
-      const hay = `${s.name || ""} ${s.email || ""} ${s.student_id || s.id || ""}`.toLowerCase();
+      const hay = `${s.name || ""} ${s.email || ""} ${s.id || ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [students, search, statusFilter]);
@@ -105,7 +99,7 @@ export default function StudentsScreen() {
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(item) => String(item.student_id || item.id)}
+          keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand600} />
@@ -117,7 +111,7 @@ export default function StudentsScreen() {
               onPress={() =>
                 router.push({
                   pathname: "/(app)/students/[id]",
-                  params: { id: item.student_id || item.id },
+                  params: { id: item.id },
                 })
               }
             >
@@ -129,9 +123,9 @@ export default function StudentsScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.name} numberOfLines={1}>{item.name || "Unnamed"}</Text>
                 <Text style={styles.sub} numberOfLines={1}>{item.email || "—"}</Text>
-                <Text style={styles.id} numberOfLines={1}>ID: {item.student_id || item.id}</Text>
+                <Text style={styles.id} numberOfLines={1}>ID: {item.id}</Text>
               </View>
-              {(item.face_encoding || item.face_photo_url) ? (
+              {item.face_photo_url ? (
                 <View style={styles.pill}>
                   <Text style={styles.pillText}>face</Text>
                 </View>
@@ -145,7 +139,7 @@ export default function StudentsScreen() {
               title={students.length === 0 ? "No students yet" : "No matches"}
               message={
                 students.length === 0
-                  ? "Tap “+ New” to add the first student."
+                  ? "Tap \"+ New\" to add the first student."
                   : "Try a different search or filter."
               }
             />

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import {
   ResponsiveContainer,
   BarChart,
@@ -12,21 +14,55 @@ import {
 } from "recharts";
 
 export default function StudentEngagement() {
+  const { profile } = useAuth();
   const [engagement, setEngagement] = useState([]);
   const [sleep, setSleep] = useState([]);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/analytics/engagement"),
-      api.get("/api/analytics/sleep"),
-    ])
-      .then(([e, s]) => {
-        setEngagement(columnsToRows(e.data));
-        setSleep(columnsToRows(s.data));
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
-  }, []);
+    if (!profile?.linked_id) return;
+
+    const fetchEngagement = async () => {
+      try {
+        const snap = await getDocs(
+          query(
+            collection(db, "emotions"),
+            where("student_id", "==", profile.linked_id),
+          ),
+        );
+        const rows = snap.docs.map((d) => d.data());
+
+        // Group by lecture
+        const byLecture = {};
+        rows.forEach((e) => {
+          if (!byLecture[e.lecture_id]) {
+            byLecture[e.lecture_id] = { scores: [], yawning: 0, total: 0 };
+          }
+          byLecture[e.lecture_id].scores.push(e.engagement_score || 0);
+          byLecture[e.lecture_id].total += 1;
+          if (e.yawning) byLecture[e.lecture_id].yawning += 1;
+        });
+
+        const engagementData = Object.entries(byLecture).map(([lid, d]) => ({
+          lecture_id: lid,
+          mean_engagement:
+            d.scores.reduce((a, b) => a + b, 0) / d.scores.length,
+        }));
+
+        const sleepData = Object.entries(byLecture).map(([lid, d]) => ({
+          lecture_id: lid,
+          sleep_rate: d.total > 0 ? d.yawning / d.total : 0,
+        }));
+
+        setEngagement(engagementData);
+        setSleep(sleepData);
+      } catch (e) {
+        setErr(e.message);
+      }
+    };
+
+    fetchEngagement();
+  }, [profile?.linked_id]);
 
   return (
     <div>
@@ -73,18 +109,6 @@ export default function StudentEngagement() {
       </Section>
     </div>
   );
-}
-
-function columnsToRows(obj) {
-  if (!obj) return [];
-  const keys = Object.keys(obj).filter((k) => Array.isArray(obj[k]));
-  if (keys.length === 0) return [];
-  const n = obj[keys[0]].length;
-  return Array.from({ length: n }, (_, i) => {
-    const row = {};
-    for (const k of keys) row[k] = obj[k][i];
-    return row;
-  });
 }
 
 function Section({ title, children }) {

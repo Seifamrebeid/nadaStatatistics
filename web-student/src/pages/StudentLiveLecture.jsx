@@ -1,13 +1,21 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../firebase";
-import { onSnapshot, collection, query, orderBy } from "firebase/firestore";
+import {
+  onSnapshot,
+  collection,
+  query,
+  orderBy,
+  doc,
+  getDoc,
+} from "firebase/firestore";
 
 export default function StudentLiveLecture() {
   const { lectureId } = useParams();
   const navigate = useNavigate();
   const [transcriptSegments, setTranscriptSegments] = useState([]);
   const [completed, setCompleted] = useState(false);
+  const [reportUrl, setReportUrl] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
@@ -17,32 +25,35 @@ export default function StudentLiveLecture() {
     }
 
     try {
+      // Subscribe to transcript segments
       const segmentsRef = collection(db, "transcripts", lectureId, "segments");
       const q = query(segmentsRef, orderBy("chunk_index"));
 
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const segments = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
+        const segments = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
         }));
         setTranscriptSegments(segments);
       });
 
-      // Also check if the transcript is completed
-      const transcriptRef = collection(db, "transcripts");
-      const transcriptQuery = query(transcriptRef);
-
-      const unsubscribeTrans = onSnapshot(transcriptQuery, (snapshot) => {
-        snapshot.forEach((doc) => {
-          if (doc.id === lectureId && doc.data().completed === true) {
+      // Subscribe to the lecture doc to detect finalization and get report URL
+      const lectureRef = doc(db, "lectures", lectureId);
+      const unsubscribeLecture = onSnapshot(lectureRef, (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.status === "finished" || data.finalized_at) {
             setCompleted(true);
           }
-        });
+          if (data.report_pdf_url) {
+            setReportUrl(data.report_pdf_url);
+          }
+        }
       });
 
       return () => {
         unsubscribe();
-        unsubscribeTrans();
+        unsubscribeLecture();
       };
     } catch (error) {
       console.error("Error subscribing to transcripts:", error);
@@ -90,12 +101,12 @@ export default function StudentLiveLecture() {
         </div>
       </div>
 
-      {completed && (
+      {completed && reportUrl && (
         <div className="bg-blue-50 border border-blue-200 p-4 rounded">
           <p className="text-blue-800">
             Lecture recording is complete. You can now{" "}
             <a
-              href={`/api/lectures/${lectureId}/report`}
+              href={reportUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="font-semibold hover:underline"

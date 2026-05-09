@@ -1,8 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  serverTimestamp,
+  query,
+  where,
+  orderBy,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import FilterBar, { makeFilter } from "../components/FilterBar";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
 
 const historyFilter = makeFilter({
   search: { fields: ["subject", "lecture_id"] },
@@ -13,13 +21,8 @@ const historyFilter = makeFilter({
   dateRange: { key: "sent_at" },
 });
 
-function normalise(row) {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-}
-
 export default function DoctorNotifications() {
+  const { profile } = useAuth();
   const [lectures, setLectures] = useState([]);
   const [students, setStudents] = useState([]);
   const [history, setHistory] = useState([]);
@@ -54,14 +57,30 @@ export default function DoctorNotifications() {
   async function loadAll() {
     setErr(null);
     try {
-      const [l, s, h] = await Promise.all([
-        api.get("/api/lectures"),
-        api.get("/api/students"),
-        api.get("/api/notifications"),
-      ]);
-      const lectureRows = (Array.isArray(l.data) ? l.data : []).map(normalise);
-      const studentRows = (Array.isArray(s.data) ? s.data : []).map(normalise);
-      const historyRows = (Array.isArray(h.data) ? h.data : []).map(normalise);
+      const doctorId = profile?.linked_id;
+
+      let lectureSnap;
+      if (doctorId) {
+        lectureSnap = await getDocs(
+          query(collection(db, "lectures"), where("doctor_id", "==", doctorId))
+        );
+      } else {
+        lectureSnap = await getDocs(collection(db, "lectures"));
+      }
+      const lectureRows = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      const studentsSnap = await getDocs(collection(db, "students"));
+      const studentRows = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      let historySnap;
+      if (doctorId) {
+        historySnap = await getDocs(
+          query(collection(db, "notifications"), where("sender_doctor_id", "==", doctorId))
+        );
+      } else {
+        historySnap = await getDocs(collection(db, "notifications"));
+      }
+      const historyRows = historySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
       setLectures(lectureRows);
       setStudents(studentRows);
@@ -70,13 +89,13 @@ export default function DoctorNotifications() {
         setForm((cur) => ({ ...cur, lecture_id: lectureRows[0].id }));
       }
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
   useEffect(() => {
     loadAll();
-  }, []);
+  }, [profile]);
 
   const selectedLecture = useMemo(
     () => lectures.find((l) => l.id === form.lecture_id),
@@ -86,7 +105,7 @@ export default function DoctorNotifications() {
   const enrolledIds = useMemo(() => {
     const raw = selectedLecture?.enrolled_student_ids;
     if (!Array.isArray(raw)) return [];
-    return raw.flat(2).filter(Boolean);
+    return raw.filter(Boolean);
   }, [selectedLecture]);
 
   const recipients = useMemo(
@@ -100,18 +119,31 @@ export default function DoctorNotifications() {
     setErr(null);
     setOk(null);
     try {
-      const payload = {
-        lecture_id: form.lecture_id,
+      const doctorId = profile?.linked_id;
+      const selectedStudentIds =
+        form.student_ids.length > 0 ? form.student_ids : enrolledIds;
+      const selectedStudents = students.filter((s) =>
+        selectedStudentIds.includes(s.id)
+      );
+
+      await addDoc(collection(db, "notifications"), {
+        sender_doctor_id: doctorId || null,
+        lecture_id: form.lecture_id || null,
+        recipient_student_ids: selectedStudentIds,
+        recipient_emails: selectedStudents.map((s) => s.email),
         subject: form.subject,
         body: form.body,
-      };
-      if (form.student_ids.length > 0) payload.student_ids = form.student_ids;
-      const { data } = await api.post("/api/notifications", payload);
-      setOk(`Sent to ${v(data.recipients)} recipient(s).`);
+        sent_at: serverTimestamp(),
+        status: "sent",
+      });
+
+      setOk(
+        `Notification saved. Email delivery requires R backend. Sent to ${selectedStudentIds.length} recipient(s).`
+      );
       setForm((cur) => ({ ...cur, subject: "", body: "", student_ids: [] }));
       await loadAll();
     } catch (e2) {
-      setErr(e2.response?.data?.error || e2.message);
+      setErr(e2.message);
     } finally {
       setBusy(false);
     }
@@ -201,7 +233,7 @@ export default function DoctorNotifications() {
           disabled={busy || !form.lecture_id}
           className="bg-brand hover:bg-brand-dark text-white px-4 py-2 rounded disabled:opacity-60"
         >
-          {busy ? "Sending..." : "Send notification"}
+          {busy ? "Saving..." : "Send notification"}
         </button>
 
         {ok && (
@@ -250,14 +282,19 @@ export default function DoctorNotifications() {
               </tr>
             </thead>
             <tbody>
-              {filteredHistory.map((h) => (
-                <tr key={h.id} className="border-b last:border-0">
-                  <td className="py-2">{h.sent_at || "-"}</td>
-                  <td className="py-2">{h.lecture_id || "-"}</td>
-                  <td className="py-2">{h.subject || "-"}</td>
-                  <td className="py-2">{h.status || "-"}</td>
-                </tr>
-              ))}
+              {filteredHistory.map((h) => {
+                const sentAt = h.sent_at?.toDate
+                  ? h.sent_at.toDate().toLocaleString()
+                  : h.sent_at || "-";
+                return (
+                  <tr key={h.id} className="border-b last:border-0">
+                    <td className="py-2">{sentAt}</td>
+                    <td className="py-2">{h.lecture_id || "-"}</td>
+                    <td className="py-2">{h.subject || "-"}</td>
+                    <td className="py-2">{h.status || "-"}</td>
+                  </tr>
+                );
+              })}
               {filteredHistory.length === 0 && (
                 <tr>
                   <td className="py-3 text-slate-500" colSpan={4}>

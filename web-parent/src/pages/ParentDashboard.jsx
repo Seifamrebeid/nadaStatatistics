@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
 import StatCard from "../components/StatCard";
 import { Users, Presentation, Smile } from "lucide-react";
 import { useChildren } from "../context/ChildContext";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
 
 export default function ParentDashboard() {
   const { children: kids, loading, err } = useChildren();
@@ -22,33 +21,61 @@ export default function ParentDashboard() {
     let cancelled = false;
     (async () => {
       try {
-        const lecturesRes = await api.get("/api/lectures");
-        const lectures = Array.isArray(lecturesRes.data) ? lecturesRes.data : [];
+        // Get all lectures for all kids (deduplicated)
+        const allLectureIds = new Set();
         const summaries = await Promise.all(
           kids.map(async (c) => {
             try {
-              const { data } = await api.get(
-                `/api/analytics/student/${c.id}/comparison`,
+              // Lectures where child is enrolled
+              const lectSnap = await getDocs(
+                query(
+                  collection(db, "lectures"),
+                  where("enrolled_student_ids", "array-contains", c.id),
+                ),
               );
+              const childLectures = lectSnap.docs.map((d) => d.id);
+              childLectures.forEach((lid) => allLectureIds.add(lid));
+
+              // Emotions for this child
+              const emotSnap = await getDocs(
+                query(
+                  collection(db, "emotions"),
+                  where("student_id", "==", c.id),
+                ),
+              );
+              const myEmotions = emotSnap.docs.map((d) => d.data());
+
+              // Compute per-lecture averages then overall average
+              const byLecture = {};
+              myEmotions.forEach((e) => {
+                if (!byLecture[e.lecture_id]) byLecture[e.lecture_id] = [];
+                byLecture[e.lecture_id].push(e.engagement_score || 0);
+              });
+              const perLecture = Object.entries(byLecture).map(([lid, scores]) => ({
+                lecture_id: lid,
+                my_avg: scores.reduce((a, b) => a + b, 0) / scores.length,
+              }));
+              const selfMean =
+                perLecture.length > 0
+                  ? perLecture.reduce((s, l) => s + l.my_avg, 0) / perLecture.length
+                  : 0;
+
               return {
                 id: c.id,
                 name: c.name,
-                self: Number(v(data?.self_mean) || 0),
-                classMean: Number(v(data?.class_mean) || 0),
-                lectures: Array.isArray(data?.per_lecture)
-                  ? data.per_lecture.length
-                  : 0,
+                self: selfMean,
+                lectures: childLectures.length,
               };
             } catch {
-              return { id: c.id, name: c.name, self: 0, classMean: 0, lectures: 0 };
+              return { id: c.id, name: c.name, self: 0, lectures: 0 };
             }
           }),
         );
         if (cancelled) return;
         setPerChild(summaries);
-        setLecturesCount(lectures.length);
+        setLecturesCount(allLectureIds.size);
       } catch (e) {
-        if (!cancelled) setPageErr(e.response?.data?.error || e.message);
+        if (!cancelled) setPageErr(e.message);
       } finally {
         if (!cancelled) setBusy(false);
       }
@@ -143,15 +170,9 @@ export default function ParentDashboard() {
               </div>
               <div className="flex items-center gap-6 text-sm">
                 <div className="text-right">
-                  <div className="text-[11px] text-slate-500">Self</div>
+                  <div className="text-[11px] text-slate-500">Engagement</div>
                   <div className="font-semibold text-emerald-600">
                     {c.self.toFixed(2)}%
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-[11px] text-slate-500">Class</div>
-                  <div className="font-semibold text-brand-600">
-                    {c.classMean.toFixed(2)}%
                   </div>
                 </div>
               </div>

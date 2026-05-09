@@ -1,22 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  doc,
+  getDoc,
+  serverTimestamp,
+  query,
+  where,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import FilterBar, { makeFilter } from "../components/FilterBar";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
 
 const messageFilter = makeFilter({
   search: { fields: ["subject", "body", "lecture_id"] },
   selects: [{ key: "status", field: "status" }],
-  dateRange: { key: "created_at" },
+  dateRange: { key: "sent_at" },
 });
 
-function normalise(row) {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-}
-
 export default function DoctorMessages() {
+  const { profile } = useAuth();
   const [lectures, setLectures] = useState([]);
   const [students, setStudents] = useState([]);
   const [history, setHistory] = useState([]);
@@ -47,36 +51,63 @@ export default function DoctorMessages() {
     [history],
   );
 
-  // Fetch lectures and notifications history
-  useEffect(() => {
-    const fetch = async () => {
-      try {
-        const lecturesRes = await api.get("/api/lectures");
-        const historyRes = await api.get("/api/notifications");
-        setLectures(lecturesRes.data || []);
-        setHistory((historyRes.data || []).map(normalise));
-      } catch (err) {
-        setErr(err.message);
+  async function loadLecturesAndHistory() {
+    try {
+      const doctorId = profile?.linked_id;
+      let lectureSnap;
+      if (doctorId) {
+        lectureSnap = await getDocs(
+          query(collection(db, "lectures"), where("doctor_id", "==", doctorId))
+        );
+      } else {
+        lectureSnap = await getDocs(collection(db, "lectures"));
       }
-    };
-    fetch();
-  }, []);
+      const lectureRows = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-  // Fetch students for selected lecture
+      let historySnap;
+      if (doctorId) {
+        historySnap = await getDocs(
+          query(collection(db, "notifications"), where("sender_doctor_id", "==", doctorId))
+        );
+      } else {
+        historySnap = await getDocs(collection(db, "notifications"));
+      }
+      const historyRows = historySnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      setLectures(lectureRows);
+      setHistory(historyRows);
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
+  useEffect(() => {
+    loadLecturesAndHistory();
+  }, [profile]);
+
+  // Fetch students for the selected lecture
   useEffect(() => {
     if (!form.lecture_id) return;
-    const fetch = async () => {
+    const fetchStudents = async () => {
       try {
-        const res = await api.get(`/api/lectures/${form.lecture_id}`);
-        const lecture = normalise(res.data);
-        // Assume lecture has enrolled_student_ids; fetch them
-        const studentsRes = await api.get("/api/students");
-        setStudents((studentsRes.data || []).map(normalise));
-      } catch (err) {
-        setErr(err.message);
+        const lectureDoc = await getDoc(doc(db, "lectures", form.lecture_id));
+        const lectureData = lectureDoc.exists() ? lectureDoc.data() : {};
+        const enrolledIds = lectureData.enrolled_student_ids || [];
+
+        if (enrolledIds.length > 0) {
+          // Fetch only enrolled students
+          const snap = await getDocs(collection(db, "students"));
+          const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          setStudents(all.filter((s) => enrolledIds.includes(s.id)));
+        } else {
+          const snap = await getDocs(collection(db, "students"));
+          setStudents(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        }
+      } catch (e) {
+        setErr(e.message);
       }
     };
-    fetch();
+    fetchStudents();
   }, [form.lecture_id]);
 
   const handleSend = async (e) => {
@@ -88,17 +119,27 @@ export default function DoctorMessages() {
 
     try {
       setBusy(true);
-      const payload = {
-        lecture_id: form.lecture_id,
+      const doctorId = profile?.linked_id;
+      const selectedStudentIds =
+        form.selected_students.length > 0
+          ? form.selected_students
+          : students.map((s) => s.id);
+      const selectedStudents = students.filter((s) =>
+        selectedStudentIds.includes(s.id)
+      );
+
+      await addDoc(collection(db, "notifications"), {
+        sender_doctor_id: doctorId || null,
+        lecture_id: form.lecture_id || null,
+        recipient_student_ids: selectedStudentIds,
+        recipient_emails: selectedStudents.map((s) => s.email),
         subject: form.subject,
         body: form.body,
-      };
-      if (form.selected_students.length > 0) {
-        payload.student_ids = form.selected_students;
-      }
+        sent_at: serverTimestamp(),
+        status: "sent",
+      });
 
-      await api.post("/api/notifications", payload);
-      setOk("Message sent successfully!");
+      setOk("Notification saved. Email delivery requires R backend.");
       setForm({
         lecture_id: form.lecture_id,
         subject: "",
@@ -106,11 +147,9 @@ export default function DoctorMessages() {
         selected_students: [],
       });
 
-      // Refresh history
-      const historyRes = await api.get("/api/notifications");
-      setHistory((historyRes.data || []).map(normalise));
-    } catch (err) {
-      setErr(err.message);
+      await loadLecturesAndHistory();
+    } catch (e) {
+      setErr(e.message);
     } finally {
       setBusy(false);
     }
@@ -151,8 +190,8 @@ export default function DoctorMessages() {
               >
                 <option value="">-- Select Lecture --</option>
                 {lectures.map((lec) => (
-                  <option key={v(lec.id)} value={v(lec.id)}>
-                    {v(lec.title)}
+                  <option key={lec.id} value={lec.id}>
+                    {lec.title}
                   </option>
                 ))}
               </select>
@@ -186,24 +225,22 @@ export default function DoctorMessages() {
                 </label>
                 <div className="space-y-2 max-h-40 overflow-y-auto border rounded p-2">
                   {students.map((student) => (
-                    <label key={v(student.id)} className="flex items-center">
+                    <label key={student.id} className="flex items-center">
                       <input
                         type="checkbox"
-                        checked={form.selected_students.includes(v(student.id))}
+                        checked={form.selected_students.includes(student.id)}
                         onChange={(e) => {
-                          const id = v(student.id);
+                          const id = student.id;
                           setForm({
                             ...form,
                             selected_students: e.target.checked
                               ? [...form.selected_students, id]
-                              : form.selected_students.filter(
-                                  (sid) => sid !== id,
-                                ),
+                              : form.selected_students.filter((sid) => sid !== id),
                           });
                         }}
                         className="mr-2"
                       />
-                      {v(student.name)}
+                      {student.name}
                     </label>
                   ))}
                 </div>
@@ -215,7 +252,7 @@ export default function DoctorMessages() {
               disabled={busy}
               className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
             >
-              {busy ? "Sending…" : "Send Message"}
+              {busy ? "Saving…" : "Send Message"}
             </button>
           </form>
         </div>
@@ -231,26 +268,31 @@ export default function DoctorMessages() {
             }
             searchPlaceholder="Search subject or body..."
             selects={[{ key: "status", label: "Status", options: statusOptions }]}
-            dateRange={{ key: "created_at" }}
+            dateRange={{ key: "sent_at" }}
             total={history.length}
             shown={filteredHistory.length}
           />
           <div className="space-y-3 max-h-96 overflow-y-auto">
             {filteredHistory.length > 0 ? (
-              filteredHistory.map((notif) => (
-                <div
-                  key={v(notif.id)}
-                  className="border-l-4 border-blue-400 pl-3 py-2"
-                >
-                  <div className="font-medium text-sm">{v(notif.subject)}</div>
-                  <div className="text-xs text-gray-600">
-                    {new Date(v(notif.created_at)).toLocaleString()}
+              filteredHistory.map((notif) => {
+                const sentAt = notif.sent_at?.toDate
+                  ? notif.sent_at.toDate().toLocaleString()
+                  : notif.sent_at
+                    ? new Date(notif.sent_at).toLocaleString()
+                    : "-";
+                return (
+                  <div
+                    key={notif.id}
+                    className="border-l-4 border-blue-400 pl-3 py-2"
+                  >
+                    <div className="font-medium text-sm">{notif.subject}</div>
+                    <div className="text-xs text-gray-600">{sentAt}</div>
+                    <div className="text-xs text-gray-500">
+                      Status: {notif.status}
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500">
-                    Status: {v(notif.status)}
-                  </div>
-                </div>
-              ))
+                );
+              })
             ) : (
               <div className="text-gray-500">
                 {history.length === 0

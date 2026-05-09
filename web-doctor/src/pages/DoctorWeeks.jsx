@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  addDoc,
+  updateDoc,
+  doc,
+  serverTimestamp,
+  query,
+  where,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 import FilterBar, { makeFilter } from "../components/FilterBar";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-};
 
 const weekFilter = makeFilter({
   search: { fields: ["title", "notes"] },
@@ -22,6 +26,7 @@ const weekFilter = makeFilter({
 });
 
 export default function DoctorWeeks() {
+  const { profile } = useAuth();
   const [rows, setRows] = useState([]);
   const [classes, setClasses] = useState([]);
   const [lectures, setLectures] = useState([]);
@@ -52,30 +57,74 @@ export default function DoctorWeeks() {
 
   async function loadAll() {
     try {
-      const [weeksRes, classesRes, lecturesRes] = await Promise.all([
-        api.get("/api/weeks"),
-        api.get("/api/classes"),
-        api.get("/api/lectures"),
-      ]);
-      setRows(
-        (Array.isArray(weeksRes.data) ? weeksRes.data : []).map(normalise),
-      );
-      setClasses(
-        (Array.isArray(classesRes.data) ? classesRes.data : []).map(normalise),
-      );
-      setLectures(
-        (Array.isArray(lecturesRes.data) ? lecturesRes.data : []).map(
-          normalise,
-        ),
-      );
+      const doctorId = profile?.linked_id;
+
+      // Load classes belonging to this doctor's subjects
+      let subjectIds = [];
+      if (doctorId) {
+        const subSnap = await getDocs(
+          query(collection(db, "subjects"), where("doctor_id", "==", doctorId))
+        );
+        subjectIds = subSnap.docs.map((d) => d.id);
+      }
+
+      let classRows = [];
+      if (subjectIds.length > 0) {
+        const chunks = [];
+        for (let i = 0; i < subjectIds.length; i += 30) {
+          chunks.push(subjectIds.slice(i, i + 30));
+        }
+        for (const chunk of chunks) {
+          const snap = await getDocs(
+            query(collection(db, "classes"), where("subject_id", "in", chunk))
+          );
+          classRows.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        }
+      } else if (!doctorId) {
+        const snap = await getDocs(collection(db, "classes"));
+        classRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      }
+
+      const classIds = classRows.map((c) => c.id);
+      let weekRows = [];
+      if (classIds.length > 0) {
+        const chunks = [];
+        for (let i = 0; i < classIds.length; i += 30) {
+          chunks.push(classIds.slice(i, i + 30));
+        }
+        for (const chunk of chunks) {
+          const snap = await getDocs(
+            query(collection(db, "weeks"), where("class_id", "in", chunk))
+          );
+          weekRows.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        }
+      } else if (!doctorId) {
+        const snap = await getDocs(collection(db, "weeks"));
+        weekRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      }
+
+      let lectureRows = [];
+      if (doctorId) {
+        const snap = await getDocs(
+          query(collection(db, "lectures"), where("doctor_id", "==", doctorId))
+        );
+        lectureRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      } else {
+        const snap = await getDocs(collection(db, "lectures"));
+        lectureRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      }
+
+      setRows(weekRows);
+      setClasses(classRows);
+      setLectures(lectureRows);
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
   useEffect(() => {
     loadAll();
-  }, []);
+  }, [profile]);
 
   function openCreate() {
     setForm({
@@ -95,7 +144,9 @@ export default function DoctorWeeks() {
       class_id: row.class_id || "",
       week_number: row.week_number || 1,
       title: row.title || "",
-      date: row.date || "",
+      date: row.date
+        ? (row.date?.toDate ? row.date.toDate().toISOString() : row.date)
+        : "",
       lecture_id: row.lecture_id || "",
       status: row.status || "planned",
       notes: row.notes || "",
@@ -116,9 +167,14 @@ export default function DoctorWeeks() {
         notes: form.notes,
       };
       if (modal === "create") {
-        await api.post("/api/weeks", payload);
+        await addDoc(collection(db, "weeks"), {
+          ...payload,
+          active: true,
+          created_by: profile?.uid || null,
+          created_at: serverTimestamp(),
+        });
       } else {
-        await api.put(`/api/weeks/${modal.row.id}`, {
+        await updateDoc(doc(db, "weeks", modal.row.id), {
           ...payload,
           active: !!form.active,
         });
@@ -126,17 +182,17 @@ export default function DoctorWeeks() {
       }
       await loadAll();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Soft-delete week ${row.week_number}?`)) return;
     try {
-      await api.delete(`/api/weeks/${row.id}`);
+      await updateDoc(doc(db, "weeks", row.id), { active: false });
       await loadAll();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -197,7 +253,9 @@ export default function DoctorWeeks() {
             key: "date",
             label: "Date",
             render: (r) =>
-              r.date ? new Date(r.date).toLocaleDateString() : "-",
+              r.date
+                ? (r.date?.toDate ? r.date.toDate() : new Date(r.date)).toLocaleDateString()
+                : "-",
           },
           {
             key: "lecture_id",
@@ -357,7 +415,7 @@ function Field({ label, value, onChange, type = "text" }) {
 
 function toDateOnly(v) {
   if (!v) return "";
-  const d = new Date(v);
+  const d = v?.toDate ? v.toDate() : new Date(v);
   if (Number.isNaN(d.getTime())) return "";
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;

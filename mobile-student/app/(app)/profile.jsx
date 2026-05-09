@@ -2,19 +2,54 @@ import React, { useEffect, useState } from "react";
 import { Alert, Text } from "react-native";
 import { router } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
-import { getMe } from "../../api";
-import { auth, signOutUser } from "../../firebase";
-import { Button, Card, Header, Screen, colors, styles } from "../../components/ui";
+import { getDoc, doc, updateDoc } from "firebase/firestore";
+import { auth, db, signOutUser } from "../../firebase";
+import { Button, Card, Header, Input, Screen, colors, styles } from "../../components/ui";
 
 export default function ProfileScreen() {
   const [user, setUser] = useState(auth.currentUser);
-  const [me, setMe] = useState(null);
+  const [studentId, setStudentId] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    getMe().then((data) => setMe(data)).catch(() => setMe(null));
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      if (!firebaseUser) return;
+      try {
+        const userSnap = await getDoc(doc(db, "users", firebaseUser.uid));
+        if (!userSnap.exists()) return;
+        const linked = userSnap.data().linked_id;
+        setStudentId(linked || null);
+        if (linked) {
+          const studentSnap = await getDoc(doc(db, "students", linked));
+          if (studentSnap.exists()) {
+            const data = studentSnap.data();
+            setProfile(data);
+            setEditName(data.name || "");
+          }
+        }
+      } catch {
+        // silently ignore
+      }
+    });
     return unsubscribe;
   }, []);
+
+  const saveName = async () => {
+    if (!studentId || !editName.trim()) return;
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "students", studentId), { name: editName.trim() });
+      setProfile((prev) => ({ ...prev, name: editName.trim() }));
+      Alert.alert("Saved", "Your name has been updated.");
+    } catch (error) {
+      Alert.alert("Save failed", error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const logout = async () => {
     try {
@@ -32,12 +67,30 @@ export default function ProfileScreen() {
         <Text style={styles.emptyTitle}>{user?.email || "Signed-in student"}</Text>
         <Text style={{ color: colors.muted, marginTop: 8 }}>UID: {user?.uid || "unknown"}</Text>
       </Card>
-      <Card>
-        <Text style={styles.emptyTitle}>Backend Identity</Text>
-        <Text style={{ color: colors.muted, marginTop: 8 }}>
-          {me ? JSON.stringify(me, null, 2) : "Identity endpoint is not available yet."}
-        </Text>
-      </Card>
+      {profile ? (
+        <Card>
+          <Text style={styles.emptyTitle}>Student Details</Text>
+          <Text style={{ color: colors.muted, marginTop: 8 }}>Name: {profile.name || "—"}</Text>
+          <Text style={{ color: colors.muted, marginTop: 4 }}>Email: {profile.email || "—"}</Text>
+          <Input
+            label="Update name"
+            value={editName}
+            onChangeText={setEditName}
+            editable={!saving}
+            style={{ marginTop: 12 }}
+          />
+          <Button
+            title={saving ? "Saving..." : "Save name"}
+            onPress={saveName}
+            disabled={saving}
+            variant="secondary"
+          />
+        </Card>
+      ) : (
+        <Card>
+          <Text style={{ color: colors.muted }}>Student profile not loaded yet.</Text>
+        </Card>
+      )}
       <Button title="Sign out" onPress={logout} variant="danger" />
     </Screen>
   );

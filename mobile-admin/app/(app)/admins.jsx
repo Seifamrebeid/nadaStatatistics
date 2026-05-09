@@ -9,7 +9,8 @@ import {
   RefreshControl,
 } from "react-native";
 import { useFocusEffect } from "expo-router";
-import { getAdmins } from "../../api";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../../firebase";
 import Screen from "../../components/Screen";
 import ScreenHeader from "../../components/ScreenHeader";
 import SearchBar from "../../components/SearchBar";
@@ -24,8 +25,9 @@ export default function AdminsScreen() {
 
   const fetchAdmins = useCallback(async () => {
     try {
-      const response = await getAdmins();
-      setAdmins(Array.isArray(response.data) ? response.data : []);
+      const snap = await getDocs(collection(db, "admins"));
+      const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setAdmins(data);
     } catch (error) {
       Alert.alert("Error", "Failed to fetch admins");
       console.error(error);
@@ -50,7 +52,7 @@ export default function AdminsScreen() {
     const q = search.trim().toLowerCase();
     if (!q) return admins;
     return admins.filter((a) => {
-      const hay = `${a.name || ""} ${a.email || ""} ${a.admin_id || a.id || ""}`.toLowerCase();
+      const hay = `${a.name || ""} ${a.email || ""} ${a.id || ""}`.toLowerCase();
       return hay.includes(q);
     });
   }, [admins, search]);
@@ -70,7 +72,7 @@ export default function AdminsScreen() {
       ) : (
         <FlatList
           data={filtered}
-          keyExtractor={(item) => String(item.admin_id || item.id)}
+          keyExtractor={(item) => String(item.id)}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand600} />
@@ -83,7 +85,7 @@ export default function AdminsScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.name} numberOfLines={1}>{item.name || "Unnamed"}</Text>
                 <Text style={styles.sub} numberOfLines={1}>{item.email || "—"}</Text>
-                <Text style={styles.id} numberOfLines={1}>ID: {item.admin_id || item.id}</Text>
+                <Text style={styles.id} numberOfLines={1}>ID: {item.id}</Text>
               </View>
             </View>
           )}

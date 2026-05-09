@@ -1,17 +1,57 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  doc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import {
+  ref,
+  uploadBytes,
+  getDownloadURL,
+} from "firebase/storage";
+import { initializeApp, deleteApp } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
+import { db, storage } from "../firebase";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
+const firebaseConfig = {
+  apiKey: "AIzaSyAqNZKRY002a7KWct5qQLhz0hBHzRIxpXo",
+  authDomain: "fridgechef-jt50c.firebaseapp.com",
+  projectId: "fridgechef-jt50c",
+  storageBucket: "fridgechef-jt50c.firebasestorage.app",
+  messagingSenderId: "975789258089",
+  appId: "1:975789258089:web:49f21ec3da6a11bce939f8",
 };
 
-// Filename convention: "<id>_<First>_<Middle>_<Last>.<ext>" — e.g.
-// "211014850_Marwan_Mohamed_Khalaf.jpg".
+async function createAuthUser(email, password) {
+  const appName = `secondary-${Date.now()}`;
+  const secondaryApp = initializeApp(firebaseConfig, appName);
+  const secondaryAuth = getAuth(secondaryApp);
+  try {
+    const { user } = await createUserWithEmailAndPassword(
+      secondaryAuth,
+      email,
+      password,
+    );
+    return user.uid;
+  } finally {
+    await deleteApp(secondaryApp);
+  }
+}
+
+function generatePassword() {
+  return (
+    Math.random().toString(36).slice(-6) +
+    Math.random().toString(36).slice(-6).toUpperCase()
+  );
+}
+
+// Filename convention: "<id>_<First>_<Middle>_<Last>.<ext>"
 function parseStudentFilename(filename) {
   const stem = filename.replace(/\.[^/.]+$/, "");
   const parts = stem.split("_").filter(Boolean);
@@ -26,18 +66,18 @@ export default function AdminStudents() {
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({});
   const [savedTempPw, setSavedTempPw] = useState(null);
-  const [bulk, setBulk] = useState(null); // { running, done, total, errors:[], results:[] }
-  const [parentModal, setParentModal] = useState(null); // { student, form, tempPw }
+  const [bulk, setBulk] = useState(null);
+  const [parentModal, setParentModal] = useState(null);
 
   async function load() {
     try {
-      const { data } = await api.get("/api/students");
-      const list = Array.isArray(data) ? data : [];
-      setRows(list.map(normalise));
+      const snap = await getDocs(collection(db, "students"));
+      setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
+
   useEffect(() => {
     load();
   }, []);
@@ -47,6 +87,7 @@ export default function AdminStudents() {
     setForm({ name: "", email: "", password: "" });
     setModal("create");
   }
+
   function openEdit(row) {
     setForm({
       name: row.name || "",
@@ -59,13 +100,22 @@ export default function AdminStudents() {
   async function save() {
     try {
       if (modal === "create") {
-        const payload = { name: form.name, email: form.email };
-        if (form.password) payload.password = form.password;
-        const { data } = await api.post("/api/students", payload);
-        const pw = v(data.temporary_password);
-        if (typeof pw === "string" && pw.length > 0) setSavedTempPw(pw);
+        const pw = form.password || generatePassword();
+        const uid = await createAuthUser(form.email, pw);
+        const newDocRef = await addDoc(collection(db, "students"), {
+          name: form.name,
+          email: form.email,
+          active: true,
+          created_at: serverTimestamp(),
+        });
+        await setDoc(doc(db, "users", uid), {
+          uid,
+          role: "student",
+          linked_id: newDocRef.id,
+        });
+        setSavedTempPw(pw);
       } else {
-        await api.put(`/api/students/${modal.row.id}`, {
+        await updateDoc(doc(db, "students", modal.row.id), {
           name: form.name,
           email: form.email,
           active: !!form.active,
@@ -74,17 +124,17 @@ export default function AdminStudents() {
       }
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Soft-delete student "${row.name}"?`)) return;
     try {
-      await api.delete(`/api/students/${row.id}`);
+      await updateDoc(doc(db, "students", row.id), { active: false });
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -96,33 +146,55 @@ export default function AdminStudents() {
       alert("No image files found in the selected folder.");
       return;
     }
-    const state = { running: true, done: 0, total: files.length, errors: [], results: [] };
-    setBulk(state);
+    const state = {
+      running: true,
+      done: 0,
+      total: files.length,
+      errors: [],
+      results: [],
+    };
+    setBulk({ ...state });
     for (const file of files) {
       const parsed = parseStudentFilename(file.name);
       if (!parsed) {
-        state.errors.push({ file: file.name, error: "filename does not match <id>_<name>.<ext>" });
+        state.errors.push({
+          file: file.name,
+          error: "filename does not match <id>_<name>.<ext>",
+        });
         state.done += 1;
         setBulk({ ...state });
         continue;
       }
       try {
         const email = `${parsed.id}@students.local`;
-        const { data } = await api.post("/api/students", {
+        const pw = generatePassword();
+        const uid = await createAuthUser(email, pw);
+        const newDocRef = await addDoc(collection(db, "students"), {
           name: parsed.name,
           email,
-          student_id: parsed.id,
+          active: true,
+          created_at: serverTimestamp(),
         });
-        const studentId = v(data.student_id) || parsed.id;
-        const fd = new FormData();
-        fd.append("file", file);
-        await api.post(`/api/students/${studentId}/face`, fd);
-        state.results.push({ file: file.name, id: studentId, name: parsed.name });
-      } catch (e) {
-        state.errors.push({
+        const studentId = newDocRef.id;
+        await setDoc(doc(db, "users", uid), {
+          uid,
+          role: "student",
+          linked_id: studentId,
+        });
+        // Upload face photo
+        const storageRef = ref(storage, `students/${studentId}/face.jpg`);
+        await uploadBytes(storageRef, file);
+        const url = await getDownloadURL(storageRef);
+        await updateDoc(doc(db, "students", studentId), {
+          face_photo_url: url,
+        });
+        state.results.push({
           file: file.name,
-          error: e.response?.data?.error || e.message,
+          id: studentId,
+          name: parsed.name,
         });
+      } catch (e) {
+        state.errors.push({ file: file.name, error: e.message });
       }
       state.done += 1;
       setBulk({ ...state });
@@ -134,13 +206,14 @@ export default function AdminStudents() {
 
   async function uploadFace(row, file) {
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      await api.post(`/api/students/${row.id}/face`, fd);
+      const storageRef = ref(storage, `students/${row.id}/face.jpg`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      await updateDoc(doc(db, "students", row.id), { face_photo_url: url });
       alert(`Enrolled ${row.name}'s face successfully`);
       await load();
     } catch (e) {
-      alert(`Enrollment failed: ${e.response?.data?.error || e.message}`);
+      alert(`Enrollment failed: ${e.message}`);
     }
   }
 
@@ -157,7 +230,7 @@ export default function AdminStudents() {
       key: "enrolled",
       label: "Face",
       render: (r) =>
-        r.face_enrolled_at || r.face_encoding ? "enrolled" : "not enrolled",
+        r.face_photo_url || r.face_encoding ? "enrolled" : "not enrolled",
     },
   ];
 
@@ -173,27 +246,25 @@ export default function AdminStudents() {
     if (!parentModal) return;
     const { student, form: pf } = parentModal;
     try {
-      const payload = {
+      const pw = pf.password || generatePassword();
+      const uid = await createAuthUser(pf.email, pw);
+      const newDocRef = await addDoc(collection(db, "parents"), {
         name: pf.name,
         email: pf.email,
-        relationship: pf.relationship || undefined,
+        relationship: pf.relationship || "",
         linked_student_ids: [student.id],
-      };
-      if (pf.password) payload.password = pf.password;
-      const { data } = await api.post("/api/parents", payload);
-      const pw = v(data.temporary_password);
-      if (typeof pw === "string" && pw.length > 0) {
-        setParentModal({ ...parentModal, tempPw: pw });
-      } else {
-        setParentModal(null);
-      }
+        active: true,
+        created_at: serverTimestamp(),
+      });
+      await setDoc(doc(db, "users", uid), {
+        uid,
+        role: "parent",
+        linked_id: newDocRef.id,
+      });
+      setParentModal({ ...parentModal, tempPw: pw });
       await load();
     } catch (e) {
-      const detail =
-        e.response?.data?.error ||
-        (typeof e.response?.data === "string" ? e.response.data : null) ||
-        e.message;
-      alert(`Failed to create parent: ${detail}`);
+      alert(`Failed to create parent: ${e.message}`);
     }
   }
 
@@ -223,10 +294,7 @@ export default function AdminStudents() {
       >
         Edit
       </button>
-      <button
-        onClick={() => remove(r)}
-        className="text-red-600 hover:underline"
-      >
+      <button onClick={() => remove(r)} className="text-red-600 hover:underline">
         Delete
       </button>
     </div>
@@ -252,10 +320,7 @@ export default function AdminStudents() {
               }}
             />
           </label>
-          <button
-            onClick={openCreate}
-            className="btn-primary"
-          >
+          <button onClick={openCreate} className="btn-primary">
             + New student
           </button>
         </div>
@@ -313,16 +378,10 @@ export default function AdminStudents() {
         title="Create student"
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Create
             </button>
           </>
@@ -343,16 +402,10 @@ export default function AdminStudents() {
         title={`Edit ${modal?.row?.name || ""}`}
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Save
             </button>
           </>

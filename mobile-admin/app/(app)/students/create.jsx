@@ -10,11 +10,43 @@ import {
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { createStudent } from "../../../api";
+import { initializeApp, deleteApp } from "firebase/app";
+import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
+import { collection, doc, setDoc, addDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "../../../firebase";
 import Screen from "../../../components/Screen";
 import ScreenHeader from "../../../components/ScreenHeader";
 import Button from "../../../components/Button";
 import { colors, radii, shadow, spacing } from "../../../components/theme";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyAqNZKRY002a7KWct5qQLhz0hBHzRIxpXo",
+  authDomain: "fridgechef-jt50c.firebaseapp.com",
+  projectId: "fridgechef-jt50c",
+  storageBucket: "fridgechef-jt50c.firebasestorage.app",
+  messagingSenderId: "975789258089",
+  appId: "1:975789258089:web:49f21ec3da6a11bce939f8",
+};
+
+async function createAuthUser(email, password) {
+  const secondaryApp = initializeApp(firebaseConfig, `secondary-${Date.now()}`);
+  const secondaryAuth = getAuth(secondaryApp);
+  try {
+    const { user } = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    return user.uid;
+  } finally {
+    await deleteApp(secondaryApp);
+  }
+}
+
+function generatePassword() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$";
+  let pass = "";
+  for (let i = 0; i < 12; i++) {
+    pass += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return pass;
+}
 
 export default function CreateStudentScreen() {
   const router = useRouter();
@@ -28,15 +60,34 @@ export default function CreateStudentScreen() {
     }
     setLoading(true);
     try {
-      const response = await createStudent(form);
-      const tmp = response.data?.temporary_password;
+      const password = generatePassword();
+
+      // 1. Create Firestore student document
+      const studentRef = await addDoc(collection(db, "students"), {
+        name: form.name,
+        email: form.email,
+        active: true,
+        face_photo_url: null,
+        created_at: serverTimestamp(),
+      });
+
+      // 2. Create Firebase Auth user via secondary app (won't sign out current admin)
+      const uid = await createAuthUser(form.email, password);
+
+      // 3. Write users/{uid} mapping
+      await setDoc(doc(db, "users", uid), {
+        uid,
+        role: "student",
+        linked_id: studentRef.id,
+      });
+
       Alert.alert(
         "Student created",
-        tmp ? `Temporary password:\n${tmp}` : "Account created.",
+        `Temporary password:\n${password}`,
         [{ text: "OK", onPress: () => router.back() }],
       );
     } catch (error) {
-      Alert.alert("Error", error.response?.data?.message || error.message);
+      Alert.alert("Error", error.message);
     } finally {
       setLoading(false);
     }

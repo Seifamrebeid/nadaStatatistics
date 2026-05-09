@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import {
   BarChart,
   Bar,
@@ -7,58 +14,141 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
 } from "recharts";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
-// Normalise Plumber's column-oriented payloads {colA: [...], colB: [...]} into
-// row-oriented [{colA: x, colB: y}, ...] for Recharts.
-function columnsToRows(obj) {
-  if (!obj) return [];
-  const keys = Object.keys(obj).filter((k) => Array.isArray(obj[k]));
-  if (keys.length === 0) return [];
-  const n = obj[keys[0]].length;
-  return Array.from({ length: n }, (_, i) => {
-    const row = {};
-    for (const k of keys) row[k] = obj[k][i];
-    return row;
-  });
+function average(values) {
+  const nums = values.filter((n) => Number.isFinite(n));
+  if (nums.length === 0) return 0;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
 }
 
 export default function AdminAnalytics() {
+  const { profile } = useAuth();
   const [engagement, setEngagement] = useState([]);
   const [sleep, setSleep] = useState([]);
   const [gestures, setGestures] = useState([]);
+  const [allEmotions, setAllEmotions] = useState([]);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/analytics/engagement"),
-      api.get("/api/analytics/sleep"),
-      api.get("/api/analytics/gestures"),
-    ])
-      .then(([e, s, g]) => {
-        setEngagement(columnsToRows(e.data));
-        setSleep(columnsToRows(s.data));
-        setGestures(columnsToRows(g.data));
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
-  }, []);
+    const fetchAll = async () => {
+      try {
+        const doctorId = profile?.linked_id;
 
-  async function download(path, filename) {
-    try {
-      const { data } = await api.get(path, { responseType: "blob" });
-      const url = URL.createObjectURL(data);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      alert(e.message);
-    }
+        let lecturesSnap;
+        if (doctorId) {
+          lecturesSnap = await getDocs(
+            query(collection(db, "lectures"), where("doctor_id", "==", doctorId))
+          );
+        } else {
+          lecturesSnap = await getDocs(collection(db, "lectures"));
+        }
+        const lectureIds = lecturesSnap.docs.map((d) => d.id);
+
+        let emotions = [];
+        if (lectureIds.length > 0) {
+          const chunks = [];
+          for (let i = 0; i < lectureIds.length; i += 30) {
+            chunks.push(lectureIds.slice(i, i + 30));
+          }
+          for (const chunk of chunks) {
+            const snap = await getDocs(
+              query(collection(db, "emotions"), where("lecture_id", "in", chunk))
+            );
+            emotions.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+          }
+        }
+
+        setAllEmotions(emotions);
+
+        // Engagement per lecture
+        const byLecture = {};
+        emotions.forEach((e) => {
+          if (!byLecture[e.lecture_id]) byLecture[e.lecture_id] = [];
+          byLecture[e.lecture_id].push(Number(e.engagement_score || 0));
+        });
+        setEngagement(
+          Object.entries(byLecture).map(([lecture_id, scores]) => ({
+            lecture_id,
+            mean_engagement: Number(average(scores).toFixed(3)),
+          }))
+        );
+
+        // Sleep rate per lecture
+        const sleepByLecture = {};
+        const totalByLecture = {};
+        emotions.forEach((e) => {
+          if (!totalByLecture[e.lecture_id]) {
+            totalByLecture[e.lecture_id] = 0;
+            sleepByLecture[e.lecture_id] = 0;
+          }
+          totalByLecture[e.lecture_id]++;
+          if (e.state === "sleeping") sleepByLecture[e.lecture_id]++;
+        });
+        setSleep(
+          Object.entries(totalByLecture).map(([lecture_id, total]) => ({
+            lecture_id,
+            sleep_rate: Number((sleepByLecture[lecture_id] / total).toFixed(3)),
+          }))
+        );
+
+        // Gestures
+        const gestureCounts = {};
+        emotions.forEach((e) => {
+          const g = e.gesture || "";
+          if (g && g !== "none") {
+            gestureCounts[g] = (gestureCounts[g] || 0) + 1;
+          }
+        });
+        setGestures(
+          Object.entries(gestureCounts).map(([gesture, count]) => ({ gesture, count }))
+        );
+      } catch (e) {
+        setErr(e.message);
+      }
+    };
+    fetchAll();
+  }, [profile]);
+
+  function downloadCSV() {
+    if (!allEmotions.length) return;
+    const headers = ["student_id", "lecture_id", "timestamp", "emotion", "state", "engagement_score", "gesture", "sleep_reason"];
+    const rows = allEmotions.map((e) => {
+      const ts = e.timestamp?.toDate
+        ? e.timestamp.toDate().toISOString()
+        : e.timestamp || "";
+      return [
+        e.student_id || "",
+        e.lecture_id || "",
+        ts,
+        e.emotion || "",
+        e.state || "",
+        e.engagement_score ?? "",
+        e.gesture || "",
+        e.sleep_reason || "",
+      ].join(",");
+    });
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "emotions.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadEngagementCSV() {
+    if (!engagement.length) return;
+    const rows = engagement.map((r) => `${r.lecture_id},${r.mean_engagement}`);
+    const csv = ["lecture_id,mean_engagement", ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "engagement.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   return (
@@ -72,34 +162,16 @@ export default function AdminAnalytics() {
 
       <div className="flex flex-wrap gap-2 mb-6">
         <button
-          onClick={() => download("/api/exports/emotions.csv", "emotions.csv")}
+          onClick={downloadCSV}
           className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
         >
           Export emotions (CSV)
         </button>
         <button
-          onClick={() =>
-            download("/api/exports/emotions.xlsx", "emotions.xlsx")
-          }
-          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
-        >
-          Export emotions (Excel)
-        </button>
-        <button
-          onClick={() =>
-            download("/api/exports/engagement.csv", "engagement.csv")
-          }
+          onClick={downloadEngagementCSV}
           className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
         >
           Export engagement (CSV)
-        </button>
-        <button
-          onClick={() =>
-            download("/api/exports/attendance.csv", "attendance.csv")
-          }
-          className="px-3 py-1.5 bg-white border rounded shadow-sm hover:bg-slate-50"
-        >
-          Export attendance (CSV)
         </button>
       </div>
 
@@ -159,6 +231,7 @@ function Section({ title, children }) {
     </div>
   );
 }
+
 function Empty() {
   return (
     <div className="text-slate-500 text-sm">

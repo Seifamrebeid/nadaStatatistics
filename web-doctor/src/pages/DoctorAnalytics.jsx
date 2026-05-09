@@ -1,317 +1,313 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
+import { RefreshCw, Download } from "lucide-react";
 import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
+  LineChart, Line, BarChart, Bar,
+  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
-import FilterBar, { makeFilter } from "../components/FilterBar";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-};
-
-const lectureFilter = makeFilter({
-  search: { fields: ["title", "id"] },
-  selects: [{ key: "status", field: "status" }],
-  dateRange: { key: "scheduled_at" },
-});
 
 export default function DoctorAnalytics() {
-  const [lectures, setLectures] = useState([]);
-  const [selectedLecture, setSelectedLecture] = useState(null);
-  const [engagementData, setEngagementData] = useState([]);
-  const [sleepData, setSleepData] = useState([]);
-  const [gestureData, setGestureData] = useState([]);
-  const [err, setErr] = useState(null);
-  const [filters, setFilters] = useState({
-    search: "",
-    status: "",
-    dateFrom: "",
-    dateTo: "",
-  });
-  const [studentFilter, setStudentFilter] = useState("");
-  const [stateFilter, setStateFilter] = useState("");
+  const { profile } = useAuth();
+  const doctorId = profile?.linked_id;
 
-  const filteredLectures = useMemo(
-    () => lectures.filter(lectureFilter(filters)),
-    [lectures, filters],
+  const [subjects,  setSubjects]  = useState([]);
+  const [classes,   setClasses]   = useState([]);
+  const [weeks,     setWeeks]     = useState([]);
+  const [lectures,  setLectures]  = useState([]);
+  const [emotions,  setEmotions]  = useState([]);
+  const [loading,   setLoading]   = useState(false);
+  const [loadingEm, setLoadingEm] = useState(false);
+  const [err,       setErr]       = useState(null);
+
+  // selections
+  const [selSubject, setSelSubject] = useState("");
+  const [selClass,   setSelClass]   = useState("");
+  const [selWeek,    setSelWeek]    = useState(null); // week_number (int)
+  const [selStudent, setSelStudent] = useState("");
+
+  // ── load base data ────────────────────────────────────────────────────────
+  async function loadBase() {
+    setLoading(true); setErr(null);
+    try {
+      const [subjSnap, clsSnap, wkSnap, lecSnap] = await Promise.all([
+        doctorId
+          ? getDocs(query(collection(db, "subjects"), where("doctor_id", "==", doctorId)))
+          : getDocs(collection(db, "subjects")),
+        getDocs(collection(db, "classes")),
+        getDocs(collection(db, "weeks")),
+        doctorId
+          ? getDocs(query(collection(db, "lectures"), where("doctor_id", "==", doctorId)))
+          : getDocs(collection(db, "lectures")),
+      ]);
+      const subjList = subjSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setSubjects(subjList);
+      setClasses(clsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setWeeks(wkSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setLectures(lecSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+      // auto-select first subject
+      if (subjList.length > 0 && !selSubject) {
+        setSelSubject(subjList[0].id);
+      }
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadBase(); }, [doctorId]);
+
+  // ── cascade: classes for selected subject ─────────────────────────────────
+  const subjectClasses = useMemo(
+    () => classes.filter((c) => c.subject_id === selSubject),
+    [classes, selSubject],
   );
 
-  // Keep selectedLecture in sync with the visible (filtered) list.
+  // auto-select first class when subject changes
   useEffect(() => {
-    if (filteredLectures.length === 0) {
-      setSelectedLecture(null);
-      return;
+    if (subjectClasses.length > 0) {
+      setSelClass(subjectClasses[0].id);
+    } else {
+      setSelClass("");
     }
-    if (!filteredLectures.some((l) => l.id === selectedLecture)) {
-      setSelectedLecture(filteredLectures[0].id);
-    }
-  }, [filteredLectures, selectedLecture]);
+    setSelWeek(null);
+    setEmotions([]);
+  }, [selSubject]);
 
+  // ── week numbers for selected class ───────────────────────────────────────
+  const weekNumbers = useMemo(() => {
+    const classWeeks = weeks.filter((w) => w.class_id === selClass);
+    const nums = [...new Set(classWeeks.map((w) => w.week_number).filter(Boolean))];
+    return nums.sort((a, b) => a - b);
+  }, [weeks, selClass]);
+
+  // reset week when class changes
   useEffect(() => {
-    const fetchLectures = async () => {
-      try {
-        const res = await api.get("/api/lectures");
-        const lectureList = (Array.isArray(res.data) ? res.data : []).map(
-          normalise,
-        );
-        setLectures(lectureList);
-        if (lectureList.length > 0) {
-          setSelectedLecture(lectureList[0].id);
-        }
-      } catch (error) {
-        console.error("Error fetching lectures:", error);
-        setErr(error.response?.data?.error || error.message);
-      }
-    };
+    setSelWeek(null);
+    setEmotions([]);
+  }, [selClass]);
 
-    fetchLectures();
-  }, []);
+  // ── find lecture for selected subject + class + week ──────────────────────
+  const activeLecture = useMemo(() => {
+    if (!selSubject || !selClass || !selWeek) return null;
+    return lectures.find(
+      (l) => l.subject_id === selSubject && l.class_id === selClass && l.week_number === selWeek,
+    ) || null;
+  }, [lectures, selSubject, selClass, selWeek]);
 
-  const [allEmotions, setAllEmotions] = useState([]);
-
+  // ── load emotions when lecture changes ────────────────────────────────────
   useEffect(() => {
-    if (!selectedLecture) {
-      setAllEmotions([]);
-      return;
-    }
+    if (!activeLecture) { setEmotions([]); return; }
+    setLoadingEm(true);
+    getDocs(query(collection(db, "emotions"), where("lecture_id", "==", activeLecture.id)))
+      .then((snap) => setEmotions(snap.docs.map((d) => ({ id: d.id, ...d.data() }))))
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoadingEm(false));
+  }, [activeLecture?.id]);
 
-    const fetchAnalytics = async () => {
-      try {
-        const { data } = await api.get("/api/emotions", {
-          params: { lecture_id: selectedLecture },
-        });
-        setAllEmotions((Array.isArray(data) ? data : []).map(normalise));
-      } catch (error) {
-        console.error("Error fetching analytics:", error);
-        setErr(error.response?.data?.error || error.message);
-      }
-    };
-
-    fetchAnalytics();
-  }, [selectedLecture]);
-
+  // ── derived analytics ─────────────────────────────────────────────────────
   const studentOptions = useMemo(() => {
-    const s = new Set();
-    for (const r of allEmotions) if (r.student_id) s.add(String(r.student_id));
-    return Array.from(s).sort().map((id) => ({ value: id, label: id }));
-  }, [allEmotions]);
+    const ids = [...new Set(emotions.map((e) => e.student_id).filter(Boolean))];
+    return ids.sort();
+  }, [emotions]);
 
-  useEffect(() => {
-    const rows = allEmotions.filter((row) => {
-      if (studentFilter && String(row.student_id) !== studentFilter) return false;
-      if (stateFilter && String(row.state || "") !== stateFilter) return false;
-      return true;
-    });
+  const filtered = useMemo(
+    () => selStudent ? emotions.filter((e) => e.student_id === selStudent) : emotions,
+    [emotions, selStudent],
+  );
 
-    try {
-      const byTime = new Map();
-        const bySleepReason = new Map();
-        const byGesture = new Map();
-
-        for (const row of rows) {
-          const ts = row.timestamp
-            ? new Date(row.timestamp).toLocaleTimeString()
-            : "unknown";
-          const current = byTime.get(ts) || { timestamp: ts, total: 0, sum: 0 };
-          current.total += 1;
-          current.sum += Number(row.engagement_score || 0);
-          byTime.set(ts, current);
-
-          const reason =
-            row.state === "sleeping" ? row.sleep_reason || "sleeping" : "awake";
-          bySleepReason.set(reason, (bySleepReason.get(reason) || 0) + 1);
-
-          const g = row.gesture || "none";
-          if (g !== "none") byGesture.set(g, (byGesture.get(g) || 0) + 1);
-        }
-
-        setEngagementData(
-          Array.from(byTime.values())
-            .map((r) => ({
-              timestamp: r.timestamp,
-              engagement_score: Number((r.sum / r.total).toFixed(3)),
-            }))
-            .slice(-25),
-        );
-        setSleepData(
-          Array.from(bySleepReason.entries()).map(([sleep_reason, count]) => ({
-            sleep_reason,
-            count,
-          })),
-        );
-        setGestureData(
-          Array.from(byGesture.entries()).map(([gesture, count]) => ({
-            gesture,
-            count,
-          })),
-        );
-    } catch (error) {
-      console.error("Error processing analytics:", error);
-      setErr(error.response?.data?.error || error.message);
+  const engagementData = useMemo(() => {
+    const byTime = new Map();
+    for (const row of filtered) {
+      const ts = row.timestamp
+        ? (row.timestamp?.toDate ? row.timestamp.toDate() : new Date(row.timestamp)).toLocaleTimeString()
+        : "—";
+      const cur = byTime.get(ts) || { t: ts, sum: 0, n: 0 };
+      cur.sum += Number(row.engagement_score || 0);
+      cur.n += 1;
+      byTime.set(ts, cur);
     }
-  }, [allEmotions, studentFilter, stateFilter]);
+    return Array.from(byTime.values())
+      .map((r) => ({ time: r.t, score: +(r.sum / r.n).toFixed(2) }))
+      .slice(-30);
+  }, [filtered]);
+
+  const sleepData = useMemo(() => {
+    const m = new Map();
+    for (const r of filtered) {
+      const k = r.state === "sleeping" ? (r.sleep_reason || "sleeping") : "awake";
+      m.set(k, (m.get(k) || 0) + 1);
+    }
+    return Array.from(m.entries()).map(([reason, count]) => ({ reason, count }));
+  }, [filtered]);
+
+  const gestureData = useMemo(() => {
+    const m = new Map();
+    for (const r of filtered) {
+      const g = r.gesture;
+      if (g && g !== "none") m.set(g, (m.get(g) || 0) + 1);
+    }
+    return Array.from(m.entries()).map(([gesture, count]) => ({ gesture, count }));
+  }, [filtered]);
+
+  // ── csv download ──────────────────────────────────────────────────────────
+  function downloadCSV() {
+    if (!emotions.length) return;
+    const headers = ["student_id","lecture_id","timestamp","emotion","state","engagement_score","gesture","sleep_reason"];
+    const rows = emotions.map((e) => {
+      const ts = e.timestamp?.toDate ? e.timestamp.toDate().toISOString() : (e.timestamp || "");
+      return [e.student_id||"",e.lecture_id||"",ts,e.emotion||"",e.state||"",e.engagement_score??"",e.gesture||"",e.sleep_reason||""].join(",");
+    });
+    const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `week${selWeek}.csv` });
+    a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  const selSubjectName = subjects.find((s) => s.id === selSubject)?.name || "";
+  const selClassName   = classes.find((c) => c.id === selClass)?.name || "";
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Analytics</h1>
-
-      {err && <div className="text-red-600 p-4 bg-red-50 rounded">{err}</div>}
-
-      <FilterBar
-        value={filters}
-        onChange={setFilters}
-        onReset={() => setFilters({ search: "", status: "", dateFrom: "", dateTo: "" })}
-        searchPlaceholder="Search lecture title..."
-        selects={[
-          {
-            key: "status",
-            label: "Lecture status",
-            options: ["scheduled", "recording", "finished"],
-          },
-        ]}
-        dateRange={{ key: "scheduled_at" }}
-        total={lectures.length}
-        shown={filteredLectures.length}
-      />
-
-      <div className="bg-white rounded-lg shadow p-3 flex flex-wrap items-end gap-3">
-        <label className="flex-1 min-w-[220px]">
-          <span className="text-xs text-slate-500 block mb-1">Lecture</span>
-          <select
-            value={selectedLecture || ""}
-            onChange={(e) => setSelectedLecture(e.target.value)}
-            className="w-full border rounded px-3 py-2 text-sm"
-          >
-            {filteredLectures.length === 0 && (
-              <option value="">No lectures match filters</option>
+    <div className="space-y-5">
+      {/* header + subject/class selectors */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">Analytics</h1>
+            {selSubjectName && (
+              <p className="mt-1 text-sm text-slate-500">{selSubjectName}{selClassName ? ` — ${selClassName}` : ""}</p>
             )}
-            {filteredLectures.map((lec) => (
-              <option key={lec.id} value={lec.id}>
-                {lec.title || lec.id} (
-                {lec.scheduled_at
-                  ? new Date(lec.scheduled_at).toLocaleDateString()
-                  : "n/a"}
-                )
-              </option>
-            ))}
+          </div>
+          <button onClick={loadBase} disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-3">
+          <select value={selSubject} onChange={(e) => setSelSubject(e.target.value)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+            <option value="">Select subject</option>
+            {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-        </label>
-        <label className="min-w-[160px]">
-          <span className="text-xs text-slate-500 block mb-1">Student</span>
-          <select
-            value={studentFilter}
-            onChange={(e) => setStudentFilter(e.target.value)}
-            className="w-full border rounded px-3 py-2 text-sm bg-white"
-          >
-            <option value="">All students</option>
-            {studentOptions.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
+          <select value={selClass} onChange={(e) => setSelClass(e.target.value)}
+            disabled={!selSubject}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-400">
+            <option value="">Select class</option>
+            {subjectClasses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-        </label>
-        <label className="min-w-[140px]">
-          <span className="text-xs text-slate-500 block mb-1">State</span>
-          <select
-            value={stateFilter}
-            onChange={(e) => setStateFilter(e.target.value)}
-            className="w-full border rounded px-3 py-2 text-sm bg-white"
-          >
-            <option value="">All</option>
-            <option value="awake">awake</option>
-            <option value="sleeping">sleeping</option>
-          </select>
-        </label>
+          {studentOptions.length > 0 && (
+            <select value={selStudent} onChange={(e) => setSelStudent(e.target.value)}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm">
+              <option value="">All students</option>
+              {studentOptions.map((id) => <option key={id} value={id}>{id}</option>)}
+            </select>
+          )}
+        </div>
+
+        {err && <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900">{err}</div>}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {engagementData.length > 0 && (
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-lg font-semibold mb-4">Engagement Over Time</h2>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={engagementData}>
-                <XAxis dataKey="timestamp" />
-                <YAxis />
-                <Tooltip />
-                <Line
-                  type="monotone"
-                  dataKey="engagement_score"
-                  stroke="#3b82f6"
-                />
-              </LineChart>
-            </ResponsiveContainer>
+      {/* week number selector */}
+      {selClass && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Week</p>
+          <div className="flex flex-wrap gap-2">
+            {weekNumbers.map((n) => (
+              <button
+                key={n}
+                onClick={() => setSelWeek(n)}
+                className={`h-9 w-9 rounded-lg text-sm font-semibold transition-colors
+                  ${selWeek === n
+                    ? "bg-brand-600 text-white"
+                    : "border border-slate-300 text-slate-700 hover:bg-slate-50"}`}
+              >
+                {n}
+              </button>
+            ))}
           </div>
-        )}
-
-        {sleepData.length > 0 && (
-          <div className="bg-white p-6 rounded-lg shadow">
-            <h2 className="text-lg font-semibold mb-4">Sleep Rate by Reason</h2>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={sleepData}>
-                <XAxis dataKey="sleep_reason" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="count" fill="#ef4444" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </div>
-
-      {gestureData.length > 0 && (
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h2 className="text-lg font-semibold mb-4">
-            Gesture Events Timeline
-          </h2>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={gestureData}>
-              <XAxis dataKey="gesture" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="count" fill="#10b981" />
-            </BarChart>
-          </ResponsiveContainer>
+          {selWeek && !activeLecture && !loadingEm && (
+            <p className="mt-3 text-sm text-slate-500">No lecture recorded for Week {selWeek} yet.</p>
+          )}
         </div>
       )}
 
-      <div className="space-y-2">
-        <button
-          onClick={() => {
-            const link = document.createElement("a");
-            link.href = `/api/exports/emotions.csv?lecture_id=${selectedLecture}`;
-            link.download = `lecture_${selectedLecture}.csv`;
-            link.click();
-          }}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-        >
-          Download CSV
-        </button>
-        <button
-          onClick={() => {
-            const link = document.createElement("a");
-            link.href = `/api/exports/emotions.xlsx?lecture_id=${selectedLecture}`;
-            link.download = `lecture_${selectedLecture}.xlsx`;
-            link.click();
-          }}
-          className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 ml-2"
-        >
-          Download Excel
-        </button>
-      </div>
+      {/* charts */}
+      {loadingEm && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
+          Loading data…
+        </div>
+      )}
+
+      {!loadingEm && activeLecture && emotions.length === 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
+          No emotion data recorded for this lecture yet.
+        </div>
+      )}
+
+      {!loadingEm && emotions.length > 0 && (
+        <>
+          <div className="grid gap-5 lg:grid-cols-2">
+            {engagementData.length > 0 && (
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 className="mb-4 text-base font-semibold text-slate-900">Engagement Over Time</h2>
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={engagementData}>
+                    <XAxis dataKey="time" tick={{ fontSize: 11 }} />
+                    <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="score" stroke="#3b82f6" dot={false} strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {sleepData.length > 0 && (
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 className="mb-4 text-base font-semibold text-slate-900">Attention State</h2>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={sleepData}>
+                    <XAxis dataKey="reason" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#ef4444" radius={[4,4,0,0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {gestureData.length > 0 && (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 text-base font-semibold text-slate-900">Gestures</h2>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={gestureData}>
+                  <XAxis dataKey="gesture" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#10b981" radius={[4,4,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          <div>
+            <button onClick={downloadCSV}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+              <Download className="h-4 w-4" />
+              Download CSV
+            </button>
+          </div>
+        </>
+      )}
+
+      {!selClass && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
+          Select a subject and class to view analytics.
+        </div>
+      )}
     </div>
   );
 }

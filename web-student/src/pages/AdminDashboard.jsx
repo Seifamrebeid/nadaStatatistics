@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "../firebase";
 import StatCard from "../components/StatCard";
 import {
   BarChart,
@@ -10,81 +11,85 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// Plumber wraps scalars as length-1 arrays; unwrap for display.
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
   const [lectureSeries, setLectureSeries] = useState([]);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    Promise.all([
-      api.get("/api/lectures"),
-      api.get("/api/analytics/engagement"),
-      api.get("/api/analytics/sleep"),
-      api.get("/api/notifications"),
-    ])
-      .then(([lecturesRes, engagementRes, sleepRes, notificationsRes]) => {
-        const lectures = Array.isArray(lecturesRes.data)
-          ? lecturesRes.data
-          : [];
-        const engagement = columnsToRows(engagementRes.data);
-        const sleep = columnsToRows(sleepRes.data);
-        const notifications = Array.isArray(notificationsRes.data)
-          ? notificationsRes.data
-          : [];
+    const fetchStats = async () => {
+      try {
+        const [lectureSnap, emotionSnap] = await Promise.all([
+          getDocs(collection(db, "lectures")),
+          getDocs(collection(db, "emotions")),
+        ]);
 
-        const engagementMean = average(
-          engagement.map((r) => Number(r.mean_engagement)),
-        );
-        const sleepRate = average(sleep.map((r) => Number(r.sleep_rate)));
+        const lectures = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const emotions = emotionSnap.docs.map((d) => d.data());
+
+        // Compute engagement per lecture
+        const byLecture = {};
+        emotions.forEach((e) => {
+          if (!byLecture[e.lecture_id]) byLecture[e.lecture_id] = { scores: [], yawning: 0, total: 0 };
+          byLecture[e.lecture_id].scores.push(e.engagement_score || 0);
+          byLecture[e.lecture_id].total += 1;
+          if (e.yawning) byLecture[e.lecture_id].yawning += 1;
+        });
+
+        const engagementRows = Object.entries(byLecture).map(([lid, d]) => ({
+          lecture_id: lid,
+          mean_engagement: d.scores.reduce((a, b) => a + b, 0) / d.scores.length,
+        }));
+
+        const allScores = emotions.map((e) => e.engagement_score || 0);
+        const meanEngagement =
+          allScores.length > 0
+            ? allScores.reduce((a, b) => a + b, 0) / allScores.length
+            : 0;
+
+        const totalYawning = emotions.filter((e) => e.yawning).length;
+        const sleepRate = emotions.length > 0 ? totalYawning / emotions.length : 0;
 
         setStats({
           total_lectures: lectures.length,
-          finished_lectures: lectures.filter((l) => v(l.status) === "finished")
-            .length,
-          scheduled_lectures: lectures.filter(
-            (l) => v(l.status) === "scheduled",
-          ).length,
-          notifications_sent: notifications.length,
-          mean_engagement: engagementMean,
+          finished_lectures: lectures.filter((l) => l.status === "finished").length,
+          scheduled_lectures: lectures.filter((l) => l.status === "scheduled").length,
+          mean_engagement: meanEngagement,
           sleep_rate: sleepRate,
         });
-        setLectureSeries(engagement);
-      })
-      .catch((e) => setErr(e.response?.data?.error || e.message));
+        setLectureSeries(engagementRows);
+      } catch (e) {
+        setErr(e.message);
+      }
+    };
+
+    fetchStats();
   }, []);
 
   if (err)
     return <div className="text-red-600">Failed to load stats: {err}</div>;
   if (!stats) return <div className="text-slate-500">Loading…</div>;
 
-  const sleepPct = (Number(v(stats.sleep_rate)) * 100).toFixed(1);
-  const meanEng = Number(v(stats.mean_engagement)).toFixed(2);
+  const sleepPct = (Number(stats.sleep_rate) * 100).toFixed(1);
+  const meanEng = Number(stats.mean_engagement).toFixed(2);
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold mb-4">Doctor overview</h1>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <h1 className="text-2xl font-semibold mb-4">Overview</h1>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatCard
-          label="My lectures"
-          value={v(stats.total_lectures)}
+          label="Total lectures"
+          value={stats.total_lectures}
           accent="slate"
         />
         <StatCard
           label="Finished lectures"
-          value={v(stats.finished_lectures)}
+          value={stats.finished_lectures}
           accent="slate"
         />
         <StatCard
           label="Scheduled lectures"
-          value={v(stats.scheduled_lectures)}
-          accent="slate"
-        />
-        <StatCard
-          label="Notifications sent"
-          value={v(stats.notifications_sent)}
+          value={stats.scheduled_lectures}
           accent="slate"
         />
       </div>
@@ -116,22 +121,4 @@ export default function AdminDashboard() {
       )}
     </div>
   );
-}
-
-function columnsToRows(obj) {
-  if (!obj) return [];
-  const keys = Object.keys(obj).filter((k) => Array.isArray(obj[k]));
-  if (keys.length === 0) return [];
-  const n = obj[keys[0]].length;
-  return Array.from({ length: n }, (_, i) => {
-    const row = {};
-    for (const k of keys) row[k] = obj[k][i];
-    return row;
-  });
-}
-
-function average(values) {
-  const nums = values.filter((n) => Number.isFinite(n));
-  if (nums.length === 0) return 0;
-  return nums.reduce((a, b) => a + b, 0) / nums.length;
 }

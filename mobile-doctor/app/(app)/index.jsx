@@ -1,25 +1,49 @@
 import React, { useCallback, useState } from "react";
 import { Alert, RefreshControl, Text, View } from "react-native";
 import { useFocusEffect, router } from "expo-router";
-import { getEmotions, getHealth, getLectures, normalize } from "../../api";
+import { collection, getDocs, getDoc, doc, query, where } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
+import { auth, db } from "../../firebase";
 import { Button, Card, EmptyState, Header, Screen, Stat, styles } from "../../components/ui";
 
 export default function DoctorHomeScreen() {
-  const [state, setState] = useState({ loading: true, lectures: [], emotions: [], health: null });
+  const [state, setState] = useState({ loading: true, lectures: [], emotions: [] });
 
   const load = useCallback(async () => {
+    setState((current) => ({ ...current, loading: true }));
     try {
-      const [lectures, emotions, health] = await Promise.all([
-        getLectures(),
-        getEmotions().catch(() => []),
-        getHealth().catch(() => null),
-      ]);
-      setState({
-        loading: false,
-        lectures: lectures.map(normalize),
-        emotions: emotions.map(normalize),
-        health,
-      });
+      const user = auth.currentUser;
+      if (!user) {
+        setState({ loading: false, lectures: [], emotions: [] });
+        return;
+      }
+
+      // Get doctor's linked_id from users collection
+      const userSnap = await getDoc(doc(db, "users", user.uid));
+      const doctorId = userSnap.exists() ? userSnap.data().linked_id : null;
+
+      if (!doctorId) {
+        setState({ loading: false, lectures: [], emotions: [] });
+        return;
+      }
+
+      // Fetch doctor's lectures
+      const lecSnap = await getDocs(
+        query(collection(db, "lectures"), where("doctor_id", "==", doctorId))
+      );
+      const lectures = lecSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      // Fetch emotions for those lectures
+      let emotions = [];
+      const lectureIds = lectures.map((l) => l.id);
+      if (lectureIds.length > 0) {
+        const emotionsSnap = await getDocs(
+          query(collection(db, "emotions"), where("lecture_id", "in", lectureIds.slice(0, 30)))
+        );
+        emotions = emotionsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      }
+
+      setState({ loading: false, lectures, emotions });
     } catch (error) {
       Alert.alert("Dashboard error", error.message);
       setState((current) => ({ ...current, loading: false }));
@@ -34,7 +58,7 @@ export default function DoctorHomeScreen() {
 
   const today = new Date().toDateString();
   const todayLectures = state.lectures.filter((lecture) => {
-    const date = lecture.scheduled_at || lecture.date;
+    const date = lecture.date;
     return date ? new Date(date).toDateString() === today : false;
   });
   const recording = state.lectures.filter((lecture) => lecture.status === "recording");
@@ -61,13 +85,6 @@ export default function DoctorHomeScreen() {
         />
       </View>
 
-      <Card>
-        <Text style={styles.emptyTitle}>API status</Text>
-        <Text style={{ color: "#657485", marginTop: 6 }}>
-          {state.health ? `${state.health.status || "online"} ${state.health.mode || ""}` : "Not available"}
-        </Text>
-      </Card>
-
       <Header
         title="Active Lectures"
         subtitle={`${recording.length} currently recording`}
@@ -75,9 +92,9 @@ export default function DoctorHomeScreen() {
       />
       {recording.length ? (
         recording.map((lecture) => (
-          <Card key={lecture.id || lecture.lecture_id}>
-            <Text style={styles.emptyTitle}>{lecture.title || lecture.subject_name || "Lecture"}</Text>
-            <Text style={{ color: "#657485", marginTop: 4 }}>{lecture.class_name || lecture.week_name || lecture.status}</Text>
+          <Card key={lecture.id}>
+            <Text style={styles.emptyTitle}>{lecture.title || "Lecture"}</Text>
+            <Text style={{ color: "#657485", marginTop: 4 }}>{lecture.status}</Text>
           </Card>
         ))
       ) : (

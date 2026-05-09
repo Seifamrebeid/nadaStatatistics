@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
 import { useChildren } from "../context/ChildContext";
 import { CalendarClock } from "lucide-react";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const flatIds = (x) => {
-  if (!Array.isArray(x)) return x ? [x] : [];
-  if (x.length > 0 && Array.isArray(x[0])) return x[0];
-  return x;
-};
 
 export default function ChildLectures() {
   const { selected } = useChildren();
@@ -22,42 +16,56 @@ export default function ChildLectures() {
     (async () => {
       try {
         setBusy(true);
-        const [lRes, wRes, cRes] = await Promise.all([
-          api.get("/api/lectures"),
-          api.get("/api/weeks"),
-          api.get("/api/classes"),
-        ]);
-        const lectures = (Array.isArray(lRes.data) ? lRes.data : []).map((l) => ({
-          id: v(l.id),
-          title: v(l.title),
-          status: v(l.status) || "scheduled",
-          scheduled_at: v(l.scheduled_at),
-          week_id: v(l.week_id),
-          enrolled: flatIds(l.enrolled_student_ids),
-        }));
-        const weeks = (Array.isArray(wRes.data) ? wRes.data : []).map((w) => ({
-          id: v(w.id),
-          class_id: v(w.class_id),
-        }));
-        const classes = (Array.isArray(cRes.data) ? cRes.data : []).map((c) => ({
-          id: v(c.id),
-          enrolled: flatIds(c.enrolled_student_ids),
+
+        // Lectures where child is directly enrolled
+        const directSnap = await getDocs(
+          query(
+            collection(db, "lectures"),
+            where("enrolled_student_ids", "array-contains", selected.id),
+          ),
+        );
+        const directLectures = directSnap.docs.map((d) => ({
+          id: d.id,
+          title: d.data().title,
+          status: d.data().status || "scheduled",
+          scheduled_at: d.data().scheduled_at || d.data().date,
+          week_id: d.data().week_id,
         }));
 
-        // Lecture is for this kid if directly enrolled, OR if its week
-        // belongs to a class the kid is enrolled in.
-        const weekToClass = Object.fromEntries(weeks.map((w) => [w.id, w.class_id]));
-        const kidClassIds = new Set(
-          classes.filter((c) => c.enrolled.includes(selected.id)).map((c) => c.id),
+        // Also find lectures via class enrollment:
+        // classes where child is enrolled -> weeks in those classes -> lectures in those weeks
+        const classSnap = await getDocs(
+          query(
+            collection(db, "classes"),
+            where("enrolled_student_ids", "array-contains", selected.id),
+          ),
         );
-        const list = lectures.filter(
-          (l) =>
-            l.enrolled.includes(selected.id) ||
-            kidClassIds.has(weekToClass[l.week_id]),
+        const myClassIds = new Set(classSnap.docs.map((d) => d.id));
+
+        // Get all weeks for those classes
+        const weeksSnap = await getDocs(collection(db, "weeks"));
+        const myWeekIds = new Set(
+          weeksSnap.docs
+            .filter((w) => myClassIds.has(w.data().class_id))
+            .map((w) => w.id),
         );
-        if (!cancelled) setLectures(list);
+
+        // Get all lectures; filter those belonging to my weeks (and not already in direct list)
+        const directIds = new Set(directLectures.map((l) => l.id));
+        const allLectSnap = await getDocs(collection(db, "lectures"));
+        const viaClassLectures = allLectSnap.docs
+          .filter((d) => !directIds.has(d.id) && myWeekIds.has(d.data().week_id))
+          .map((d) => ({
+            id: d.id,
+            title: d.data().title,
+            status: d.data().status || "scheduled",
+            scheduled_at: d.data().scheduled_at || d.data().date,
+            week_id: d.data().week_id,
+          }));
+
+        if (!cancelled) setLectures([...directLectures, ...viaClassLectures]);
       } catch (e) {
-        if (!cancelled) setErr(e.response?.data?.error || e.message);
+        if (!cancelled) setErr(e.message);
       } finally {
         if (!cancelled) setBusy(false);
       }

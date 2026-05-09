@@ -1,14 +1,9 @@
 import { useState } from "react";
-import {
-  signInWithCustomToken,
-  signInWithEmailAndPassword,
-} from "firebase/auth";
+import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth } from "../firebase";
 import { useAuth } from "../context/AuthContext";
-import api from "../services/api";
 import {
   Stethoscope,
-  ScanFace,
   Activity,
   Users,
   Sparkles,
@@ -16,10 +11,8 @@ import {
 } from "lucide-react";
 import Spinner from "../components/Spinner";
 
-const DEMO_DOCTOR = {
-  email: "mona.saeeed@nada.edu",
-  password: "Doctor@123",
-};
+const QUICK = { email: "mona.saeeed@nada.edu", password: "Doctor@123" };
+const DEMO_DOCTOR = QUICK;
 
 function formatAuthError(ex) {
   const code = ex?.code || "";
@@ -37,7 +30,6 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [faceBusy, setFaceBusy] = useState(false);
   const [err, setErr] = useState(null);
 
   async function submit(e) {
@@ -77,44 +69,6 @@ export default function Login() {
       setErr(formatAuthError(ex));
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function signInWithFace() {
-    setErr(null);
-    setMismatchError(null);
-    setFaceBusy(true);
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      const track = stream.getVideoTracks()[0];
-      const image = await new ImageCapture(track).grabFrame();
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width;
-      canvas.height = image.height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(image, 0, 0);
-      const blob = await new Promise((resolve) =>
-        canvas.toBlob(resolve, "image/jpeg", 0.92),
-      );
-      if (!blob) throw new Error("Failed to capture face image");
-
-      const fd = new FormData();
-      fd.append("role", "doctor");
-      fd.append("file", blob, "face.jpg");
-      const { data } = await api.post("/api/auth/face-login", fd);
-      const token = Array.isArray(data.custom_token)
-        ? data.custom_token[0]
-        : data.custom_token;
-      if (!token) throw new Error("No custom token returned");
-      await signInWithCustomToken(auth, token);
-    } catch (ex) {
-      setErr(
-        ex.response?.data?.error || ex.message.replace(/^Firebase:\s*/, ""),
-      );
-    } finally {
-      if (stream) stream.getTracks().forEach((t) => t.stop());
-      setFaceBusy(false);
     }
   }
 
@@ -159,7 +113,7 @@ export default function Login() {
             <li className="flex items-center gap-3">
               <Sparkles className="h-4 w-4 text-indigo-300" />
               <span className="text-white/80">
-                Face sign-in for fast lecture starts
+                Email/password sign-in for secure access
               </span>
             </li>
           </ul>
@@ -185,7 +139,7 @@ export default function Login() {
             Welcome back, Doctor
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Sign in with email/password — or use your face.
+            Sign in with your email and password.
           </p>
 
           <div className="mt-5 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-3 text-sm text-sky-900">
@@ -255,28 +209,8 @@ export default function Login() {
             {busy ? "Signing in…" : "Sign in"}
           </button>
 
-          <div className="my-4 flex items-center gap-3 text-xs text-slate-400">
-            <div className="flex-1 h-px bg-slate-200" />
-            <span>OR</span>
-            <div className="flex-1 h-px bg-slate-200" />
-          </div>
-
-          <button
-            type="button"
-            onClick={signInWithFace}
-            disabled={faceBusy}
-            className="btn-secondary w-full py-2.5"
-          >
-            {faceBusy ? (
-              <Spinner size="sm" />
-            ) : (
-              <ScanFace className="h-4 w-4" />
-            )}
-            {faceBusy ? "Scanning face…" : "Sign in with face"}
-          </button>
-
           <p className="text-xs text-slate-400 text-center mt-6">
-            Doctors can sign in with email/password or face recognition.
+            Doctors sign in with email and password.
           </p>
         </form>
       </div>

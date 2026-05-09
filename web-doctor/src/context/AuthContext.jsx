@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { auth } from "../firebase";
-import api from "../services/api";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 import { APP_ROLE } from "../appRole";
 
 const AuthContext = createContext(null);
@@ -22,10 +22,18 @@ export function AuthProvider({ children }) {
         setLoading(false);
         return;
       }
-      // Role-mismatch gate. Calls /api/me, compares role to APP_ROLE.
       try {
-        const { data } = await api.get("/api/me");
-        const role = Array.isArray(data.role) ? data.role[0] : data.role;
+        const snap = await getDoc(doc(db, "users", u.uid));
+        if (!snap.exists()) {
+          await signOut(auth);
+          setMismatchError("User profile not found.");
+          setUser(null);
+          setProfile(null);
+          setLoading(false);
+          return;
+        }
+        const data = snap.data();
+        const role = data.role;
         if (role !== APP_ROLE) {
           await signOut(auth);
           const urls = {
@@ -42,15 +50,15 @@ export function AuthProvider({ children }) {
         } else {
           setUser(u);
           setProfile({
-            uid:       unwrap(data.uid),
-            role:      role,
-            linked_id: unwrap(data.linked_id),
-            email:     unwrap(data.email),
+            uid:       u.uid,
+            role,
+            linked_id: data.linked_id ?? null,
+            email:     u.email,
           });
         }
       } catch (err) {
         await signOut(auth);
-        setMismatchError(`Sign-in failed: ${err.response?.data?.error || err.message}`);
+        setMismatchError(`Sign-in failed: ${err.message}`);
       } finally {
         setLoading(false);
       }
@@ -63,5 +71,3 @@ export function AuthProvider({ children }) {
     </AuthContext.Provider>
   );
 }
-
-function unwrap(v) { return Array.isArray(v) ? v[0] : v; }

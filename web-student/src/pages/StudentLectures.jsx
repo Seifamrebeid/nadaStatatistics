@@ -1,26 +1,26 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
-
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-
-function normalise(row) {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-}
+import { collection, getDocs, query, where } from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 
 export default function StudentLectures() {
+  const { profile } = useAuth();
   const [lectures, setLectures] = useState([]);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    api
-      .get("/api/lectures")
-      .then(({ data }) =>
-        setLectures((Array.isArray(data) ? data : []).map(normalise)),
+    if (!profile?.linked_id) return;
+    getDocs(
+      query(
+        collection(db, "lectures"),
+        where("enrolled_student_ids", "array-contains", profile.linked_id),
+      ),
+    )
+      .then((snap) =>
+        setLectures(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
       )
-      .catch((e) => setErr(e.response?.data?.error || e.message));
-  }, []);
+      .catch((e) => setErr(e.message));
+  }, [profile?.linked_id]);
 
   return (
     <div className="space-y-6">
@@ -61,12 +61,12 @@ export default function StudentLectures() {
                   {lecture.title || lecture.id}
                 </td>
                 <td className="px-6 py-4 text-sm">
-                  {lecture.scheduled_at
-                    ? new Date(lecture.scheduled_at).toLocaleString()
+                  {lecture.date
+                    ? new Date(lecture.date).toLocaleString()
                     : "-"}
                 </td>
                 <td className="px-6 py-4 text-sm">
-                  {lecture.doctor_name || lecture.doctor_id || "—"}
+                  {lecture.doctor_id || "—"}
                 </td>
                 <td className="px-6 py-4 text-sm">
                   <span
@@ -82,17 +82,16 @@ export default function StudentLectures() {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-sm space-x-2">
-                  <button
-                    onClick={() =>
-                      window.open(
-                        `/api/lectures/${lecture.id}/report`,
-                        "_blank",
-                      )
-                    }
-                    className="text-brand hover:underline"
-                  >
-                    Report
-                  </button>
+                  {lecture.report_pdf_url && (
+                    <a
+                      href={lecture.report_pdf_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-brand hover:underline"
+                    >
+                      Report
+                    </a>
+                  )}
                 </td>
               </tr>
             ))}

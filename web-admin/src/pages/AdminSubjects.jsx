@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import api from "../services/api";
+import {
+  collection,
+  doc,
+  getDocs,
+  addDoc,
+  updateDoc,
+  setDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import CrudTable from "../components/CrudTable";
 import Modal from "../components/Modal";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
-const normalise = (row) => {
-  const out = {};
-  for (const [k, val] of Object.entries(row || {})) out[k] = v(val);
-  return out;
-};
-
 export default function AdminSubjects() {
+  const { profile } = useAuth();
   const [rows, setRows] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [err, setErr] = useState(null);
@@ -19,18 +23,14 @@ export default function AdminSubjects() {
 
   async function load() {
     try {
-      const [subjectsRes, doctorsRes] = await Promise.all([
-        api.get("/api/subjects"),
-        api.get("/api/doctors"),
+      const [subjectsSnap, doctorsSnap] = await Promise.all([
+        getDocs(collection(db, "subjects")),
+        getDocs(collection(db, "doctors")),
       ]);
-      const subjectsList = Array.isArray(subjectsRes.data)
-        ? subjectsRes.data
-        : [];
-      const doctorsList = Array.isArray(doctorsRes.data) ? doctorsRes.data : [];
-      setRows(subjectsList.map(normalise));
-      setDoctors(doctorsList.map(normalise));
+      setRows(subjectsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setDoctors(doctorsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      setErr(e.response?.data?.error || e.message);
+      setErr(e.message);
     }
   }
 
@@ -57,14 +57,17 @@ export default function AdminSubjects() {
   async function save() {
     try {
       if (modal === "create") {
-        await api.post("/api/subjects", {
+        await addDoc(collection(db, "subjects"), {
           doctor_id: form.doctor_id,
           name: form.name,
           code: form.code,
           description: form.description,
+          active: true,
+          created_by: profile?.uid || "",
+          created_at: serverTimestamp(),
         });
       } else {
-        await api.put(`/api/subjects/${modal.row.id}`, {
+        await updateDoc(doc(db, "subjects", modal.row.id), {
           doctor_id: form.doctor_id,
           name: form.name,
           code: form.code,
@@ -75,17 +78,17 @@ export default function AdminSubjects() {
       }
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
   async function remove(row) {
     if (!confirm(`Soft-delete subject "${row.name}"?`)) return;
     try {
-      await api.delete(`/api/subjects/${row.id}`);
+      await updateDoc(doc(db, "subjects", row.id), { active: false });
       await load();
     } catch (e) {
-      alert(e.response?.data?.error || e.message);
+      alert(e.message);
     }
   }
 
@@ -116,10 +119,7 @@ export default function AdminSubjects() {
       >
         Edit
       </button>
-      <button
-        onClick={() => remove(r)}
-        className="text-red-600 hover:underline"
-      >
+      <button onClick={() => remove(r)} className="text-red-600 hover:underline">
         Delete
       </button>
     </div>
@@ -129,10 +129,7 @@ export default function AdminSubjects() {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-semibold">Subjects</h1>
-        <button
-          onClick={openCreate}
-          className="btn-primary"
-        >
+        <button onClick={openCreate} className="btn-primary">
           + New subject
         </button>
       </div>
@@ -149,16 +146,10 @@ export default function AdminSubjects() {
         title="Create subject"
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Create
             </button>
           </>
@@ -173,27 +164,16 @@ export default function AdminSubjects() {
         title={`Edit ${modal?.row?.name || ""}`}
         footer={
           <>
-            <button
-              onClick={() => setModal(null)}
-              className="btn-secondary"
-            >
+            <button onClick={() => setModal(null)} className="btn-secondary">
               Cancel
             </button>
-            <button
-              onClick={save}
-              className="btn-primary"
-            >
+            <button onClick={save} className="btn-primary">
               Save
             </button>
           </>
         }
       >
-        <SubjectForm
-          form={form}
-          setForm={setForm}
-          doctors={doctors}
-          showActive
-        />
+        <SubjectForm form={form} setForm={setForm} doctors={doctors} showActive />
       </Modal>
     </div>
   );

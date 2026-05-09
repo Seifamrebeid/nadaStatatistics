@@ -1,11 +1,13 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import api from "../services/api";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase";
+import { useAuth } from "./AuthContext";
 
-const v = (x) => (Array.isArray(x) ? x[0] : x);
 const ChildContext = createContext(null);
 const STORAGE_KEY = "web-parent.selectedChildId";
 
 export function ChildProvider({ children }) {
+  const { profile } = useAuth();
   const [list, setList] = useState([]);
   const [selectedId, setSelectedId] = useState(
     () => localStorage.getItem(STORAGE_KEY) || null,
@@ -14,15 +16,26 @@ export function ChildProvider({ children }) {
   const [err, setErr] = useState(null);
 
   useEffect(() => {
+    if (!profile?.linked_id) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await api.get("/api/students");
-        const items = (Array.isArray(data) ? data : []).map((s) => ({
-          id: v(s.id),
-          name: v(s.name),
-          email: v(s.email),
-        }));
+        // 1. Get parent doc to find linked_student_ids
+        const parentDoc = await getDoc(doc(db, "parents", profile.linked_id));
+        const linkedIds = parentDoc.data()?.linked_student_ids || [];
+
+        // 2. Load each child's student doc
+        const childDocs = await Promise.all(
+          linkedIds.map(async (sid) => {
+            const snap = await getDoc(doc(db, "students", sid));
+            return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+          }),
+        );
+        const items = childDocs.filter(Boolean);
+
         if (cancelled) return;
         setList(items);
         if (items.length > 0) {
@@ -33,7 +46,7 @@ export function ChildProvider({ children }) {
           }
         }
       } catch (e) {
-        if (!cancelled) setErr(e.response?.data?.error || e.message);
+        if (!cancelled) setErr(e.message);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -41,8 +54,7 @@ export function ChildProvider({ children }) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [profile?.linked_id]);
 
   function pick(id) {
     setSelectedId(id);

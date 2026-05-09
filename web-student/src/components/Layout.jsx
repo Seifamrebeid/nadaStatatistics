@@ -8,6 +8,7 @@ import {
   Presentation,
   History,
   Search,
+  ClipboardList,
   UserCircle,
   LogOut,
   Menu,
@@ -20,6 +21,7 @@ const navItems = [
   { to: "/lectures", label: "Lectures", icon: Presentation },
   { to: "/doctor-search", label: "Doctor Search", icon: Search },
   { to: "/grades", label: "Grades", icon: GraduationCap },
+  { to: "/attendance", label: "Attendance", icon: ClipboardList },
   { to: "/history", label: "History", icon: History },
   { to: "/profile", label: "Profile", icon: UserCircle },
 ];
