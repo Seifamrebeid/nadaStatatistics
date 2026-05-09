@@ -12,7 +12,9 @@ is required.
 
 CSV format (in sync with the Firestore fields):
     student_id, lecture_id, timestamp, emotion, confidence,
-    state, sleep_reason, gesture, engagement_score
+    state, sleep_reason, gesture, engagement_score,
+    yawning, yawn_reason, attention_score, attention_warning,
+    cheat_score, cheat_warning, subtitle_text, face_count
 """
 
 import csv
@@ -37,6 +39,9 @@ _CSV_COLUMNS = [
     "student_id", "lecture_id", "timestamp", "emotion", "confidence",
     "state", "sleep_reason", "gesture", "engagement_score",
     "yawning", "yawn_reason",
+    "attention_score", "attention_warning",
+    "cheat_score", "cheat_warning",
+    "subtitle_text", "face_count",
 ]
 
 
@@ -122,6 +127,12 @@ def save_observation(student_id: str, lecture_id: str, emotion: str,
                      confidence: float, state: str, sleep_reason: Optional[str],
                      gesture: str, engagement_score: float,
                      yawning: bool = False, yawn_reason: Optional[str] = None,
+                     attention_score: Optional[float] = None,
+                     attention_warning: bool = False,
+                     cheat_score: Optional[float] = None,
+                     cheat_warning: bool = False,
+                     subtitle_text: Optional[str] = None,
+                     face_count: Optional[int] = None,
                      timestamp: Optional[datetime] = None) -> None:
     """Buffer a single observation. Caller flushes every SAVE_INTERVAL_SECONDS."""
     row = {
@@ -136,6 +147,12 @@ def save_observation(student_id: str, lecture_id: str, emotion: str,
         "engagement_score": float(engagement_score),
         "yawning": bool(yawning),
         "yawn_reason": yawn_reason,
+        "attention_score": attention_score,
+        "attention_warning": bool(attention_warning),
+        "cheat_score": cheat_score,
+        "cheat_warning": bool(cheat_warning),
+        "subtitle_text": subtitle_text,
+        "face_count": face_count,
     }
     with _buf_lock:
         _buffer.append(row)

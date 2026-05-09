@@ -9,18 +9,54 @@ import {
   Smile,
   Moon,
 } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+} from "recharts";
 
 // Plumber wraps scalars as length-1 arrays; unwrap for display.
 const v = (x) => (Array.isArray(x) ? x[0] : x);
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
+  const [attendance, setAttendance] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    api.get("/api/admin/stats")
-      .then((r) => setStats(r.data))
+    Promise.all([
+      api.get("/api/admin/stats"),
+      api.get("/api/attendance/current"),
+      api.get("/api/emotions"),
+    ])
+      .then(([statsRes, attendanceRes, emotionsRes]) => {
+        setStats(statsRes.data);
+        const emotions = emotionsRes.data || [];
+        const attendanceData = attendanceRes.data || {};
+        setAttendance({
+          present: v(attendanceData.summary?.present) || 0,
+          absent: v(attendanceData.summary?.absent) || 0,
+          attendanceRate: Number(
+            v(attendanceData.summary?.attendance_rate) || 0,
+          ),
+          attentionAlertsCount: emotions.filter(
+            (e) =>
+              Number(v(e.attention_warning)) === 1 ||
+              v(e.attention_warning) === true ||
+              (Number(v(e.attention_score)) || 0) < 45,
+          ).length,
+          cheatAlertsCount: emotions.filter(
+            (e) =>
+              Number(v(e.cheat_warning)) === 1 ||
+              v(e.cheat_warning) === true ||
+              (Number(v(e.cheat_score)) || 0) >= 60,
+          ).length,
+        });
+      })
       .catch((e) => setErr(e.response?.data?.error || e.message));
   }, []);
 
@@ -45,7 +81,7 @@ export default function AdminDashboard() {
   }
 
   const sleepPct = (v(stats.sleep_rate) * 100).toFixed(1);
-  const meanEng  = Number(v(stats.mean_engagement)).toFixed(2);
+  const meanEng = Number(v(stats.mean_engagement)).toFixed(2);
 
   const gestures = (() => {
     const g = stats.top_gestures;
@@ -59,18 +95,93 @@ export default function AdminDashboard() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">System overview</h1>
+        <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">
+          System overview
+        </h1>
         <p className="mt-1 text-sm text-slate-500">
           Snapshot of platform-wide activity and engagement signals.
         </p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total students"  value={v(stats.total_students)}     accent="brand" icon={GraduationCap} />
-        <StatCard label="Total doctors"   value={v(stats.total_doctors)}      accent="slate" icon={Stethoscope} />
-        <StatCard label="Total lectures"  value={v(stats.total_lectures)}     accent="slate" icon={Presentation} />
-        <StatCard label="Observations"    value={v(stats.total_observations)} accent="slate" icon={Activity} />
+        <StatCard
+          label="Total students"
+          value={v(stats.total_students)}
+          accent="brand"
+          icon={GraduationCap}
+        />
+        <StatCard
+          label="Total doctors"
+          value={v(stats.total_doctors)}
+          accent="slate"
+          icon={Stethoscope}
+        />
+        <StatCard
+          label="Total lectures"
+          value={v(stats.total_lectures)}
+          accent="slate"
+          icon={Presentation}
+        />
+        <StatCard
+          label="Observations"
+          value={v(stats.total_observations)}
+          accent="slate"
+          icon={Activity}
+        />
       </div>
+
+      {attendance && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+          <StatCard
+            label="Present now"
+            value={attendance.present}
+            accent="green"
+            icon={GraduationCap}
+          />
+          <StatCard
+            label="Absent now"
+            value={attendance.absent}
+            accent="red"
+            icon={Presentation}
+          />
+          <StatCard
+            label="Attendance rate"
+            value={`${Math.round(attendance.attendanceRate * 100)}%`}
+            accent={
+              attendance.attendanceRate >= 0.8
+                ? "green"
+                : attendance.attendanceRate >= 0.6
+                  ? "amber"
+                  : "red"
+            }
+            icon={Activity}
+          />
+          <StatCard
+            label="Attention alerts"
+            value={attendance.attentionAlertsCount}
+            accent={attendance.attentionAlertsCount > 0 ? "amber" : "green"}
+            icon={Smile}
+          />
+        </div>
+      )}
+
+      {attendance && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <StatCard
+            label="Cheat alerts"
+            value={attendance.cheatAlertsCount}
+            accent={attendance.cheatAlertsCount > 0 ? "red" : "green"}
+            icon={Stethoscope}
+          />
+          <StatCard
+            label="Live attendance coverage"
+            value={`${Math.round(attendance.attendanceRate * 100)}%`}
+            accent="brand"
+            icon={Presentation}
+            hint="Derived from the last few minutes of live observations"
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
         <StatCard
@@ -78,7 +189,13 @@ export default function AdminDashboard() {
           value={meanEng}
           accent={meanEng >= 0.5 ? "green" : meanEng >= 0.3 ? "amber" : "red"}
           icon={Smile}
-          hint={meanEng >= 0.5 ? "Healthy" : meanEng >= 0.3 ? "Watch" : "Needs attention"}
+          hint={
+            meanEng >= 0.5
+              ? "Healthy"
+              : meanEng >= 0.3
+                ? "Watch"
+                : "Needs attention"
+          }
         />
         <StatCard
           label="Sleep rate"
@@ -93,18 +210,42 @@ export default function AdminDashboard() {
         <div className="card p-6 mt-6">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="font-semibold text-slate-900">Top gestures observed</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Aggregated across all sessions</p>
+              <h2 className="font-semibold text-slate-900">
+                Top gestures observed
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Aggregated across all sessions
+              </p>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={gestures} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis dataKey="gesture" tick={{ fill: "#64748b", fontSize: 12 }} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
-              <YAxis tick={{ fill: "#64748b", fontSize: 12 }} axisLine={false} tickLine={false} />
+            <BarChart
+              data={gestures}
+              margin={{ top: 5, right: 10, bottom: 5, left: -10 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="#e2e8f0"
+                vertical={false}
+              />
+              <XAxis
+                dataKey="gesture"
+                tick={{ fill: "#64748b", fontSize: 12 }}
+                axisLine={{ stroke: "#e2e8f0" }}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fill: "#64748b", fontSize: 12 }}
+                axisLine={false}
+                tickLine={false}
+              />
               <Tooltip
                 cursor={{ fill: "#f1f5f9" }}
-                contentStyle={{ borderRadius: 8, border: "1px solid #e2e8f0", fontSize: 12 }}
+                contentStyle={{
+                  borderRadius: 8,
+                  border: "1px solid #e2e8f0",
+                  fontSize: 12,
+                }}
               />
               <Bar dataKey="n" fill="#10b981" radius={[6, 6, 0, 0]} />
             </BarChart>

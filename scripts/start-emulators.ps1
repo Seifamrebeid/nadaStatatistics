@@ -3,7 +3,13 @@
 
 Set-Location -Path "$PSScriptRoot/..\firebase-emulator"
 
-$dataDir = "seed"
+# Prefer the richer demo snapshot when it exists. It includes the seeded
+# doctor accounts used by the doctor portal login screen.
+$dataDir = "seed-fresh"
+
+if (-not (Test-Path -Path "./$dataDir" -PathType Container)) {
+	$dataDir = "seed"
+}
 
 # Backward compatibility: if ./seed does not exist but legacy exports do,
 # reuse the most recent legacy export folder so old data is imported.

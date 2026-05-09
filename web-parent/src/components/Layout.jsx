@@ -16,16 +16,18 @@ import {
   Users,
   BookOpen,
   CalendarDays,
+  Award,
 } from "lucide-react";
 
 const navItems = [
-  { to: "/",         label: "Dashboard", icon: LayoutDashboard },
-  { to: "/children", label: "Children",  icon: Users },
-  { to: "/subjects", label: "Subjects",  icon: BookOpen },
-  { to: "/weeks",    label: "Weeks",     icon: CalendarDays },
-  { to: "/lectures", label: "Lectures",  icon: Presentation },
-  { to: "/history",  label: "History",   icon: History },
-  { to: "/profile",  label: "Profile",   icon: UserCircle },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/children", label: "Children", icon: Users },
+  { to: "/subjects", label: "Subjects", icon: BookOpen },
+  { to: "/weeks", label: "Weeks", icon: CalendarDays },
+  { to: "/lectures", label: "Lectures", icon: Presentation },
+  { to: "/grades", label: "Grades", icon: Award },
+  { to: "/history", label: "History", icon: History },
+  { to: "/profile", label: "Profile", icon: UserCircle },
 ];
 
 export default function Layout() {
@@ -39,7 +41,9 @@ export default function Layout() {
     nav("/login", { replace: true });
   }
 
-  const initials = (profile?.name || profile?.email || "?").slice(0, 2).toUpperCase();
+  const initials = (profile?.name || profile?.email || "?")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -54,8 +58,12 @@ export default function Layout() {
               <GraduationCap className="h-4 w-4" />
             </div>
             <div className="leading-tight">
-              <div className="text-sm font-semibold text-slate-900">Classroom</div>
-              <div className="text-[11px] text-slate-500 -mt-0.5">Emotions · Parent</div>
+              <div className="text-sm font-semibold text-slate-900">
+                Classroom
+              </div>
+              <div className="text-[11px] text-slate-500 -mt-0.5">
+                Emotions · Parent
+              </div>
             </div>
           </Link>
           <button
@@ -87,7 +95,9 @@ export default function Layout() {
                 >
                   {({ isActive }) => (
                     <>
-                      <Icon className={`h-4 w-4 ${isActive ? "text-brand-600" : "text-slate-400"}`} />
+                      <Icon
+                        className={`h-4 w-4 ${isActive ? "text-brand-600" : "text-slate-400"}`}
+                      />
                       <span>{label}</span>
                     </>
                   )}
@@ -106,7 +116,9 @@ export default function Layout() {
               <div className="text-sm font-medium text-slate-900 truncate">
                 {profile?.name || "Parent"}
               </div>
-              <div className="text-xs text-slate-500 truncate">{profile?.email}</div>
+              <div className="text-xs text-slate-500 truncate">
+                {profile?.email}
+              </div>
             </div>
           </div>
           <button
@@ -137,7 +149,9 @@ export default function Layout() {
           <div className="flex-1" />
           {kids.length > 0 && (
             <div className="flex items-center gap-2 mr-3">
-              <span className="hidden sm:inline text-xs text-slate-500">Viewing:</span>
+              <span className="hidden sm:inline text-xs text-slate-500">
+                Viewing:
+              </span>
               <select
                 value={selectedId || ""}
                 onChange={(e) => setSelected(e.target.value)}

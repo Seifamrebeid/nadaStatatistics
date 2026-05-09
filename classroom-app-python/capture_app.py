@@ -51,6 +51,13 @@ import firebase_writer
 import face_id
 import emotion as emotion_mod
 from engagement import engagement_score
+from attention_detector import (
+    attention_score,
+    attention_warning,
+    cheat_score,
+    cheating_warning,
+    recommendation_text,
+)
 from sleep_detector import SleepHistory, classify_sleep, init_face_mesh
 from gesture_detector import (
     GestureHistory,
@@ -172,12 +179,29 @@ def _draw_stack(frame, box, lines, color) -> None:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
 
 
+def _draw_subtitle(frame, text: str) -> None:
+    if not text:
+        return
+    h, w = frame.shape[:2]
+    shown = text.strip()
+    max_chars = max(24, w // 13)
+    if len(shown) > max_chars:
+        shown = shown[: max_chars - 1] + "…"
+    y2 = h - 10
+    y1 = max(10, y2 - 34)
+    cv2.rectangle(frame, (12, y1), (w - 12, y2), (0, 0, 0), cv2.FILLED)
+    cv2.putText(frame, shown, (22, y2 - 12), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (255, 255, 255), 2, cv2.LINE_AA)
+
+
 class FaceTrack:
     __slots__ = (
         "track_id", "box", "student_id", "name",
         "sleep_hist", "gesture_hist", "yawn_hist",
         "last_emotion", "last_conf",
         "last_state", "last_reason", "last_gesture", "last_score",
+        "last_attention", "last_attention_warning",
+        "last_cheat_score", "last_cheat_warning",
         "last_yawning", "last_yawn_reason",
         "on_phone", "missed_frames",
     )
@@ -196,6 +220,10 @@ class FaceTrack:
         self.last_reason: Optional[str] = None
         self.last_gesture = "none"
         self.last_score = 0.0
+        self.last_attention = 0.0
+        self.last_attention_warning = False
+        self.last_cheat_score = 0.0
+        self.last_cheat_warning = False
         self.last_yawning = False
         self.last_yawn_reason: Optional[str] = None
         self.on_phone = False
@@ -236,6 +264,12 @@ def run_capture(
     enrolled, names = face_id.load_enrolled_encodings(db, lecture_id)
     _log(f"Loaded {len(enrolled)} enrolled face encoding(s).")
 
+    latest_subtitle = ""
+
+    def _on_subtitle(text: str, start: float, end: float) -> None:
+        nonlocal latest_subtitle
+        latest_subtitle = text
+
     try:
         mp_face_mesh = init_face_mesh(max_num_faces=8)
         mp_hands = init_hands(max_num_hands=8)
@@ -245,7 +279,7 @@ def run_capture(
         mp_hands = None
 
     recorder = AudioRecorder()
-    transcriber = StreamTranscriber()
+    transcriber = StreamTranscriber(on_segment=_on_subtitle)
     try:
         recorder.start(lecture_id)
         recorder.add_listener(transcriber.feed)
@@ -279,6 +313,8 @@ def run_capture(
     process_every_n = int(os.getenv("PROCESS_EVERY_N_FRAMES", "30"))
     save_interval = float(os.getenv("SAVE_INTERVAL_SECONDS", "3"))
     tolerance = float(os.getenv("FACE_MATCH_TOLERANCE", "0.6"))
+    exam_mode = str(lecture_doc.get("mode", "")).lower() == "exam" or \
+        os.getenv("EXAM_MODE", "false").lower() in {"1", "true", "yes", "y"}
 
     tracks: Dict[int, FaceTrack] = {}
     next_track_id = 0
@@ -287,6 +323,44 @@ def run_capture(
     frame_idx = 0
     last_flush = time.time()
     total_rows = 0
+
+    def _persist_track(tr: FaceTrack, *, subtitle_text: str = "", face_count: int = 1) -> None:
+        tr.last_attention = attention_score(
+            state=tr.last_state,
+            on_phone=tr.on_phone,
+            yawning=tr.last_yawning,
+            gesture=tr.last_gesture,
+            emotion=tr.last_emotion,
+            face_count=face_count,
+        )
+        tr.last_attention_warning = attention_warning(tr.last_attention)
+        tr.last_cheat_score = cheat_score(
+            exam_mode=exam_mode,
+            on_phone=tr.on_phone,
+            attention=tr.last_attention,
+            face_count=face_count,
+        )
+        tr.last_cheat_warning = cheating_warning(tr.last_cheat_score)
+
+        if tr.student_id != "unknown":
+            firebase_writer.save_observation(
+                student_id=tr.student_id,
+                lecture_id=lecture_id,
+                emotion=tr.last_emotion,
+                confidence=tr.last_conf,
+                state=tr.last_state,
+                sleep_reason=tr.last_reason,
+                gesture=tr.last_gesture,
+                engagement_score=tr.last_score,
+                yawning=tr.last_yawning,
+                yawn_reason=tr.last_yawn_reason,
+                attention_score=tr.last_attention,
+                attention_warning=tr.last_attention_warning,
+                cheat_score=tr.last_cheat_score,
+                cheat_warning=tr.last_cheat_warning,
+                subtitle_text=subtitle_text or None,
+                face_count=face_count,
+            )
 
     try:
         while True:
@@ -430,19 +504,7 @@ def run_capture(
                     tr.last_yawn_reason = None
                     tr.on_phone = any(phone_near_face(pb, tr.box) for pb in last_phone_boxes)
                     tr.last_score = engagement_score(tr.last_emotion, tr.last_state, tr.last_gesture)
-                    if tr.student_id != "unknown":
-                        firebase_writer.save_observation(
-                            student_id=tr.student_id,
-                            lecture_id=lecture_id,
-                            emotion=tr.last_emotion,
-                            confidence=tr.last_conf,
-                            state=tr.last_state,
-                            sleep_reason=tr.last_reason,
-                            gesture=tr.last_gesture,
-                            engagement_score=tr.last_score,
-                            yawning=tr.last_yawning,
-                            yawn_reason=tr.last_yawn_reason,
-                        )
+                    _persist_track(tr, subtitle_text=latest_subtitle, face_count=len(tracks))
 
             # ---- Heavy path: identify + emotion + phone + save_observation ----
             if frame_idx % process_every_n == 0:
@@ -505,22 +567,7 @@ def run_capture(
                         tr.last_score = engagement_score(
                             tr.last_emotion, tr.last_state, tr.last_gesture,
                         )
-                        # Skip persisting observations for unidentified tracks —
-                        # otherwise the emotions collection floods with "unknown"
-                        # rows while enrollments are being set up.
-                        if tr.student_id != "unknown":
-                            firebase_writer.save_observation(
-                                student_id=tr.student_id,
-                                lecture_id=lecture_id,
-                                emotion=tr.last_emotion,
-                                confidence=tr.last_conf,
-                                state=tr.last_state,
-                                sleep_reason=tr.last_reason,
-                                gesture=tr.last_gesture,
-                                engagement_score=tr.last_score,
-                                yawning=tr.last_yawning,
-                                yawn_reason=tr.last_yawn_reason,
-                            )
+                        _persist_track(tr, subtitle_text=latest_subtitle, face_count=len(tracks))
 
             # ---- Draw everything ----
             for tid, tr in tracks.items():
@@ -536,11 +583,12 @@ def run_capture(
                 if tr.last_state == "sleeping" and tr.last_reason:
                     state_line += f" ({tr.last_reason})"
                 lines = [
-                    f"student: {tr.name}",
+                    f"student: {tr.name} ({tr.student_id})",
                     f"emotion: {tr.last_emotion} ({tr.last_conf:.2f})",
                     state_line,
                     f"gesture: {tr.last_gesture}",
                     f"score: {tr.last_score:.2f}",
+                    f"attention: {tr.last_attention:.1f}{' !!' if tr.last_attention_warning else ''}",
                 ]
                 if tr.last_yawning:
                     tag = "yawning"
@@ -553,12 +601,16 @@ def run_capture(
                     lines.insert(0, tag)
                 if tr.on_phone:
                     lines.insert(0, "!! ON PHONE !!")
+                if tr.last_cheat_warning:
+                    lines.insert(0, f"!! CHEAT RISK {tr.last_cheat_score:.1f} !!")
                 _draw_stack(frame, tr.box, lines, color)
 
             for (x1, y1, x2, y2) in last_phone_boxes:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
                 cv2.putText(frame, "phone", (x1, max(15, y1 - 5)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+
+            _draw_subtitle(frame, latest_subtitle)
 
             now = time.time()
             if now - last_flush >= save_interval:

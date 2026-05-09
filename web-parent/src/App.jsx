@@ -10,6 +10,7 @@ import ChildSubjects from "./pages/ChildSubjects";
 import ChildWeeks from "./pages/ChildWeeks";
 import ChildLectures from "./pages/ChildLectures";
 import ChildHistory from "./pages/ChildHistory";
+import ParentGrades from "./pages/ParentGrades";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
@@ -28,6 +29,7 @@ function Gate() {
           <Route path="subjects" element={<ChildSubjects />} />
           <Route path="weeks" element={<ChildWeeks />} />
           <Route path="lectures" element={<ChildLectures />} />
+          <Route path="grades" element={<ParentGrades />} />
           <Route path="history" element={<ChildHistory />} />
           <Route path="profile" element={<Profile />} />
         </Route>

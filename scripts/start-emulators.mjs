@@ -69,9 +69,9 @@ function runNode(scriptPath, scriptArgs = []) {
 log(`spawning Firebase emulators in ${EMU_DIR} (project=${PROJECT})`);
 const isWin = process.platform === "win32";
 const emu = spawn(
-  isWin ? "firebase.cmd" : "firebase",
-  ["emulators:start", "--project", PROJECT],
-  { cwd: EMU_DIR, stdio: "inherit", shell: false }
+  isWin ? "npx.cmd" : "npx",
+  ["firebase-tools", "emulators:start", "--project", PROJECT],
+  { cwd: EMU_DIR, stdio: "inherit", shell: isWin }
 );
 
 emu.on("exit", (code, signal) => {
@@ -80,7 +80,7 @@ emu.on("exit", (code, signal) => {
 });
 emu.on("error", (e) => {
   console.error(`[start] failed to launch firebase CLI: ${e.message}`);
-  console.error("        is `firebase` installed and on PATH?  (npm i -g firebase-tools)");
+  console.error("        is `npx` installed and on PATH? It should come with Node.js.");
   process.exit(1);
 });
 

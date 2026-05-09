@@ -12,6 +12,8 @@ import {
   Stethoscope,
   GraduationCap,
   Users,
+  Search,
+  Award,
   Presentation,
   BarChart3,
   Settings,
@@ -22,18 +24,20 @@ import {
 } from "lucide-react";
 
 const navItems = [
-  { to: "/",          label: "Dashboard", icon: LayoutDashboard },
-  { to: "/admins",    label: "Admins",    icon: Shield },
-  { to: "/subjects",  label: "Subjects",  icon: BookOpen },
-  { to: "/classes",   label: "Classes",   icon: Building2 },
-  { to: "/weeks",     label: "Weeks",     icon: CalendarDays },
-  { to: "/doctors",   label: "Doctors",   icon: Stethoscope },
-  { to: "/students",  label: "Students",  icon: GraduationCap },
-  { to: "/parents",   label: "Parents",   icon: Users },
-  { to: "/lectures",  label: "Lectures",  icon: Presentation },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/admins", label: "Admins", icon: Shield },
+  { to: "/subjects", label: "Subjects", icon: BookOpen },
+  { to: "/classes", label: "Shine", icon: Building2 },
+  { to: "/weeks", label: "Weeks", icon: CalendarDays },
+  { to: "/doctors", label: "Doctors", icon: Stethoscope },
+  { to: "/students", label: "Students", icon: GraduationCap },
+  { to: "/student-search", label: "Student Search", icon: Search },
+  { to: "/parents", label: "Parents", icon: Users },
+  { to: "/lectures", label: "Lectures", icon: Presentation },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/settings",  label: "Settings",  icon: Settings },
-  { to: "/profile",   label: "Profile",   icon: UserCircle },
+  { to: "/grades", label: "Grades", icon: Award },
+  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/profile", label: "Profile", icon: UserCircle },
 ];
 
 export default function Layout() {
@@ -62,8 +66,12 @@ export default function Layout() {
               <LayoutDashboard className="h-4 w-4" />
             </div>
             <div className="leading-tight">
-              <div className="text-sm font-semibold text-slate-900">Classroom</div>
-              <div className="text-[11px] text-slate-500 -mt-0.5">Emotions · Admin</div>
+              <div className="text-sm font-semibold text-slate-900">
+                Classroom
+              </div>
+              <div className="text-[11px] text-slate-500 -mt-0.5">
+                Emotions · Admin
+              </div>
             </div>
           </Link>
           <button
@@ -95,7 +103,9 @@ export default function Layout() {
                 >
                   {({ isActive }) => (
                     <>
-                      <Icon className={`h-4 w-4 ${isActive ? "text-brand-600" : "text-slate-400"}`} />
+                      <Icon
+                        className={`h-4 w-4 ${isActive ? "text-brand-600" : "text-slate-400"}`}
+                      />
                       <span>{label}</span>
                     </>
                   )}
@@ -114,7 +124,9 @@ export default function Layout() {
               <div className="text-sm font-medium text-slate-900 truncate">
                 {profile?.name || "Admin"}
               </div>
-              <div className="text-xs text-slate-500 truncate">{profile?.email}</div>
+              <div className="text-xs text-slate-500 truncate">
+                {profile?.email}
+              </div>
             </div>
           </div>
           <button

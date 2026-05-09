@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Presentation,
   History,
+  Search,
   UserCircle,
   LogOut,
   Menu,
@@ -15,10 +16,12 @@ import {
 } from "lucide-react";
 
 const navItems = [
-  { to: "/",         label: "Dashboard", icon: LayoutDashboard },
-  { to: "/lectures", label: "Lectures",  icon: Presentation },
-  { to: "/history",  label: "History",   icon: History },
-  { to: "/profile",  label: "Profile",   icon: UserCircle },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/lectures", label: "Lectures", icon: Presentation },
+  { to: "/doctor-search", label: "Doctor Search", icon: Search },
+  { to: "/grades", label: "Grades", icon: GraduationCap },
+  { to: "/history", label: "History", icon: History },
+  { to: "/profile", label: "Profile", icon: UserCircle },
 ];
 
 export default function Layout() {
@@ -31,7 +34,9 @@ export default function Layout() {
     nav("/login", { replace: true });
   }
 
-  const initials = (profile?.name || profile?.email || "?").slice(0, 2).toUpperCase();
+  const initials = (profile?.name || profile?.email || "?")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -46,8 +51,12 @@ export default function Layout() {
               <GraduationCap className="h-4 w-4" />
             </div>
             <div className="leading-tight">
-              <div className="text-sm font-semibold text-slate-900">Classroom</div>
-              <div className="text-[11px] text-slate-500 -mt-0.5">Emotions · Student</div>
+              <div className="text-sm font-semibold text-slate-900">
+                Classroom
+              </div>
+              <div className="text-[11px] text-slate-500 -mt-0.5">
+                Emotions · Student
+              </div>
             </div>
           </Link>
           <button
@@ -79,7 +88,9 @@ export default function Layout() {
                 >
                   {({ isActive }) => (
                     <>
-                      <Icon className={`h-4 w-4 ${isActive ? "text-brand-600" : "text-slate-400"}`} />
+                      <Icon
+                        className={`h-4 w-4 ${isActive ? "text-brand-600" : "text-slate-400"}`}
+                      />
                       <span>{label}</span>
                     </>
                   )}
@@ -98,7 +109,9 @@ export default function Layout() {
               <div className="text-sm font-medium text-slate-900 truncate">
                 {profile?.name || "Student"}
               </div>
-              <div className="text-xs text-slate-500 truncate">{profile?.email}</div>
+              <div className="text-xs text-slate-500 truncate">
+                {profile?.email}
+              </div>
             </div>
           </div>
           <button

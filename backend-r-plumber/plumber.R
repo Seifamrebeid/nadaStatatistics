@@ -147,6 +147,39 @@ function(req) {
 #* @get /api/students
 function(req) { require_auth(req); .students_visible_to(req$user) }
 
+#* Full student directory for admin/doctor search pages.
+#* Query params:
+#*   q: free-text query (matches id, student_id, name, email)
+#*   include_inactive: true|false (default true)
+#* @get /api/students/directory
+function(req, q = "", include_inactive = "true") {
+  require_auth(req)
+  role <- req$user$role %||% ""
+  if (!(role %in% c("admin", "doctor"))) {
+    stop(api_error(403, "forbidden"))
+  }
+
+  all <- fs_collection_df("students")
+  if (nrow(all) == 0) return(all)
+
+  include_inactive <- tolower(as.character(include_inactive %||% "true")) %in% c("1", "true", "yes", "y")
+  if (!include_inactive) {
+    all <- all[is.na(all$active) | all$active != FALSE, , drop = FALSE]
+  }
+
+  q <- trimws(as.character(q %||% ""))
+  if (!nzchar(q)) return(all)
+
+  haystack <- paste(
+    as.character(all$id %||% ""),
+    as.character(all$student_id %||% ""),
+    as.character(all$name %||% ""),
+    as.character(all$email %||% ""),
+    sep = " "
+  )
+  all[grepl(q, haystack, ignore.case = TRUE, perl = TRUE), , drop = FALSE]
+}
+
 #* @post /api/students
 function(req, res) {
   require_admin(req)
@@ -427,6 +460,40 @@ function(req, res, id) {
 
 #* @get /api/doctors
 function(req) { require_auth(req); .doctors_visible_to(req$user) }
+
+#* Full doctor directory search endpoint.
+#* Query params:
+#*   q: free-text query (matches id, doctor_id, name, department, email)
+#*   include_inactive: true|false (default false)
+#* @get /api/doctors/directory
+function(req, q = "", include_inactive = "false") {
+  require_auth(req)
+  role <- req$user$role %||% ""
+  if (!(role %in% c("admin", "doctor", "student"))) {
+    stop(api_error(403, "forbidden"))
+  }
+
+  all <- fs_collection_df("doctors")
+  if (nrow(all) == 0) return(all)
+
+  include_inactive <- tolower(as.character(include_inactive %||% "false")) %in% c("1", "true", "yes", "y")
+  if (!include_inactive) {
+    all <- all[is.na(all$active) | all$active != FALSE, , drop = FALSE]
+  }
+
+  q <- trimws(as.character(q %||% ""))
+  if (!nzchar(q)) return(all)
+
+  haystack <- paste(
+    as.character(all$id %||% ""),
+    as.character(all$doctor_id %||% ""),
+    as.character(all$name %||% ""),
+    as.character(all$department %||% ""),
+    as.character(all$email %||% ""),
+    sep = " "
+  )
+  all[grepl(q, haystack, ignore.case = TRUE, perl = TRUE), , drop = FALSE]
+}
 
 #* @post /api/doctors
 function(req, res) {
@@ -1160,6 +1227,127 @@ function(req, res) {
   readBin(tf, "raw", n = file.size(tf))
 }
 
+.mark_to_grade <- function(mark) {
+  if (is.na(mark)) return(NA_character_)
+  if (mark >= 97) return("A*")
+  if (mark >= 93) return("A")
+  if (mark >= 90) return("A-")
+  if (mark >= 87) return("B+")
+  if (mark >= 83) return("B")
+  if (mark >= 80) return("B-")
+  if (mark >= 77) return("C+")
+  if (mark >= 73) return("C")
+  if (mark >= 70) return("C-")
+  if (mark >= 67) return("D+")
+  if (mark >= 63) return("D")
+  if (mark >= 60) return("D-")
+  "F"
+}
+
+.grades_for_user <- function(user, student_id = NULL, q = NULL) {
+  emo <- .emotions_for_user(user, student_id = student_id)
+  if (nrow(emo) == 0) return(data.frame())
+
+  emo$engagement_score <- as.numeric(emo$engagement_score)
+  emo <- emo[!is.na(emo$engagement_score), , drop = FALSE]
+  if (nrow(emo) == 0) return(data.frame())
+
+  lectures <- fs_collection_df("lectures")
+  if (nrow(lectures) == 0) return(data.frame())
+
+  lecture_ids <- if ("id" %in% names(lectures)) lectures$id else lectures$lecture_id
+  subject_id <- lectures$subject_id[match(emo$lecture_id, lecture_ids)]
+  doctor_id <- lectures$doctor_id[match(emo$lecture_id, lecture_ids)]
+
+  g <- data.frame(
+    student_id = as.character(emo$student_id),
+    subject_id = as.character(subject_id),
+    doctor_id = as.character(doctor_id),
+    engagement_score = as.numeric(emo$engagement_score),
+    stringsAsFactors = FALSE
+  )
+  g <- g[!is.na(g$subject_id) & nzchar(g$subject_id), , drop = FALSE]
+  if (nrow(g) == 0) return(data.frame())
+
+  marks <- stats::aggregate(
+    engagement_score ~ student_id + subject_id + doctor_id,
+    data = g,
+    FUN = function(x) round(mean(x, na.rm = TRUE) * 100, 1)
+  )
+  names(marks)[names(marks) == "engagement_score"] <- "mark"
+
+  counts <- stats::aggregate(
+    engagement_score ~ student_id + subject_id + doctor_id,
+    data = g,
+    FUN = length
+  )
+  names(counts)[names(counts) == "engagement_score"] <- "observations"
+
+  out <- merge(marks, counts,
+               by = c("student_id", "subject_id", "doctor_id"),
+               all.x = TRUE)
+  out$grade <- vapply(out$mark, .mark_to_grade, character(1))
+
+  students <- fs_collection_df("students")
+  if (nrow(students) > 0) {
+    student_ids <- if ("id" %in% names(students)) students$id else students$student_id
+    out$student_name <- students$name[match(out$student_id, student_ids)]
+  } else {
+    out$student_name <- NA_character_
+  }
+
+  subjects <- fs_collection_df("subjects")
+  if (nrow(subjects) > 0) {
+    subject_ids <- if ("id" %in% names(subjects)) subjects$id else subjects$subject_id
+    out$subject_name <- subjects$name[match(out$subject_id, subject_ids)]
+    out$subject_code <- subjects$code[match(out$subject_id, subject_ids)]
+  } else {
+    out$subject_name <- NA_character_
+    out$subject_code <- NA_character_
+  }
+
+  doctors <- fs_collection_df("doctors")
+  if (nrow(doctors) > 0) {
+    doctor_ids <- if ("id" %in% names(doctors)) doctors$id else doctors$doctor_id
+    out$doctor_name <- doctors$name[match(out$doctor_id, doctor_ids)]
+  } else {
+    out$doctor_name <- NA_character_
+  }
+
+  q <- trimws(as.character(q %||% ""))
+  if (nzchar(q)) {
+    hay <- paste(
+      out$student_id %||% "",
+      out$student_name %||% "",
+      out$subject_id %||% "",
+      out$subject_name %||% "",
+      out$doctor_name %||% "",
+      out$grade %||% ""
+    )
+    out <- out[grepl(q, hay, ignore.case = TRUE, perl = TRUE), , drop = FALSE]
+  }
+
+  out <- out[order(out$student_name %||% out$student_id,
+                   out$subject_name %||% out$subject_id), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+#* Role-scoped gradebook (mark out of 100 + letter grade) per student and subject.
+#* Query params:
+#*   student_id: optional, further narrows results if caller can view that student
+#*   q: optional free-text search
+#* @get /api/grades
+function(req, student_id = NULL, q = NULL) {
+  require_auth(req)
+  sid <- trimws(as.character(student_id %||% ""))
+  sid <- if (nzchar(sid)) sid else NULL
+  if (!is.null(sid) && !.can_view_student(req$user, sid)) {
+    stop(api_error(403, "forbidden"))
+  }
+  .grades_for_user(req$user, student_id = sid, q = q)
+}
+
 #* @get /api/analytics/engagement
 function(req) {
   require_auth(req)
@@ -1326,6 +1514,92 @@ function(req, res) {
   )
 }
 
+.attendance_current <- function(df, window_minutes = 5) {
+  if (nrow(df) == 0) {
+    return(list(summary = list(present = 0, absent = 0, attendance_rate = 0), rows = list()))
+  }
+  df$timestamp <- as.POSIXct(df$timestamp, tz = "UTC")
+  cutoff <- as.POSIXct(Sys.time(), tz = "UTC") - as.difftime(window_minutes, units = "mins")
+  recent <- df[!is.na(df$timestamp) & df$timestamp >= cutoff, , drop = FALSE]
+
+  all_students <- unique(df$student_id)
+  present <- unique(recent$student_id)
+  absent <- setdiff(all_students, present)
+  rows <- dplyr::summarise(
+    dplyr::group_by(df, student_id),
+    last_seen = max(timestamp, na.rm = TRUE),
+    observations = dplyr::n(),
+    attention_mean = round(mean(as.numeric(attention_score), na.rm = TRUE), 1),
+    cheat_risk_max = round(max(as.numeric(cheat_score), na.rm = TRUE), 1),
+    .groups = "drop"
+  )
+  rows$present <- rows$student_id %in% present
+  rows <- rows[order(rows$present, rows$last_seen, decreasing = c(TRUE, TRUE, TRUE)), , drop = FALSE]
+  list(
+    summary = list(
+      present = length(present),
+      absent = length(absent),
+      attendance_rate = if (length(all_students) > 0) round(length(present) / length(all_students), 3) else 0
+    ),
+    rows = as.list(rows)
+  )
+}
+
+.recommendation_text_r <- function(attention, mark = NA_real_, grade = NA_character_, attendance_rate = NA_real_) {
+  recs <- character(0)
+  if (!is.na(mark) && mark < 70) {
+    recs <- c(recs, "Review the last lecture notes and retry the hardest exercises.")
+  }
+  if (!is.na(attendance_rate) && attendance_rate < 0.8) {
+    recs <- c(recs, "Improve attendance to protect your grade trend.")
+  }
+  if (!is.na(attention) && attention < 50) {
+    recs <- c(recs, "Reduce distractions and keep the camera view centered on you.")
+  } else if (!is.na(attention) && attention < 70) {
+    recs <- c(recs, "Stay active: ask questions or follow along with the lecturer.")
+  }
+  if (!is.na(grade) && grade %in% c("D", "D-", "F")) {
+    recs <- c(recs, "Schedule a quick revision plan with your doctor/teacher.")
+  }
+  if (length(recs) == 0) {
+    recs <- c(recs, "Maintain your current habits and keep the momentum going.")
+  }
+  recs
+}
+
+.recommendations_for_student <- function(user, student_id) {
+  if (is.null(student_id) || !nzchar(student_id)) return(list())
+  if (!.can_view_student(user, student_id)) stop(api_error(403, "forbidden"))
+  df <- .emotions_for_user(user, student_id = student_id)
+  if (nrow(df) == 0) return(list())
+  df$engagement_score <- as.numeric(df$engagement_score)
+  visible_lectures <- .lectures_visible_to(user)
+  total_visible_lectures <- if (nrow(visible_lectures) > 0) length(unique(visible_lectures$id)) else 0
+  attendance_rate <- if (total_visible_lectures > 0) {
+    round(length(unique(df$lecture_id)) / total_visible_lectures, 3)
+  } else {
+    NA_real_
+  }
+  attention_mean <- round(mean(as.numeric(df$attention_score), na.rm = TRUE), 1)
+  last_mark <- NA_real_
+  last_grade <- NA_character_
+  grades <- .grades_for_user(user, student_id = student_id)
+  if (nrow(grades) > 0) {
+    last_mark <- round(mean(as.numeric(grades$mark), na.rm = TRUE), 1)
+    if ("grade" %in% names(grades)) last_grade <- as.character(grades$grade[[1]])
+  }
+  recs <- .recommendation_text_r(attention = attention_mean, mark = last_mark,
+                                 grade = last_grade, attendance_rate = attendance_rate)
+  list(
+    student_id = student_id,
+    attention_mean = attention_mean,
+    attendance_rate = attendance_rate,
+    mark = last_mark,
+    grade = last_grade,
+    recommendations = recs
+  )
+}
+
 #* @serializer contentType list(type = "text/csv")
 #* @get /api/exports/attendance.csv
 function(req, res) {
@@ -1338,6 +1612,19 @@ function(req, res) {
 function(req, res) {
   require_auth(req)
   .write_xlsx_bytes(.attendance_agg(.emotions_for_user(req$user)), "attendance.xlsx", res)
+}
+
+#* @get /api/attendance/current
+function(req, lecture_id = NULL, window_minutes = 5) {
+  require_auth(req)
+  df <- .emotions_for_user(req$user, lecture_id = lecture_id)
+  .attendance_current(df, window_minutes = as.integer(window_minutes))
+}
+
+#* @get /api/recommendations/student/<id>
+function(req, id) {
+  require_auth(req)
+  .recommendations_for_student(req$user, id)
 }
 
 # ============================================================

@@ -12,6 +12,8 @@ import {
   Presentation,
   BarChart3,
   Bell,
+  Search,
+  Award,
   UserCircle,
   LogOut,
   Menu,
@@ -20,15 +22,17 @@ import {
 } from "lucide-react";
 
 const navItems = [
-  { to: "/",              label: "Dashboard",     icon: LayoutDashboard },
-  { to: "/hierarchy",     label: "Hierarchy",     icon: Network },
-  { to: "/subjects",      label: "Subjects",      icon: BookOpen },
-  { to: "/classes",       label: "Classes",       icon: Building2 },
-  { to: "/weeks",         label: "Weeks",         icon: CalendarDays },
-  { to: "/lectures",      label: "Lectures",      icon: Presentation },
-  { to: "/analytics",     label: "Analytics",     icon: BarChart3 },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/hierarchy", label: "Hierarchy", icon: Network },
+  { to: "/subjects", label: "Subjects", icon: BookOpen },
+  { to: "/classes", label: "Classes", icon: Building2 },
+  { to: "/weeks", label: "Weeks", icon: CalendarDays },
+  { to: "/lectures", label: "Lectures", icon: Presentation },
+  { to: "/analytics", label: "Analytics", icon: BarChart3 },
+  { to: "/grades", label: "Grades", icon: Award },
+  { to: "/student-search", label: "Student Search", icon: Search },
   { to: "/notifications", label: "Notifications", icon: Bell },
-  { to: "/profile",       label: "Profile",       icon: UserCircle },
+  { to: "/profile", label: "Profile", icon: UserCircle },
 ];
 
 export default function Layout() {
@@ -41,7 +45,9 @@ export default function Layout() {
     nav("/login", { replace: true });
   }
 
-  const initials = (profile?.name || profile?.email || "?").slice(0, 2).toUpperCase();
+  const initials = (profile?.name || profile?.email || "?")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -56,8 +62,12 @@ export default function Layout() {
               <Stethoscope className="h-4 w-4" />
             </div>
             <div className="leading-tight">
-              <div className="text-sm font-semibold text-slate-900">Classroom</div>
-              <div className="text-[11px] text-slate-500 -mt-0.5">Emotions · Doctor</div>
+              <div className="text-sm font-semibold text-slate-900">
+                Classroom
+              </div>
+              <div className="text-[11px] text-slate-500 -mt-0.5">
+                Emotions · Doctor
+              </div>
             </div>
           </Link>
           <button
@@ -89,7 +99,9 @@ export default function Layout() {
                 >
                   {({ isActive }) => (
                     <>
-                      <Icon className={`h-4 w-4 ${isActive ? "text-brand-600" : "text-slate-400"}`} />
+                      <Icon
+                        className={`h-4 w-4 ${isActive ? "text-brand-600" : "text-slate-400"}`}
+                      />
                       <span>{label}</span>
                     </>
                   )}
@@ -108,7 +120,9 @@ export default function Layout() {
               <div className="text-sm font-medium text-slate-900 truncate">
                 {profile?.name || "Doctor"}
               </div>
-              <div className="text-xs text-slate-500 truncate">{profile?.email}</div>
+              <div className="text-xs text-slate-500 truncate">
+                {profile?.email}
+              </div>
             </div>
           </div>
           <button

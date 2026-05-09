@@ -16,6 +16,22 @@ import {
 } from "lucide-react";
 import Spinner from "../components/Spinner";
 
+const DEMO_DOCTOR = {
+  email: "mona.saeeed@nada.edu",
+  password: "Doctor@123",
+};
+
+function formatAuthError(ex) {
+  const code = ex?.code || "";
+  if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+    return (
+      "That password does not match a seeded doctor account. " +
+      "Use the demo credentials below or reset the emulator seed."
+    );
+  }
+  return ex.message.replace(/^Firebase:\s*/, "");
+}
+
 export default function Login() {
   const { mismatchError, setMismatchError } = useAuth();
   const [email, setEmail] = useState("");
@@ -32,7 +48,33 @@ export default function Login() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
     } catch (ex) {
-      setErr(ex.message.replace(/^Firebase:\s*/, ""));
+      setErr(formatAuthError(ex));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function useDemoCredentials() {
+    setErr(null);
+    setMismatchError(null);
+    setEmail(DEMO_DOCTOR.email);
+    setPassword(DEMO_DOCTOR.password);
+  }
+
+  async function signInAsDemoDoctor() {
+    setErr(null);
+    setMismatchError(null);
+    setBusy(true);
+    try {
+      setEmail(DEMO_DOCTOR.email);
+      setPassword(DEMO_DOCTOR.password);
+      await signInWithEmailAndPassword(
+        auth,
+        DEMO_DOCTOR.email,
+        DEMO_DOCTOR.password,
+      );
+    } catch (ex) {
+      setErr(formatAuthError(ex));
     } finally {
       setBusy(false);
     }
@@ -104,15 +146,21 @@ export default function Login() {
           <ul className="mt-8 space-y-3 text-sm">
             <li className="flex items-center gap-3">
               <Activity className="h-4 w-4 text-indigo-300" />
-              <span className="text-white/80">Live engagement & gesture stream</span>
+              <span className="text-white/80">
+                Live engagement & gesture stream
+              </span>
             </li>
             <li className="flex items-center gap-3">
               <Users className="h-4 w-4 text-indigo-300" />
-              <span className="text-white/80">Class, week, and student-level analytics</span>
+              <span className="text-white/80">
+                Class, week, and student-level analytics
+              </span>
             </li>
             <li className="flex items-center gap-3">
               <Sparkles className="h-4 w-4 text-indigo-300" />
-              <span className="text-white/80">Face sign-in for fast lecture starts</span>
+              <span className="text-white/80">
+                Face sign-in for fast lecture starts
+              </span>
             </li>
           </ul>
         </div>
@@ -128,13 +176,38 @@ export default function Login() {
             <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white">
               <Stethoscope className="h-4 w-4" />
             </div>
-            <div className="font-semibold text-slate-900">Classroom Emotions</div>
+            <div className="font-semibold text-slate-900">
+              Classroom Emotions
+            </div>
           </div>
 
-          <h1 className="text-2xl font-semibold text-slate-900">Welcome back, Doctor</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">
+            Welcome back, Doctor
+          </h1>
           <p className="mt-1 text-sm text-slate-500">
             Sign in with email/password — or use your face.
           </p>
+
+          <div className="mt-5 rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-3 text-sm text-sky-900">
+            <div className="font-medium">Demo doctor account</div>
+            <div className="mt-1 text-sky-800/90">
+              {DEMO_DOCTOR.email} / {DEMO_DOCTOR.password}
+            </div>
+            <button
+              type="button"
+              onClick={useDemoCredentials}
+              className="mt-2 text-xs font-medium text-sky-700 hover:text-sky-900"
+            >
+              Fill these credentials
+            </button>
+            <button
+              type="button"
+              onClick={signInAsDemoDoctor}
+              className="mt-2 block text-xs font-semibold text-sky-700 hover:text-sky-900"
+            >
+              Sign in as demo doctor
+            </button>
+          </div>
 
           {mismatchError && (
             <div className="mt-5 px-3.5 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg flex gap-2">
@@ -173,7 +246,11 @@ export default function Login() {
             />
           </div>
 
-          <button type="submit" disabled={busy} className="btn-primary w-full mt-6 py-2.5">
+          <button
+            type="submit"
+            disabled={busy}
+            className="btn-primary w-full mt-6 py-2.5"
+          >
             {busy && <Spinner size="sm" className="text-white" />}
             {busy ? "Signing in…" : "Sign in"}
           </button>
@@ -190,7 +267,11 @@ export default function Login() {
             disabled={faceBusy}
             className="btn-secondary w-full py-2.5"
           >
-            {faceBusy ? <Spinner size="sm" /> : <ScanFace className="h-4 w-4" />}
+            {faceBusy ? (
+              <Spinner size="sm" />
+            ) : (
+              <ScanFace className="h-4 w-4" />
+            )}
             {faceBusy ? "Scanning face…" : "Sign in with face"}
           </button>
 

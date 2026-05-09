@@ -14,6 +14,7 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(lubridate)
   library(httr)
+  library(jsonlite)
 })
 
 # Walk up from the current working directory looking for the repo root so the
@@ -217,6 +218,99 @@ load_lecture_labels <- function() {
   })
 }
 
+# ---- Full students directory for Shiny search ----
+#
+# Returns all students from Firestore when available (including inactive).
+# Fallback: unique student ids derived from emotions data.
+load_students_directory <- function() {
+  have_firestore <- nzchar(Sys.getenv("FIRESTORE_EMULATOR_HOST", unset = "")) ||
+                    nzchar(Sys.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", unset = ""))
+
+  if (have_firestore) {
+    out <- tryCatch({
+      root <- .find_repo_root()
+      if (is.na(root)) stop("repo root not found")
+      source(file.path(root, "backend-r-plumber", "R", "config.R"))
+      source(file.path(root, "backend-r-plumber", "R", "firestore.R"))
+
+      docs <- fs_list("students")
+      if (length(docs) == 0) return(dplyr::tibble())
+      rows <- lapply(docs, function(d) {
+        flat <- fs_unwrap_fields(d$fields)
+        flat <- lapply(flat, function(x) if (is.null(x)) NA else x)
+        dplyr::as_tibble(flat)
+      })
+      dplyr::bind_rows(rows)
+    }, error = function(e) {
+      message(sprintf("load_students_directory: %s", conditionMessage(e)))
+      NULL
+    })
+
+    if (!is.null(out)) {
+      if (!"student_id" %in% names(out) && "id" %in% names(out)) {
+        out$student_id <- out$id
+      }
+      if (!"active" %in% names(out)) out$active <- TRUE
+      if (!"name" %in% names(out)) out$name <- NA_character_
+      if (!"email" %in% names(out)) out$email <- NA_character_
+      return(out)
+    }
+  }
+
+  # Fallback to whatever we can infer from the observations file.
+  emo <- load_emotions()
+  if (nrow(emo) == 0 || !"student_id" %in% names(emo)) return(dplyr::tibble())
+  emo |>
+    dplyr::distinct(student_id) |>
+    dplyr::mutate(name = NA_character_, email = NA_character_, active = TRUE)
+}
+
+# ---- Full doctors directory for Shiny search ----
+#
+# Returns all doctors from Firestore when available (including inactive).
+# Fallback: unique doctor ids derived from observed lectures/emotions mapping.
+load_doctors_directory <- function() {
+  have_firestore <- nzchar(Sys.getenv("FIRESTORE_EMULATOR_HOST", unset = "")) ||
+                    nzchar(Sys.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", unset = ""))
+
+  if (have_firestore) {
+    out <- tryCatch({
+      root <- .find_repo_root()
+      if (is.na(root)) stop("repo root not found")
+      source(file.path(root, "backend-r-plumber", "R", "config.R"))
+      source(file.path(root, "backend-r-plumber", "R", "firestore.R"))
+
+      docs <- fs_list("doctors")
+      if (length(docs) == 0) return(dplyr::tibble())
+      rows <- lapply(docs, function(d) {
+        flat <- fs_unwrap_fields(d$fields)
+        flat <- lapply(flat, function(x) if (is.null(x)) NA else x)
+        dplyr::as_tibble(flat)
+      })
+      dplyr::bind_rows(rows)
+    }, error = function(e) {
+      message(sprintf("load_doctors_directory: %s", conditionMessage(e)))
+      NULL
+    })
+
+    if (!is.null(out)) {
+      if (!"doctor_id" %in% names(out) && "id" %in% names(out)) {
+        out$doctor_id <- out$id
+      }
+      if (!"active" %in% names(out)) out$active <- TRUE
+      if (!"name" %in% names(out)) out$name <- NA_character_
+      if (!"department" %in% names(out)) out$department <- NA_character_
+      return(out)
+    }
+  }
+
+  emo <- load_emotions() |> attach_doctor_id()
+  if (nrow(emo) == 0 || !"doctor_id" %in% names(emo)) return(dplyr::tibble())
+  emo |>
+    dplyr::distinct(doctor_id) |>
+    dplyr::mutate(name = NA_character_, department = NA_character_, active = TRUE)
+}
+
 # Tiny null-coalesce so the .rows() helper above stays readable.
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -226,3 +320,156 @@ plot_dir <- function() {
   if (!dir.exists(d)) dir.create(d, recursive = TRUE)
   d
 }
+
+# ---- Grades loader -------------------------------------------------------
+.mark_to_grade <- function(mark) {
+  if (is.na(mark)) return(NA_character_)
+  if (mark >= 97) return("A*")
+  if (mark >= 93) return("A")
+  if (mark >= 90) return("A-")
+  if (mark >= 87) return("B+")
+  if (mark >= 83) return("B")
+  if (mark >= 80) return("B-")
+  if (mark >= 77) return("C+")
+  if (mark >= 73) return("C")
+  if (mark >= 70) return("C-")
+  if (mark >= 67) return("D+")
+  if (mark >= 63) return("D")
+  if (mark >= 60) return("D-")
+  "F"
+}
+
+# Compute a role-agnostic grade table. When Firestore is available this
+# uses Firestore collections (lectures, subjects, doctors, students) to
+# resolve subject/doctor names; otherwise falls back to aggregating by
+# `doctor_id` derived from the emotions rows.
+load_grades <- function(student_id = NULL, q = NULL) {
+  have_firestore <- nzchar(Sys.getenv("FIRESTORE_EMULATOR_HOST", unset = "")) ||
+                    nzchar(Sys.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", unset = ""))
+
+  if (have_firestore) {
+    out <- tryCatch({
+      root <- .find_repo_root()
+      if (is.na(root)) stop("repo root not found")
+      source(file.path(root, "backend-r-plumber", "R", "config.R"))
+      source(file.path(root, "backend-r-plumber", "R", "firestore.R"))
+
+      .rows <- function(coll) {
+        docs <- fs_list(coll)
+        if (length(docs) == 0) return(dplyr::tibble())
+        rows <- lapply(docs, function(d) {
+          flat <- fs_unwrap_fields(d$fields)
+          flat <- lapply(flat, function(x) if (is.null(x)) NA else x)
+          dplyr::as_tibble(flat)
+        })
+        dplyr::bind_rows(rows)
+      }
+
+      emotions <- load_from_firestore()
+      if (!is.null(student_id)) emotions <- emotions |> filter(student_id == student_id)
+      if (nrow(emotions) == 0) return(dplyr::tibble())
+
+      lectures <- .rows("lectures")
+      students <- .rows("students")
+      subjects <- .rows("subjects")
+      doctors  <- .rows("doctors")
+
+      lecture_ids <- if (nrow(lectures) > 0) (lectures$lecture_id %||% lectures$id) else character(0)
+      subj_lk <- if (nrow(lectures) > 0) stats::setNames(lectures$subject_id, lecture_ids) else character(0)
+      doc_lk  <- if (nrow(lectures) > 0) stats::setNames(lectures$doctor_id, lecture_ids) else character(0)
+
+      g <- emotions |> mutate(
+        subject_id = unname(subj_lk[lecture_id]),
+        doctor_id  = unname(doc_lk[lecture_id])
+      ) |> filter(!is.na(engagement_score))
+
+      if (nrow(g) == 0) return(dplyr::tibble())
+
+      agg <- g |> group_by(student_id, subject_id, doctor_id) |>
+        summarise(mark = round(mean(engagement_score, na.rm = TRUE) * 100, 1),
+                  observations = dplyr::n(), .groups = "drop")
+
+      agg$grade <- vapply(agg$mark, .mark_to_grade, character(1))
+
+      if (nrow(students) > 0) {
+        student_ids <- if ("id" %in% names(students)) students$id else students$student_id
+        agg$student_name <- students$name[match(agg$student_id, student_ids)]
+      }
+      if (nrow(subjects) > 0) {
+        subject_ids <- if ("id" %in% names(subjects)) subjects$id else subjects$subject_id
+        agg$subject_name <- subjects$name[match(agg$subject_id, subject_ids)]
+        agg$subject_code <- subjects$code[match(agg$subject_id, subject_ids)]
+      }
+      if (nrow(doctors) > 0) {
+        doctor_ids <- if ("id" %in% names(doctors)) doctors$id else doctors$doctor_id
+        agg$doctor_name <- doctors$name[match(agg$doctor_id, doctor_ids)]
+      }
+
+      if (!is.null(q) && nzchar(trimws(q))) {
+        hay <- paste(agg$student_id %||% "", agg$student_name %||% "",
+                     agg$subject_id %||% "", agg$subject_name %||% "",
+                     agg$doctor_name %||% "", agg$grade %||% "")
+        agg <- agg[grepl(q, hay, ignore.case = TRUE, perl = TRUE), , drop = FALSE]
+      }
+      agg
+    }, error = function(e) {
+      message(sprintf("load_grades (firestore): %s", conditionMessage(e)))
+      NULL
+    })
+    if (!is.null(out)) return(out)
+  }
+
+  # Fallback: aggregate from the available emotions rows (may lack subject ids).
+  emo <- tryCatch(load_emotions(), error = function(e) {
+    message(sprintf("load_grades: %s", conditionMessage(e)))
+    dplyr::tibble()
+  })
+  if (!is.null(student_id)) emo <- emo |> filter(student_id == student_id)
+  if (nrow(emo) == 0) return(dplyr::tibble())
+
+  emo <- attach_doctor_id(emo)
+  agg2 <- emo |> filter(!is.na(engagement_score)) |>
+    group_by(student_id, doctor_id) |>
+    summarise(mark = round(mean(engagement_score, na.rm = TRUE) * 100, 1),
+              observations = dplyr::n(), .groups = "drop")
+  agg2$grade <- vapply(agg2$mark, .mark_to_grade, character(1))
+  agg2$subject_id <- NA_character_
+  agg2$subject_name <- NA_character_
+  agg2$student_name <- NA_character_
+  agg2$doctor_name <- agg2$doctor_id
+  agg2
+}
+
+# Call backend API /api/grades and return a tibble. If `token` is provided it
+# will be sent as `Authorization: Bearer <token>` which is useful for emulator
+# flows (the emulator accepts `Bearer owner`). Returns an empty tibble on
+# 404/no-data.
+load_grades_api <- function(base = API_URL, token = NULL, student_id = NULL, q = NULL) {
+  url <- paste0(rtrim_slash(base), "/api/grades")
+  params <- list()
+  if (!is.null(student_id)) params$student_id <- student_id
+  if (!is.null(q)) params$q <- q
+
+  headers <- c()
+  if (!is.null(token) && nzchar(token)) headers <- add_headers(Authorization = paste("Bearer", token))
+
+  resp <- tryCatch({
+    GET(url, headers, query = params)
+  }, error = function(e) NULL)
+
+  if (is.null(resp) || httr::http_error(resp)) return(dplyr::tibble())
+
+  txt <- content(resp, as = "text", encoding = "UTF-8")
+  if (!nzchar(trimws(txt))) return(dplyr::tibble())
+  dat <- tryCatch(fromJSON(txt, simplifyVector = TRUE), error = function(e) NULL)
+  if (is.null(dat) || length(dat) == 0) return(dplyr::tibble())
+
+  # Ensure a tibble and proper columns
+  df <- as_tibble(dat)
+  # Normalize numeric-like columns if present
+  if ("mark" %in% names(df)) df$mark <- as.numeric(df$mark)
+  df
+}
+
+# Helper to trim trailing slash from API base
+rtrim_slash <- function(x) sub("/*$", "", x)

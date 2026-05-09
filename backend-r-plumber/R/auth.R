@@ -56,19 +56,6 @@ lookup_user <- function(uid) {
 #' Allows unauthenticated requests through; individual routes enforce auth.
 #' Also handles CORS headers for all requests.
 auth_filter <- function(req, res) {
-  # Add CORS headers to every response
-  origin <- req$HTTP_ORIGIN %||% "*"
-  res$setHeader("Access-Control-Allow-Origin", origin)
-  res$setHeader("Access-Control-Allow-Credentials", "true")
-  res$setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Finalize-Secret")
-  res$setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-  
-  # Handle preflight OPTIONS requests immediately
-  if (identical(req$REQUEST_METHOD, "OPTIONS")) {
-    res$status <- 204
-    return(list())
-  }
-  
   # Continue with normal request processing
   req$user <- NULL
   hdr <- req$HTTP_AUTHORIZATION %||% ""

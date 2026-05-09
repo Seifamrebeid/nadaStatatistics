@@ -6,6 +6,8 @@ import Login from "./pages/Login";
 import StudentDashboard from "./pages/StudentDashboard";
 import StudentLectures from "./pages/StudentLectures";
 import StudentHistory from "./pages/StudentHistory";
+import StudentDoctorSearch from "./pages/StudentDoctorSearch";
+import StudentGrades from "./pages/StudentGrades";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
@@ -20,6 +22,8 @@ function Gate() {
       <Route element={<Layout />}>
         <Route index element={<StudentDashboard />} />
         <Route path="lectures" element={<StudentLectures />} />
+        <Route path="doctor-search" element={<StudentDoctorSearch />} />
+        <Route path="grades" element={<StudentGrades />} />
         <Route path="history" element={<StudentHistory />} />
         <Route path="profile" element={<Profile />} />
       </Route>

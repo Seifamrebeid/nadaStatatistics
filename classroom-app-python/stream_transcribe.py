@@ -45,7 +45,7 @@ _SILENCE_END_MS = 500  # trailing silence before closing a speech segment
 
 
 class StreamTranscriber:
-    def __init__(self):
+    def __init__(self, on_segment=None):
         self.sample_rate = int(os.getenv("AUDIO_SAMPLE_RATE", "16000"))
         self.model_size = os.getenv("WHISPER_MODEL_SIZE", "small")
         self.compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
@@ -66,6 +66,7 @@ class StreamTranscriber:
         self._transcript_id: Optional[str] = None
         self._rolling_context = ""
         self._chunk_idx = 0
+        self._on_segment = on_segment
 
     def _load_models(self) -> bool:
         try:
@@ -210,6 +211,11 @@ class StreamTranscriber:
                     end=start_sec + seg.end,
                     text=text,
                 )
+                if self._on_segment is not None:
+                    try:
+                        self._on_segment(text, start_sec + seg.start, start_sec + seg.end)
+                    except Exception:
+                        pass
                 self._chunk_idx += 1
                 self._rolling_context = (self._rolling_context + " " + text)[-self.context_chars:]
         except Exception:

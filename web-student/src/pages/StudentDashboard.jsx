@@ -9,6 +9,7 @@ export default function StudentDashboard() {
   const [stats, setStats] = useState(null);
   const [comparison, setComparison] = useState(null);
   const [lectures, setLectures] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
@@ -21,6 +22,10 @@ export default function StudentDashboard() {
           ? await api.get(`/api/analytics/student/${studentId}/comparison`)
           : { data: null };
         const comp = compRes.data;
+        const recRes = studentId
+          ? await api.get(`/api/recommendations/student/${studentId}`)
+          : { data: null };
+        const rec = recRes.data;
 
         const lecturesRes = await api.get("/api/lectures");
         const lecturesList = (
@@ -32,11 +37,15 @@ export default function StudentDashboard() {
         );
 
         setComparison(comp);
+        setRecommendations(
+          Array.isArray(rec?.recommendations) ? rec.recommendations : [],
+        );
         setLectures(lecturesList);
         setStats({
           enrolledCount: lecturesList.length,
           recordingCount: recordingLectures.length,
           averageEngagement: Number(v(comp?.self_mean) ?? 0).toFixed(2),
+          attendanceRate: Number(v(rec?.attendance_rate) || 0),
         });
       } catch (error) {
         console.error("Error fetching dashboard:", error);
@@ -77,7 +86,9 @@ export default function StudentDashboard() {
     <div>
       <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Welcome back</h1>
+          <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">
+            Welcome back
+          </h1>
           <p className="mt-1 text-sm text-slate-500">
             Here's a snapshot of your lectures and engagement.
           </p>
@@ -91,14 +102,46 @@ export default function StudentDashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard label="Enrolled Lectures" value={stats.enrolledCount} accent="brand" icon={Presentation} />
-        <StatCard label="Live Now" value={stats.recordingCount} accent={live ? "red" : "slate"} icon={Radio} />
-        <StatCard label="Your Engagement" value={`${stats.averageEngagement}%`} accent="green" icon={Smile} />
+        <StatCard
+          label="Enrolled Lectures"
+          value={stats.enrolledCount}
+          accent="brand"
+          icon={Presentation}
+        />
+        <StatCard
+          label="Live Now"
+          value={stats.recordingCount}
+          accent={live ? "red" : "slate"}
+          icon={Radio}
+        />
+        <StatCard
+          label="Your Engagement"
+          value={`${stats.averageEngagement}%`}
+          accent="green"
+          icon={Smile}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+        <StatCard
+          label="Attendance rate"
+          value={`${Math.round((stats.attendanceRate || 0) * 100)}%`}
+          accent={
+            stats.attendanceRate >= 0.8
+              ? "green"
+              : stats.attendanceRate >= 0.6
+                ? "amber"
+                : "red"
+          }
+          icon={CalendarClock}
+        />
       </div>
 
       {comparison && (
         <div className="card p-6 mt-6">
-          <h2 className="font-semibold text-slate-900">You vs. Class Average</h2>
+          <h2 className="font-semibold text-slate-900">
+            You vs. Class Average
+          </h2>
           <p className="text-xs text-slate-500 mt-0.5">
             Compared with the average across your enrolled classes.
           </p>
@@ -107,7 +150,9 @@ export default function StudentDashboard() {
             <div>
               <div className="flex justify-between items-center text-sm mb-1.5">
                 <span className="text-slate-600">Your average</span>
-                <span className="font-semibold text-emerald-600">{selfPct.toFixed(2)}%</span>
+                <span className="font-semibold text-emerald-600">
+                  {selfPct.toFixed(2)}%
+                </span>
               </div>
               <div className="w-full bg-slate-100 rounded-full h-2">
                 <div
@@ -119,7 +164,9 @@ export default function StudentDashboard() {
             <div>
               <div className="flex justify-between items-center text-sm mb-1.5">
                 <span className="text-slate-600">Class average</span>
-                <span className="font-semibold text-brand-600">{classPct.toFixed(2)}%</span>
+                <span className="font-semibold text-brand-600">
+                  {classPct.toFixed(2)}%
+                </span>
               </div>
               <div className="w-full bg-slate-100 rounded-full h-2">
                 <div
@@ -130,7 +177,11 @@ export default function StudentDashboard() {
             </div>
             {classPct > 0 && (
               <div className="text-xs text-slate-500 pt-1">
-                You're at <span className="font-medium text-slate-700">{ratio.toFixed(0)}%</span> of the class average.
+                You're at{" "}
+                <span className="font-medium text-slate-700">
+                  {ratio.toFixed(0)}%
+                </span>{" "}
+                of the class average.
               </div>
             )}
           </div>
@@ -138,27 +189,59 @@ export default function StudentDashboard() {
       )}
 
       <div className="card p-6 mt-6">
+        <h2 className="font-semibold text-slate-900">Smart recommendations</h2>
+        <p className="text-xs text-slate-500 mt-0.5">
+          Actions tailored to your attendance, attention, and grade trend.
+        </p>
+        <div className="mt-4 space-y-3">
+          {recommendations.length > 0 ? (
+            recommendations.map((item, idx) => (
+              <div
+                key={idx}
+                className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700"
+              >
+                {item}
+              </div>
+            ))
+          ) : (
+            <div className="text-slate-500 text-sm">
+              No recommendations yet.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card p-6 mt-6">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-semibold text-slate-900">Recent lectures</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Your most recent enrollments.</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Your most recent enrollments.
+            </p>
           </div>
         </div>
         <div className="divide-y divide-slate-100">
           {lectures.slice(0, 6).map((l) => {
             const status = v(l.status) || "scheduled";
             const statusStyle =
-              status === "recording" ? "bg-red-50 text-red-700 ring-red-100" :
-              status === "finished"  ? "bg-emerald-50 text-emerald-700 ring-emerald-100" :
-                                       "bg-slate-100 text-slate-600 ring-slate-200";
+              status === "recording"
+                ? "bg-red-50 text-red-700 ring-red-100"
+                : status === "finished"
+                  ? "bg-emerald-50 text-emerald-700 ring-emerald-100"
+                  : "bg-slate-100 text-slate-600 ring-slate-200";
             return (
-              <div key={v(l.id)} className="flex justify-between items-center py-3">
+              <div
+                key={v(l.id)}
+                className="flex justify-between items-center py-3"
+              >
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="h-9 w-9 rounded-lg bg-brand-50 text-brand-700 flex items-center justify-center ring-1 ring-brand-100 flex-shrink-0">
                     <CalendarClock className="h-4 w-4" />
                   </div>
                   <div className="min-w-0">
-                    <div className="font-medium text-slate-900 truncate">{v(l.title)}</div>
+                    <div className="font-medium text-slate-900 truncate">
+                      {v(l.title)}
+                    </div>
                     <div className="text-xs text-slate-500">
                       {l.scheduled_at
                         ? new Date(v(l.scheduled_at)).toLocaleDateString()

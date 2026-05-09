@@ -13,7 +13,10 @@ export default function LiveClassroom() {
     sleepingCount: 0,
     handRaisedCount: 0,
     toiletRequestCount: 0,
+    attentionAlertsCount: 0,
+    cheatAlertsCount: 0,
   });
+  const [attendance, setAttendance] = useState(null);
   const [transcriptSegments, setTranscriptSegments] = useState([]);
   const [err, setErr] = useState(null);
 
@@ -41,11 +44,35 @@ export default function LiveClassroom() {
           if (v(e.gesture) === "toilet_request") toiletRequest++;
         });
 
+        const attendanceRes = await api.get(
+          `/api/attendance/current?lecture_id=${lectureId}`,
+        );
+        const attendanceData = attendanceRes.data || {};
+
         setCurrentState({
           awakeCount: awake,
           sleepingCount: sleeping,
           handRaisedCount: handRaised,
           toiletRequestCount: toiletRequest,
+          attentionAlertsCount: emotions.filter(
+            (e) =>
+              Number(v(e.attention_warning)) === 1 ||
+              v(e.attention_warning) === true ||
+              (Number(v(e.attention_score)) || 0) < 45,
+          ).length,
+          cheatAlertsCount: emotions.filter(
+            (e) =>
+              Number(v(e.cheat_warning)) === 1 ||
+              v(e.cheat_warning) === true ||
+              (Number(v(e.cheat_score)) || 0) >= 60,
+          ).length,
+        });
+        setAttendance({
+          present: v(attendanceData.summary?.present) || 0,
+          absent: v(attendanceData.summary?.absent) || 0,
+          attendanceRate: Number(
+            v(attendanceData.summary?.attendance_rate) || 0,
+          ),
         });
       } catch (error) {
         console.error("Error polling emotions:", error);
@@ -110,6 +137,44 @@ export default function LiveClassroom() {
             {currentState.toiletRequestCount}
           </div>
           <div className="text-sm text-yellow-700">Toilet Requests</div>
+        </div>
+      </div>
+
+      {attendance && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-emerald-100 p-4 rounded-lg">
+            <div className="text-2xl font-bold text-emerald-800">
+              {attendance.present}
+            </div>
+            <div className="text-sm text-emerald-700">Present now</div>
+          </div>
+          <div className="bg-slate-100 p-4 rounded-lg">
+            <div className="text-2xl font-bold text-slate-800">
+              {attendance.absent}
+            </div>
+            <div className="text-sm text-slate-700">Absent now</div>
+          </div>
+          <div className="bg-indigo-100 p-4 rounded-lg">
+            <div className="text-2xl font-bold text-indigo-800">
+              {Math.round(attendance.attendanceRate * 100)}%
+            </div>
+            <div className="text-sm text-indigo-700">Attendance rate</div>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
+        <div className="bg-amber-100 p-4 rounded-lg">
+          <div className="text-2xl font-bold text-amber-800">
+            {currentState.attentionAlertsCount}
+          </div>
+          <div className="text-sm text-amber-700">Attention alerts</div>
+        </div>
+        <div className="bg-red-100 p-4 rounded-lg">
+          <div className="text-2xl font-bold text-red-800">
+            {currentState.cheatAlertsCount}
+          </div>
+          <div className="text-sm text-red-700">Cheat alerts</div>
         </div>
       </div>
 
