@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, Save } from "lucide-react";
 import {
-  collection, doc, getDocs, query, setDoc, where, serverTimestamp,
+  collection, doc, getDocs, onSnapshot, query, setDoc, where, serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
@@ -16,6 +16,12 @@ const STATUS_STYLE = {
   "":      "bg-slate-100 text-slate-500",
 };
 
+function formatDetectedAt(ts) {
+  if (!ts) return null;
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 export default function DoctorAttendance() {
   const { profile } = useAuth();
   const doctorId = profile?.linked_id;
@@ -25,7 +31,7 @@ export default function DoctorAttendance() {
   const [weeks,     setWeeks]     = useState([]);
   const [lectures,  setLectures]  = useState([]);
   const [students,  setStudents]  = useState([]);
-  const [attMap,    setAttMap]    = useState({}); // key: lectureId_studentId → doc
+  const [attMap,    setAttMap]    = useState({}); // key: studentId → doc
   const [edits,     setEdits]     = useState({}); // key: studentId → status
   const [saving,    setSaving]    = useState(false);
   const [loading,   setLoading]   = useState(false);
@@ -77,10 +83,11 @@ export default function DoctorAttendance() {
 
   useEffect(() => { setSelWeek(null); setEdits({}); }, [selClass]);
 
-  const activeLecture = useMemo(() =>
-    lectures.find((l) => l.subject_id === selSubject && l.class_id === selClass && l.week_number === selWeek) || null,
-    [lectures, selSubject, selClass, selWeek],
-  );
+  const activeLecture = useMemo(() => {
+    const week = weeks.find((w) => w.class_id === selClass && w.week_number === selWeek);
+    if (!week) return null;
+    return lectures.find((l) => l.week_id === week.id) || null;
+  }, [lectures, weeks, selSubject, selClass, selWeek]);
 
   const enrolledStudents = useMemo(() => {
     const cls = classes.find((c) => c.id === selClass);
@@ -88,22 +95,34 @@ export default function DoctorAttendance() {
     return students.filter((s) => ids.includes(s.id));
   }, [classes, students, selClass]);
 
-  // load attendance when lecture changes
+  // Real-time attendance subscription
   useEffect(() => {
     if (!activeLecture) { setAttMap({}); setEdits({}); return; }
-    getDocs(query(collection(db, "attendance"), where("lecture_id", "==", activeLecture.id)))
-      .then((snap) => {
-        const m = {};
-        const e = {};
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          m[data.student_id] = { id: d.id, ...data };
-          e[data.student_id] = data.status || "";
-        });
-        setAttMap(m);
-        setEdits(e);
-      })
-      .catch((e) => setErr(e.message));
+    const q = query(collection(db, "attendance"), where("lecture_id", "==", activeLecture.id));
+    const unsub = onSnapshot(q, (snap) => {
+      const m = {};
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        m[data.student_id] = { id: d.id, ...data };
+      });
+      setAttMap(m);
+      // Merge edits: preserve existing manual edits, auto-fill auto-detected as present
+      setEdits((prev) => {
+        const next = { ...prev };
+        for (const [studentId, doc] of Object.entries(m)) {
+          if (doc.auto_detected === true) {
+            // Auto-detected: set present only if user hasn't manually edited yet
+            if (!(studentId in prev)) {
+              next[studentId] = "present";
+            }
+          } else if (!(studentId in prev)) {
+            next[studentId] = doc.status || "";
+          }
+        }
+        return next;
+      });
+    }, (e) => setErr(e.message));
+    return unsub;
   }, [activeLecture?.id]);
 
   async function saveAll() {
@@ -126,23 +145,22 @@ export default function DoctorAttendance() {
           }, { merge: true });
         })
       );
-      // refresh
-      const snap = await getDocs(query(collection(db, "attendance"), where("lecture_id", "==", activeLecture.id)));
-      const m = {};
-      snap.docs.forEach((d) => { m[d.data().student_id] = { id: d.id, ...d.data() }; });
-      setAttMap(m);
+      // attMap updates automatically via onSnapshot; no manual refresh needed
     } catch (e) { alert("Save failed: " + e.message); }
     finally { setSaving(false); }
   }
 
   const stats = useMemo(() => {
-    const counts = { present: 0, absent: 0, late: 0, excused: 0 };
+    const counts = { present: 0, absent: 0, late: 0, excused: 0, autoDetected: 0 };
     for (const s of enrolledStudents) {
       const st = edits[s.id] || "absent";
       if (counts[st] !== undefined) counts[st]++;
+      if (attMap[s.id]?.auto_detected === true && (edits[s.id] === "present" || (!edits[s.id] && attMap[s.id]?.status === "present"))) {
+        counts.autoDetected++;
+      }
     }
     return counts;
-  }, [edits, enrolledStudents]);
+  }, [edits, enrolledStudents, attMap]);
 
   return (
     <div className="space-y-5">
@@ -197,13 +215,17 @@ export default function DoctorAttendance() {
       {activeLecture && enrolledStudents.length > 0 && (
         <>
           {/* summary */}
-          <div className="grid grid-cols-4 gap-3">
-            {Object.entries(stats).map(([st, n]) => (
+          <div className="grid grid-cols-5 gap-3">
+            {Object.entries({ present: stats.present, absent: stats.absent, late: stats.late, excused: stats.excused }).map(([st, n]) => (
               <div key={st} className={`rounded-xl border p-3 text-center text-sm font-semibold ${STATUS_STYLE[st]}`}>
                 <div className="text-lg">{n}</div>
                 <div className="capitalize text-xs font-normal mt-0.5">{st}</div>
               </div>
             ))}
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-center text-sm font-semibold text-emerald-700">
+              <div className="text-lg">{stats.autoDetected}</div>
+              <div className="text-xs font-normal mt-0.5">Auto-detected</div>
+            </div>
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -223,13 +245,16 @@ export default function DoctorAttendance() {
                   <th className="px-4 py-3">Student</th>
                   <th className="px-4 py-3 text-center">Status</th>
                   <th className="px-4 py-3 text-center">Saved</th>
+                  <th className="px-4 py-3 text-center">Source</th>
                 </tr>
               </thead>
               <tbody>
                 {enrolledStudents.map((s) => {
-                  const current  = edits[s.id] || "";
-                  const saved    = attMap[s.id]?.status || "";
-                  const dirty    = current !== saved;
+                  const current    = edits[s.id] || "";
+                  const saved      = attMap[s.id]?.status || "";
+                  const dirty      = current !== saved;
+                  const isAuto     = attMap[s.id]?.auto_detected === true;
+                  const detectedAt = isAuto ? formatDetectedAt(attMap[s.id]?.detected_at) : null;
                   return (
                     <tr key={s.id} className="border-t border-slate-100">
                       <td className="px-4 py-3 font-medium text-slate-900">{s.name || s.id}</td>
@@ -248,6 +273,16 @@ export default function DoctorAttendance() {
                           </span>
                         ) : (
                           <span className="text-slate-400 text-xs">not saved</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {isAuto ? (
+                          <span className="inline-flex flex-col items-center gap-0.5">
+                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Auto</span>
+                            {detectedAt && <span className="text-xs text-slate-400">{detectedAt}</span>}
+                          </span>
+                        ) : (
+                          <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">Manual</span>
                         )}
                       </td>
                     </tr>

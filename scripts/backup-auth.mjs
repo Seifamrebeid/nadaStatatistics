@@ -7,7 +7,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const PROJECT = process.argv[2] || "emotion-detection-dev";
+const PROJECT = process.argv[2] || "fridgechef-jt50c";
 const OUT = process.argv[3] || "./firebase-emulator/backup/auth-backup.json";
 const BASE = `http://localhost:9099/identitytoolkit.googleapis.com/v1/projects/${PROJECT}`;
 const H = { Authorization: "Bearer owner", "Content-Type": "application/json" };

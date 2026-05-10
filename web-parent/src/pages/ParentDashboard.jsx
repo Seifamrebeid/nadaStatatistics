@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs, query, where, orderBy, limit } from "firebase/firestore";
 import { db } from "../firebase";
 import StatCard from "../components/StatCard";
-import { Users, Presentation, Smile } from "lucide-react";
+import { Users, Presentation, Smile, AlertTriangle, Lightbulb, Brain } from "lucide-react";
 import { useChildren } from "../context/ChildContext";
 
 export default function ParentDashboard() {
@@ -60,11 +60,43 @@ export default function ParentDashboard() {
                   ? perLecture.reduce((s, l) => s + l.my_avg, 0) / perLecture.length
                   : 0;
 
+              // Attention score
+              const attScores = myEmotions.filter((e) => e.attention_score != null).map((e) => e.attention_score);
+              const avgAtt = attScores.length
+                ? attScores.reduce((a, b) => a + b, 0) / attScores.length
+                : null;
+
+              // Warnings in last 7 days
+              const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+              const warnSnap = await getDocs(query(
+                collection(db, "warnings"),
+                where("student_id", "==", c.id),
+                orderBy("timestamp", "desc"),
+                limit(20),
+              ));
+              const recentWarnings = warnSnap.docs.filter((d) => {
+                const ts = d.data().timestamp;
+                const ms = ts?.toMillis ? ts.toMillis() : new Date(ts).getTime();
+                return ms > sevenDaysAgo;
+              });
+
+              // Latest recommendation
+              const recSnap = await getDocs(query(
+                collection(db, "recommendations"),
+                where("student_id", "==", c.id),
+                orderBy("generated_at", "desc"),
+                limit(1),
+              ));
+              const latestRec = recSnap.empty ? null : recSnap.docs[0].data();
+
               return {
                 id: c.id,
                 name: c.name,
                 self: selfMean,
                 lectures: childLectures.length,
+                avgAtt,
+                warnCount: recentWarnings.length,
+                latestRec,
               };
             } catch {
               return { id: c.id, name: c.name, self: 0, lectures: 0 };
@@ -155,29 +187,53 @@ export default function ParentDashboard() {
       <div className="card p-6 mt-6">
         <h2 className="font-semibold text-slate-900 mb-4">Per-child summary</h2>
         <div className="divide-y divide-slate-100">
-          {perChild.map((c) => (
-            <div
-              key={c.id}
-              className="py-3 flex items-center justify-between gap-4"
-            >
-              <div className="min-w-0">
-                <div className="font-medium text-slate-900 truncate">
-                  {c.name || c.id}
-                </div>
-                <div className="text-xs text-slate-500">
-                  {c.lectures} lecture{c.lectures === 1 ? "" : "s"} tracked
-                </div>
-              </div>
-              <div className="flex items-center gap-6 text-sm">
-                <div className="text-right">
-                  <div className="text-[11px] text-slate-500">Engagement</div>
-                  <div className="font-semibold text-emerald-600">
-                    {c.self.toFixed(2)}%
+          {perChild.map((c) => {
+            const attColor = c.avgAtt == null ? "text-slate-400"
+              : c.avgAtt >= 70 ? "text-emerald-600"
+              : c.avgAtt >= 45 ? "text-amber-600"
+              : "text-red-600";
+            return (
+              <div key={c.id} className="py-4 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="font-medium text-slate-900 truncate">{c.name || c.id}</div>
+                    <div className="text-xs text-slate-500">{c.lectures} lecture{c.lectures === 1 ? "" : "s"} tracked</div>
+                  </div>
+                  <div className="flex items-center gap-5 text-sm flex-shrink-0">
+                    <div className="text-right">
+                      <div className="text-[11px] text-slate-500">Engagement</div>
+                      <div className="font-semibold text-emerald-600">{c.self.toFixed(1)}%</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[11px] text-slate-500 flex items-center gap-1"><Brain className="h-3 w-3" />Attention</div>
+                      <div className={`font-semibold ${attColor}`}>{c.avgAtt != null ? `${c.avgAtt.toFixed(1)}` : "—"}</div>
+                    </div>
+                    {c.warnCount > 0 && (
+                      <div className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
+                        <AlertTriangle className="h-3 w-3" />
+                        {c.warnCount} warning{c.warnCount === 1 ? "" : "s"}
+                      </div>
+                    )}
                   </div>
                 </div>
+                {c.latestRec && (
+                  <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-2.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 mb-1.5">
+                      <Lightbulb className="h-3 w-3" /> Latest recommendations
+                    </div>
+                    <ul className="space-y-1">
+                      {(c.latestRec.items || []).map((item, i) => (
+                        <li key={i} className="text-xs text-slate-700 flex items-start gap-1.5">
+                          <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

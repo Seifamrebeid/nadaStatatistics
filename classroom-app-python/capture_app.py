@@ -65,21 +65,26 @@ from gesture_detector import (
     classify_gesture,
     init_hands,
 )
-from audio_recorder import AudioRecorder
+try:
+    from audio_recorder import AudioRecorder
+except Exception as _ar_err:
+    print(f"[capture] audio_recorder unavailable ({_ar_err}); continuing without audio.")
+    class AudioRecorder:  # type: ignore[override]
+        def start(self, lecture_id): pass
+        def add_listener(self, fn): pass
+        def stop(self): return None
+
 # Optional dependency path: if faster-whisper/av is unavailable, keep
 # capture running without live transcription instead of crashing on import.
 try:
     from stream_transcribe import StreamTranscriber
-except Exception:
+except Exception as _st_err:
+    print(f"[capture] stream_transcribe unavailable ({_st_err}); continuing without transcript.")
     class StreamTranscriber:  # type: ignore[override]
-        def start(self, lecture_id):
-            print("stream_transcribe unavailable; continuing without transcript.")
-
-        def feed(self, chunk):
-            return None
-
-        def stop(self):
-            return None
+        def __init__(self, **kwargs): pass
+        def start(self, lecture_id): pass
+        def feed(self, chunk): return None
+        def stop(self): pass
 try:
     from phone_detector import detect_phones, hand_on_phone, phone_near_face
 except Exception:
@@ -99,7 +104,7 @@ except Exception:
     mp = None
 
 
-_LINE_H = 18
+_LINE_H = 13
 _BOX_EMA_ALPHA = 0.45      # box smoothing: lower = smoother/laggier
 _MIN_IOU_MATCH = 0.3       # mesh face to track association
 _MIN_IOU_ID_MATCH = 0.2    # face_recognition box to track association (looser)
@@ -165,7 +170,7 @@ def _draw_stack(frame, box, lines, color) -> None:
     start_y = top - 8 - total_h
     if start_y < 15:
         start_y = bottom + _LINE_H + 5
-    max_w = max((cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
+    max_w = max((cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)[0][0]
                  for line in lines), default=0)
     cv2.rectangle(frame, (left - 2, start_y - _LINE_H),
                   (left + max_w + 6, start_y - _LINE_H + total_h + 4),
@@ -176,7 +181,7 @@ def _draw_stack(frame, box, lines, color) -> None:
         if yy >= frame_h:
             break
         cv2.putText(frame, line, (left + 2, yy),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
 
 
 def _draw_subtitle(frame, text: str) -> None:
@@ -232,7 +237,7 @@ class FaceTrack:
 
 def main() -> int:
     """CLI entry — interactive lecture pick, opens cv2.imshow live window."""
-    load_dotenv(Path(__file__).with_name(".env"))
+    load_dotenv(Path(__file__).with_name(".env"), override=True)
     db = firebase_writer.init_firebase()
     lecture_id, lecture_doc = _pick_lecture(db)
     return run_capture(lecture_id, lecture_doc)
@@ -255,7 +260,7 @@ def run_capture(
         loop exits when the user presses 'q' in the cv2 window.
     """
     _log = on_log if on_log is not None else print
-    load_dotenv(Path(__file__).with_name(".env"))
+    load_dotenv(Path(__file__).with_name(".env"), override=True)
     db = firebase_writer.init_firebase()
 
     _log(f"Recording lecture: {lecture_id} — {lecture_doc.get('title')}")
@@ -320,8 +325,13 @@ def run_capture(
     next_track_id = 0
     last_phone_boxes: List[Tuple[int, int, int, int]] = []
 
+    _marked_present: set = set()
+    _last_warned: Dict[str, float] = {}
+    _WARNING_COOLDOWN = 30.0
+
     frame_idx = 0
     last_flush = time.time()
+    last_rec_flush = time.time()
     total_rows = 0
 
     def _persist_track(tr: FaceTrack, *, subtitle_text: str = "", face_count: int = 1) -> None:
@@ -343,6 +353,43 @@ def run_capture(
         tr.last_cheat_warning = cheating_warning(tr.last_cheat_score)
 
         if tr.student_id != "unknown":
+            # Auto-mark attendance on first detection
+            if tr.student_id not in _marked_present:
+                _marked_present.add(tr.student_id)
+                class_id = lecture_doc.get("class_id")
+                subject_id = lecture_doc.get("subject_id")
+                doctor_id = lecture_doc.get("doctor_id")
+                try:
+                    firebase_writer.mark_attendance_present(
+                        lecture_id, tr.student_id, class_id, subject_id, doctor_id
+                    )
+                    _log(f"attendance: marked {tr.student_id} present (auto)")
+                except Exception as e:
+                    _log(f"attendance write failed: {e}")
+
+            # Fire warning events with cooldown
+            now_t = time.time()
+            warn_key_att = f"{tr.student_id}_att"
+            warn_key_cheat = f"{tr.student_id}_cheat"
+            if tr.last_attention_warning:
+                if now_t - _last_warned.get(warn_key_att, 0) >= _WARNING_COOLDOWN:
+                    _last_warned[warn_key_att] = now_t
+                    try:
+                        firebase_writer.write_warning(
+                            tr.student_id, lecture_id, "attention", tr.last_attention
+                        )
+                    except Exception as e:
+                        _log(f"warning write failed: {e}")
+            if tr.last_cheat_warning:
+                if now_t - _last_warned.get(warn_key_cheat, 0) >= _WARNING_COOLDOWN:
+                    _last_warned[warn_key_cheat] = now_t
+                    try:
+                        firebase_writer.write_warning(
+                            tr.student_id, lecture_id, "cheating", tr.last_cheat_score
+                        )
+                    except Exception as e:
+                        _log(f"warning write failed: {e}")
+
             firebase_writer.save_observation(
                 student_id=tr.student_id,
                 lecture_id=lecture_id,
@@ -617,6 +664,25 @@ def run_capture(
                 flushed = firebase_writer.flush_buffer()
                 total_rows += flushed
                 last_flush = now
+
+            # Write recommendations every 60 seconds per identified student
+            if now - last_rec_flush >= 60.0:
+                last_rec_flush = now
+                att_rate = len(_marked_present) / max(1, len(_marked_present) + 1)
+                for tid, tr in tracks.items():
+                    if tr.student_id == "unknown":
+                        continue
+                    try:
+                        items = recommendation_text(
+                            attention=tr.last_attention,
+                            attendance_rate=att_rate,
+                        )
+                        firebase_writer.write_recommendation(
+                            tr.student_id, lecture_id, items,
+                            tr.last_attention, att_rate,
+                        )
+                    except Exception as e:
+                        _log(f"recommendation write failed: {e}")
 
             if on_frame is not None:
                 on_frame(frame)

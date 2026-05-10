@@ -2,13 +2,21 @@ import { useEffect, useState } from "react";
 import {
   collection,
   getDocs,
+  getCountFromServer,
   query,
   where,
+  orderBy,
+  limit,
+  Timestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import StatCard from "../components/StatCard";
 import { Presentation, Radio, Smile, Hand, Bath } from "lucide-react";
+
+const RECENT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes for live attendance
+const SAMPLE_LIMIT = 300;                 // max emotion docs to read for stats
+const REFRESH_INTERVAL_MS = 30_000;      // refresh every 30 s (not 5 s)
 
 export default function DoctorDashboard() {
   const { profile } = useAuth();
@@ -21,15 +29,10 @@ export default function DoctorDashboard() {
       try {
         const doctorId = profile?.linked_id;
 
-        // Fetch lectures for this doctor
-        let lecturesSnap;
-        if (doctorId) {
-          lecturesSnap = await getDocs(
-            query(collection(db, "lectures"), where("doctor_id", "==", doctorId))
-          );
-        } else {
-          lecturesSnap = await getDocs(collection(db, "lectures"));
-        }
+        // 1. Lectures for this doctor
+        const lecturesSnap = doctorId
+          ? await getDocs(query(collection(db, "lectures"), where("doctor_id", "==", doctorId)))
+          : await getDocs(collection(db, "lectures"));
         const lectures = lecturesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
         const today = new Date().toDateString();
@@ -40,64 +43,48 @@ export default function DoctorDashboard() {
         });
         const recordingLectures = lectures.filter((l) => l.status === "recording");
 
-        // Fetch all emotions for this doctor's lectures
-        const lectureIds = lectures.map((l) => l.id);
-        let emotions = [];
-        if (lectureIds.length > 0) {
-          // Firestore 'in' query supports up to 30 items; chunk if needed
-          const chunks = [];
-          for (let i = 0; i < lectureIds.length; i += 30) {
-            chunks.push(lectureIds.slice(i, i + 30));
-          }
-          for (const chunk of chunks) {
-            const snap = await getDocs(
-              query(collection(db, "emotions"), where("lecture_id", "in", chunk))
-            );
-            emotions.push(...snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-          }
-        }
+        // 2. Recent emotions only — scoped to the last 15 minutes to detect live presence
+        //    Read at most SAMPLE_LIMIT docs to protect quota.
+        const cutoff = Timestamp.fromMillis(Date.now() - RECENT_WINDOW_MS);
+        const recentEmotionsSnap = await getDocs(
+          query(
+            collection(db, "emotions"),
+            where("timestamp", ">=", cutoff),
+            orderBy("timestamp", "desc"),
+            limit(SAMPLE_LIMIT),
+          )
+        );
+        const recentEmotions = recentEmotionsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+        // Filter to this doctor's lectures only
+        const lectureIdSet = new Set(lectures.map((l) => l.id));
+        const myEmotions = recentEmotions.filter((e) => !lectureIdSet.size || lectureIdSet.has(e.lecture_id));
 
         const avgEngagement =
-          emotions.length > 0
-            ? (
-                emotions.reduce((sum, e) => sum + (e.engagement_score || 0), 0) /
-                emotions.length
-              ).toFixed(2)
-            : 0;
+          myEmotions.length > 0
+            ? (myEmotions.reduce((s, e) => s + (Number(e.engagement_score) || 0), 0) / myEmotions.length).toFixed(1)
+            : "—";
 
-        // Attendance: students with emotion record in last 10 minutes are present
-        const tenMinAgo = Date.now() - 10 * 60 * 1000;
-        const recentStudents = new Set();
-        emotions.forEach((e) => {
-          const ts = e.timestamp?.toMillis
-            ? e.timestamp.toMillis()
-            : e.timestamp
-              ? new Date(e.timestamp).getTime()
-              : 0;
-          if (ts > tenMinAgo) recentStudents.add(e.student_id);
-        });
-        const allStudentIds = new Set(emotions.map((e) => e.student_id).filter(Boolean));
-        const presentCount = recentStudents.size;
-        const absentCount = allStudentIds.size - presentCount;
-        const attendanceRate =
-          allStudentIds.size > 0 ? presentCount / allStudentIds.size : 0;
+        // Live attendance: unique students seen in the window
+        const recentStudentIds = new Set(myEmotions.map((e) => e.student_id).filter(Boolean));
+        const presentCount = recentStudentIds.size;
+
+        // Total enrolled estimate from attendance collection (count only)
+        const attendanceCountSnap = await getCountFromServer(collection(db, "attendance"));
+        const totalEnrolled = attendanceCountSnap.data().count || presentCount;
+        const absentCount = Math.max(0, totalEnrolled - presentCount);
+        const attendanceRate = totalEnrolled > 0 ? presentCount / totalEnrolled : 0;
 
         setStats({
           todayCount: todayLectures.length,
           recordingCount: recordingLectures.length,
           avgEngagement,
-          raisedHandsCount: emotions.filter((e) => e.gesture === "hand_raised").length,
-          toiletRequestsCount: emotions.filter((e) => e.gesture === "toilet_request").length,
-          attentionAlertsCount: emotions.filter(
-            (e) => (Number(e.engagement_score) || 0) < 45
-          ).length,
+          raisedHandsCount: myEmotions.filter((e) => e.gesture === "hand_raised").length,
+          toiletRequestsCount: myEmotions.filter((e) => e.gesture === "toilet_request").length,
+          attentionAlertsCount: myEmotions.filter((e) => (Number(e.engagement_score) || 100) < 45).length,
           cheatAlertsCount: 0,
         });
-        setAttendance({
-          present: presentCount,
-          absent: absentCount,
-          attendanceRate,
-        });
+        setAttendance({ present: presentCount, absent: absentCount, attendanceRate });
       } catch (error) {
         console.error("Error fetching dashboard stats:", error);
         setErr(error.message);
@@ -105,7 +92,7 @@ export default function DoctorDashboard() {
     };
 
     fetchStats();
-    const interval = setInterval(fetchStats, 5000);
+    const interval = setInterval(fetchStats, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [profile]);
 
@@ -140,7 +127,7 @@ export default function DoctorDashboard() {
             Doctor Dashboard
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Live snapshot of your teaching activity. Refreshes every 5 seconds.
+            Live snapshot — last 15 min of activity. Refreshes every 30 seconds.
           </p>
         </div>
         {recording && (

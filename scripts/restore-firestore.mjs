@@ -4,7 +4,7 @@
 import { readFile } from "node:fs/promises";
 
 const IN = process.argv[2] || "./firebase-emulator/backup/firestore-backup.json";
-const TARGET = process.argv[3] || "emotion-detection-dev";
+const TARGET = process.argv[3] || "fridgechef-jt50c";
 const FS = `http://localhost:8080/v1/projects/${TARGET}/databases/(default)/documents`;
 const H = { Authorization: "Bearer owner", "Content-Type": "application/json" };
 

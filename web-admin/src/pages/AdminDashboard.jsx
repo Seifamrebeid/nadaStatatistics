@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { collection, getDocs, getCountFromServer } from "firebase/firestore";
+import {
+  collection, getDocs, getCountFromServer, query, orderBy, limit,
+} from "firebase/firestore";
 import { db } from "../firebase";
 import StatCard from "../components/StatCard";
 import {
@@ -20,6 +22,8 @@ import {
   CartesianGrid,
 } from "recharts";
 
+const SAMPLE_SIZE = 500; // read only the latest N emotion records for analytics
+
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
   const [err, setErr] = useState(null);
@@ -27,38 +31,30 @@ export default function AdminDashboard() {
   useEffect(() => {
     async function load() {
       try {
-        const [studentsSnap, doctorsSnap, lecturesSnap, emotionsSnap] =
+        // Use count queries for totals (1 read each, no quota burn)
+        const [studentsSnap, doctorsSnap, lecturesSnap, emotionsCountSnap, emotionsSampleSnap] =
           await Promise.all([
             getCountFromServer(collection(db, "students")),
             getCountFromServer(collection(db, "doctors")),
             getCountFromServer(collection(db, "lectures")),
-            getDocs(collection(db, "emotions")),
+            getCountFromServer(collection(db, "emotions")),
+            getDocs(query(collection(db, "emotions"), orderBy("timestamp", "desc"), limit(SAMPLE_SIZE))),
           ]);
 
-        const emotions = emotionsSnap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }));
+        const totalObservations = emotionsCountSnap.data().count;
+        const emotions = emotionsSampleSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-        const totalObservations = emotions.length;
-
-        // Mean engagement score
+        // Mean engagement score (from sample)
         const meanEngagement =
-          totalObservations > 0
-            ? emotions.reduce(
-                (a, e) => a + (Number(e.engagement_score) || 0),
-                0,
-              ) / totalObservations
+          emotions.length > 0
+            ? emotions.reduce((a, e) => a + (Number(e.engagement_score) || 0), 0) / emotions.length
             : 0;
 
-        // Sleep rate
-        const sleepCount = emotions.filter(
-          (e) => e.state === "sleeping",
-        ).length;
-        const sleepRate =
-          totalObservations > 0 ? sleepCount / totalObservations : 0;
+        // Sleep rate (from sample)
+        const sleepCount = emotions.filter((e) => e.state === "sleeping").length;
+        const sleepRate = emotions.length > 0 ? sleepCount / emotions.length : 0;
 
-        // Top gestures
+        // Top gestures (from sample)
         const gestureCounts = {};
         emotions.forEach((e) => {
           if (e.gesture) {
@@ -78,6 +74,7 @@ export default function AdminDashboard() {
           mean_engagement: meanEngagement,
           sleep_rate: sleepRate,
           top_gestures: topGestures,
+          sample_size: emotions.length,
         });
       } catch (e) {
         setErr(e.message);
@@ -179,7 +176,7 @@ export default function AdminDashboard() {
                 Top gestures observed
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Aggregated across all sessions
+                Based on latest {stats.sample_size} observations
               </p>
             </div>
           </div>
@@ -212,7 +209,7 @@ export default function AdminDashboard() {
                   fontSize: 12,
                 }}
               />
-              <Bar dataKey="n" fill="#10b981" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="n" fill="#7c3aed" radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

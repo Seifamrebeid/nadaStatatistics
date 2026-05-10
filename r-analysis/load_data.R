@@ -79,9 +79,28 @@ API_URL  <- Sys.getenv("API_URL",  unset = "http://localhost:8000")
     )
 }
 
+.empty_emotions_tibble <- function() {
+  dplyr::tibble(
+    timestamp        = as.POSIXct(character(0)),
+    student_id       = character(0),
+    lecture_id       = character(0),
+    emotion          = character(0),
+    state            = character(0),
+    sleep_reason     = character(0),
+    gesture          = character(0),
+    engagement_score = numeric(0),
+    confidence       = numeric(0),
+    attention_score  = numeric(0),
+    cheat_warning    = logical(0),
+    cheat_score      = numeric(0)
+  )
+}
+
 load_from_csv <- function(path = CSV_PATH) {
-  if (!file.exists(path)) stop(sprintf("CSV not found at %s", path))
-  readr::read_csv(path, show_col_types = FALSE) |> .normalise_emotions()
+  if (!file.exists(path)) return(.empty_emotions_tibble())
+  df <- readr::read_csv(path, show_col_types = FALSE)
+  if (nrow(df) == 0) return(.empty_emotions_tibble())
+  df |> .normalise_emotions()
 }
 
 load_from_api <- function(base = API_URL, token = NULL) {
@@ -99,7 +118,7 @@ load_from_firestore <- function() {
   source(file.path(root, "backend-r-plumber", "R", "config.R"))
   source(file.path(root, "backend-r-plumber", "R", "firestore.R"))
   docs <- fs_list("emotions")
-  if (length(docs) == 0) return(dplyr::tibble())
+  if (length(docs) == 0) return(.empty_emotions_tibble())
   # fs_unwrap_fields returns a named list; some fields may be NULL (null in
   # Firestore). Coerce each to a 1-row tibble so bind_rows aligns columns.
   rows <- lapply(docs, function(d) {
@@ -142,8 +161,10 @@ load_emotions <- function() {
 # a synthetic mapping the Shiny app can override. Default: everything belongs
 # to `doc_test` (matches the seeded lecture).
 attach_doctor_id <- function(df, mapping = c(lec_test_001 = "doc_test")) {
-  df |> mutate(doctor_id = unname(mapping[lecture_id]) |>
-                 dplyr::coalesce("doc_unknown"))
+  if (nrow(df) == 0 || !"lecture_id" %in% names(df)) {
+    return(dplyr::mutate(df, doctor_id = character(0)))
+  }
+  df |> dplyr::mutate(doctor_id = dplyr::coalesce(unname(mapping[lecture_id]), "doc_unknown"))
 }
 
 # ---- Lecture metadata for the Shiny picker ----
@@ -339,10 +360,8 @@ plot_dir <- function() {
   "F"
 }
 
-# Compute a role-agnostic grade table. When Firestore is available this
-# uses Firestore collections (lectures, subjects, doctors, students) to
-# resolve subject/doctor names; otherwise falls back to aggregating by
-# `doctor_id` derived from the emotions rows.
+# Read directly from the `grades` Firestore collection (written by web portals).
+# Returns a tidy tibble with student_name, subject_name, doctor_name enriched.
 load_grades <- function(student_id = NULL, q = NULL) {
   have_firestore <- nzchar(Sys.getenv("FIRESTORE_EMULATOR_HOST", unset = "")) ||
                     nzchar(Sys.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", unset = ""))
@@ -359,85 +378,78 @@ load_grades <- function(student_id = NULL, q = NULL) {
         if (length(docs) == 0) return(dplyr::tibble())
         rows <- lapply(docs, function(d) {
           flat <- fs_unwrap_fields(d$fields)
-          flat <- lapply(flat, function(x) if (is.null(x)) NA else x)
+          flat <- lapply(flat, function(x) if (is.null(x) || length(x) == 0) NA else x[[1]])
           dplyr::as_tibble(flat)
         })
         dplyr::bind_rows(rows)
       }
 
-      emotions <- load_from_firestore()
-      if (!is.null(student_id)) emotions <- emotions |> filter(student_id == student_id)
-      if (nrow(emotions) == 0) return(dplyr::tibble())
+      grades   <- .rows("grades")
+      if (nrow(grades) == 0) return(dplyr::tibble())
 
-      lectures <- .rows("lectures")
       students <- .rows("students")
       subjects <- .rows("subjects")
       doctors  <- .rows("doctors")
 
-      lecture_ids <- if (nrow(lectures) > 0) (lectures$lecture_id %||% lectures$id) else character(0)
-      subj_lk <- if (nrow(lectures) > 0) stats::setNames(lectures$subject_id, lecture_ids) else character(0)
-      doc_lk  <- if (nrow(lectures) > 0) stats::setNames(lectures$doctor_id, lecture_ids) else character(0)
-
-      g <- emotions |> mutate(
-        subject_id = unname(subj_lk[lecture_id]),
-        doctor_id  = unname(doc_lk[lecture_id])
-      ) |> filter(!is.na(engagement_score))
-
-      if (nrow(g) == 0) return(dplyr::tibble())
-
-      agg <- g |> group_by(student_id, subject_id, doctor_id) |>
-        summarise(mark = round(mean(engagement_score, na.rm = TRUE) * 100, 1),
-                  observations = dplyr::n(), .groups = "drop")
-
-      agg$grade <- vapply(agg$mark, .mark_to_grade, character(1))
-
-      if (nrow(students) > 0) {
-        student_ids <- if ("id" %in% names(students)) students$id else students$student_id
-        agg$student_name <- students$name[match(agg$student_id, student_ids)]
+      # Filter by student if requested
+      if (!is.null(student_id) && nzchar(student_id)) {
+        grades <- grades |> dplyr::filter(student_id == !!student_id)
       }
-      if (nrow(subjects) > 0) {
-        subject_ids <- if ("id" %in% names(subjects)) subjects$id else subjects$subject_id
-        agg$subject_name <- subjects$name[match(agg$subject_id, subject_ids)]
-        agg$subject_code <- subjects$code[match(agg$subject_id, subject_ids)]
-      }
-      if (nrow(doctors) > 0) {
-        doctor_ids <- if ("id" %in% names(doctors)) doctors$id else doctors$doctor_id
-        agg$doctor_name <- doctors$name[match(agg$doctor_id, doctor_ids)]
-      }
+      if (nrow(grades) == 0) return(dplyr::tibble())
 
+      # Enrich with names
+      stud_ids <- if ("id" %in% names(students)) students$id else students$student_id %||% character(0)
+      subj_ids <- if ("id" %in% names(subjects)) subjects$id else subjects$subject_id %||% character(0)
+      doc_ids  <- if ("id" %in% names(doctors))  doctors$id  else doctors$doctor_id  %||% character(0)
+
+      grades$student_name <- if (length(stud_ids) > 0) students$name[match(grades$student_id, stud_ids)] else NA_character_
+      grades$subject_name <- if (length(subj_ids) > 0) subjects$name[match(grades$subject_id, subj_ids)] else NA_character_
+      grades$subject_code <- if (length(subj_ids) > 0 && "code" %in% names(subjects)) subjects$code[match(grades$subject_id, subj_ids)] else NA_character_
+      grades$doctor_name  <- if (length(doc_ids)  > 0) doctors$name[match(grades$doctor_id,   doc_ids)]  else NA_character_
+
+      # Normalise column names for the Shiny gradebook table
+      # web app stores: week7, week12, classwork, final, total, letter
+      if ("total" %in% names(grades) && !"mark" %in% names(grades))  grades$mark  <- as.numeric(grades$total)
+      if ("letter" %in% names(grades) && !"grade" %in% names(grades)) grades$grade <- grades$letter
+      if (!"observations" %in% names(grades)) grades$observations <- NA_integer_
+
+      # Optional text search
       if (!is.null(q) && nzchar(trimws(q))) {
-        hay <- paste(agg$student_id %||% "", agg$student_name %||% "",
-                     agg$subject_id %||% "", agg$subject_name %||% "",
-                     agg$doctor_name %||% "", agg$grade %||% "")
-        agg <- agg[grepl(q, hay, ignore.case = TRUE, perl = TRUE), , drop = FALSE]
+        hay <- paste(
+          as.character(grades$student_id   %||% ""),
+          as.character(grades$student_name %||% ""),
+          as.character(grades$subject_id   %||% ""),
+          as.character(grades$subject_name %||% ""),
+          as.character(grades$doctor_name  %||% ""),
+          as.character(grades$grade        %||% "")
+        )
+        grades <- grades[grepl(q, hay, ignore.case = TRUE, perl = TRUE), , drop = FALSE]
       }
-      agg
+
+      grades
     }, error = function(e) {
-      message(sprintf("load_grades (firestore): %s", conditionMessage(e)))
+      message(sprintf("load_grades (grades collection): %s", conditionMessage(e)))
       NULL
     })
-    if (!is.null(out)) return(out)
+    if (!is.null(out) && nrow(out) > 0) return(out)
   }
 
-  # Fallback: aggregate from the available emotions rows (may lack subject ids).
-  emo <- tryCatch(load_emotions(), error = function(e) {
-    message(sprintf("load_grades: %s", conditionMessage(e)))
-    dplyr::tibble()
-  })
-  if (!is.null(student_id)) emo <- emo |> filter(student_id == student_id)
+  # Fallback: compute from emotions (when grades collection is empty)
+  emo <- tryCatch(load_emotions(), error = function(e) dplyr::tibble())
+  if (!is.null(student_id)) emo <- emo |> dplyr::filter(student_id == !!student_id)
   if (nrow(emo) == 0) return(dplyr::tibble())
 
   emo <- attach_doctor_id(emo)
-  agg2 <- emo |> filter(!is.na(engagement_score)) |>
-    group_by(student_id, doctor_id) |>
-    summarise(mark = round(mean(engagement_score, na.rm = TRUE) * 100, 1),
-              observations = dplyr::n(), .groups = "drop")
-  agg2$grade <- vapply(agg2$mark, .mark_to_grade, character(1))
-  agg2$subject_id <- NA_character_
-  agg2$subject_name <- NA_character_
-  agg2$student_name <- NA_character_
-  agg2$doctor_name <- agg2$doctor_id
-  agg2
+  agg <- emo |> dplyr::filter(!is.na(engagement_score)) |>
+    dplyr::group_by(student_id, doctor_id) |>
+    dplyr::summarise(mark = round(mean(engagement_score, na.rm = TRUE) * 100, 1),
+                     observations = dplyr::n(), .groups = "drop")
+  agg$grade        <- vapply(agg$mark, .mark_to_grade, character(1))
+  agg$subject_id   <- NA_character_
+  agg$subject_name <- NA_character_
+  agg$student_name <- NA_character_
+  agg$doctor_name  <- agg$doctor_id
+  agg
 }
 
 # Call backend API /api/grades and return a tibble. If `token` is provided it

@@ -25,7 +25,7 @@ const EMU_DIR = resolve(REPO, "firebase-emulator");
 
 const FIRESTORE_BACKUP = resolve(REPO, "firebase-emulator/backup/firestore-backup.json");
 const AUTH_BACKUP      = resolve(REPO, "firebase-emulator/backup/auth-backup.json");
-const PROJECT          = process.env.FIREBASE_PROJECT_ID || "emotion-detection-dev";
+const PROJECT          = process.env.FIREBASE_PROJECT_ID || "fridgechef-jt50c";
 
 const args = new Set(process.argv.slice(2));
 const SKIP_RESTORE = args.has("--no-restore");
@@ -84,9 +84,20 @@ emu.on("error", (e) => {
   process.exit(1);
 });
 
+let shuttingDown = false;
 for (const sig of ["SIGINT", "SIGTERM", "SIGBREAK"]) {
-  process.on(sig, () => {
-    log(`received ${sig}, forwarding to emulator…`);
+  process.on(sig, async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log(`received ${sig}, saving data before shutdown…`);
+    try {
+      await runNode(resolve(__dirname, "backup-firestore.mjs"));
+      await runNode(resolve(__dirname, "backup-auth.mjs"));
+      log("backup complete");
+    } catch (e) {
+      console.error(`[start] backup failed: ${e.message}`);
+    }
+    log("stopping emulator…");
     emu.kill(sig);
   });
 }

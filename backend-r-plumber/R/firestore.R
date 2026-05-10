@@ -6,6 +6,9 @@
 
 library(httr)
 library(jsonlite)
+library(openssl)
+
+`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # ---- Base URL + auth ----
 
@@ -31,6 +34,67 @@ fs_auth_header <- function() {
   } else {
     add_headers(Authorization = paste("Bearer", gcp_access_token()))
   }
+}
+
+# ---- Service-account OAuth2 token (prod) ----
+#
+# Cached in-process: one token per R session, refreshed when it expires.
+.token_cache <- new.env(parent = emptyenv())
+
+gcp_access_token <- function() {
+  now <- as.numeric(Sys.time())
+  if (!is.null(.token_cache$token) && !is.null(.token_cache$expires_at) &&
+      now < .token_cache$expires_at - 60) {
+    return(.token_cache$token)
+  }
+
+  sa_path <- Sys.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", unset = "")
+  if (!nzchar(sa_path)) stop("FIREBASE_SERVICE_ACCOUNT_JSON not set")
+  # resolve relative path — try backend dir first (where .Renviron is), then repo root
+  if (!file.exists(sa_path)) {
+    root <- tryCatch(.find_repo_root(), error = function(e) NA_character_)
+    if (!is.na(root)) {
+      from_backend <- normalizePath(file.path(root, "backend-r-plumber", sa_path), mustWork = FALSE)
+      if (file.exists(from_backend)) {
+        sa_path <- from_backend
+      } else {
+        sa_path <- normalizePath(file.path(root, sa_path), mustWork = FALSE)
+      }
+    }
+  }
+  if (!file.exists(sa_path)) stop(sprintf("service account file not found: %s", sa_path))
+
+  sa <- jsonlite::fromJSON(sa_path, simplifyVector = FALSE)
+  iat <- floor(now)
+  exp <- iat + 3600L
+
+  claims <- jose::jwt_claim(
+    iss   = sa$client_email,
+    scope = "https://www.googleapis.com/auth/datastore",
+    aud   = "https://oauth2.googleapis.com/token",
+    iat   = iat,
+    exp   = exp
+  )
+
+  key <- openssl::read_key(gsub("\\\\n", "\n", sa$private_key))
+  jwt <- jose::jwt_encode_sig(claims, key = key, size = 256)
+
+  resp <- httr::POST(
+    "https://oauth2.googleapis.com/token",
+    body = list(
+      grant_type = "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion  = jwt
+    ),
+    encode = "form"
+  )
+  if (httr::http_error(resp)) {
+    stop(sprintf("gcp_access_token: token exchange failed: %s",
+                 httr::content(resp, as = "text", encoding = "UTF-8")))
+  }
+  tok <- httr::content(resp, as = "parsed", encoding = "UTF-8")
+  .token_cache$token      <- tok$access_token
+  .token_cache$expires_at <- now + as.numeric(tok$expires_in %||% 3600)
+  .token_cache$token
 }
 
 # ---- Typed value <-> R value ----

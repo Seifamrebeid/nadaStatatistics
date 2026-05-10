@@ -50,7 +50,11 @@ function NumInput({ value, max, onChange, disabled }) {
       min={0}
       max={max}
       value={value}
-      onChange={(e) => onChange(Math.min(max, Math.max(0, Number(e.target.value) || 0)))}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw === "") { onChange(""); return; }
+        onChange(Math.min(max, Math.max(0, Number(raw))));
+      }}
       disabled={disabled}
       className="w-16 rounded-lg border border-slate-300 px-2 py-1 text-center text-sm disabled:bg-slate-50 disabled:text-slate-400"
     />
@@ -157,14 +161,15 @@ export default function DoctorGrades() {
   }
 
   async function saveRow(row) {
-    const e         = getEdit(row.key);
+    const e          = getEdit(row.key);
     const isWithdraw = e.withdraw;
-    const week7     = isWithdraw ? null : (Number(e.week7)     || 0);
-    const week12    = isWithdraw ? null : (Number(e.week12)    || 0);
-    const classwork = isWithdraw ? null : (Number(e.classwork) || 0);
-    const final_    = isWithdraw ? null : (Number(e.final)     || 0);
-    const total     = isWithdraw ? null : week7 + week12 + classwork + final_;
-    const letter    = isWithdraw ? "W"  : (e.letterOverride || computeLetter(total, final_));
+    const week7      = isWithdraw ? null : (e.week7     !== "" ? Number(e.week7)     : null);
+    const week12     = isWithdraw ? null : (e.week12    !== "" ? Number(e.week12)    : null);
+    const classwork  = isWithdraw ? null : (e.classwork !== "" ? Number(e.classwork) : null);
+    const final_     = isWithdraw ? null : (e.final     !== "" ? Number(e.final)     : null);
+    const allFilled  = week7 !== null && week12 !== null && classwork !== null && final_ !== null;
+    const total      = isWithdraw ? null : (allFilled ? week7 + week12 + classwork + final_ : null);
+    const letter     = isWithdraw ? "W"  : (e.letterOverride || (allFilled ? computeLetter(total, final_) : null));
 
     setSaving((prev) => ({ ...prev, [row.key]: true }));
     try {
@@ -176,7 +181,7 @@ export default function DoctorGrades() {
         week7, week12, classwork,
         final: final_,
         total, letter,
-        status:     isWithdraw ? "withdraw" : "graded",
+        status:     isWithdraw ? "withdraw" : (allFilled ? "graded" : "partial"),
         updated_at: serverTimestamp(),
       }, { merge: true });
       setGradeMap((prev) => ({
@@ -243,15 +248,15 @@ export default function DoctorGrades() {
             </thead>
             <tbody>
               {rows.map((row) => {
-                const e      = getEdit(row.key);
-                const isW    = e.withdraw;
-                const w7     = isW ? 0 : (Number(e.week7)     || 0);
-                const w12    = isW ? 0 : (Number(e.week12)    || 0);
-                const cw     = isW ? 0 : (Number(e.classwork) || 0);
-                const fn     = isW ? 0 : (Number(e.final)     || 0);
-                const total  = w7 + w12 + cw + fn;
-                const hasAny = !isW && (e.week7 !== "" || e.week12 !== "" || e.classwork !== "" || e.final !== "");
-                const autoLetter = hasAny ? computeLetter(total, fn) : "—";
+                const e         = getEdit(row.key);
+                const isW       = e.withdraw;
+                const allFilled = !isW && e.week7 !== "" && e.week12 !== "" && e.classwork !== "" && e.final !== "";
+                const w7        = allFilled ? Number(e.week7)     : 0;
+                const w12       = allFilled ? Number(e.week12)    : 0;
+                const cw        = allFilled ? Number(e.classwork) : 0;
+                const fn        = allFilled ? Number(e.final)     : 0;
+                const total     = allFilled ? w7 + w12 + cw + fn : null;
+                const autoLetter = allFilled ? computeLetter(total, fn) : "—";
                 const letter     = isW ? "W" : (e.letterOverride || autoLetter);
                 const isSaving   = !!saving[row.key];
                 return (
@@ -271,7 +276,7 @@ export default function DoctorGrades() {
                       <NumInput value={e.final} max={40} onChange={(v) => setField(row.key, "final", v)} disabled={isW} />
                     </td>
                     <td className="px-4 py-2 text-center font-semibold text-slate-800">
-                      {isW ? "—" : (hasAny ? total : "—")}
+                      {isW ? "—" : (total !== null ? total : "—")}
                     </td>
                     <td className="px-4 py-2 text-center">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${LETTER_COLOR[letter] || "bg-slate-100 text-slate-600"}`}>

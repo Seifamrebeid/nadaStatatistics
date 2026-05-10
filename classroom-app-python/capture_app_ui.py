@@ -110,11 +110,16 @@ def fetch_weeks(db, class_id: str) -> List[dict]:
 
 def fetch_lectures(db, week_id: str) -> List[dict]:
     docs = _coll(db, "lectures")
+    print(f"[wizard] fetch_lectures: week_id={week_id!r} total_docs={len(docs)}", flush=True)
     lectures = [
         d for d in docs
         if d.get("week_id") == week_id
         and d.get("status") in ("scheduled", "recording")
     ]
+    print(f"[wizard] fetch_lectures: matched={len(lectures)}", flush=True)
+    if not lectures and docs:
+        sample = docs[0]
+        print(f"[wizard] sample lecture week_id={sample.get('week_id')!r} status={sample.get('status')!r}", flush=True)
     lectures.sort(key=lambda l: l.get("scheduled_at") or "")
     return lectures
 
@@ -1011,6 +1016,7 @@ class LiveScreen(ctk.CTkFrame):
             pass
 
     def _push_log(self, msg: str):
+        print(f"[capture] {msg}", flush=True)
         self.log_q.put_nowait(str(msg))
 
     # ----- UI poll loop -----
@@ -1106,7 +1112,7 @@ class LiveScreen(ctk.CTkFrame):
 # ----------------------------------------------------------------------
 def main() -> int:
     print("[ui] loading .env", flush=True)
-    load_dotenv(Path(__file__).with_name(".env"))
+    load_dotenv(Path(__file__).with_name(".env"), override=True)
     print(
         f"[ui] FIRESTORE_EMULATOR_HOST={os.getenv('FIRESTORE_EMULATOR_HOST') or '(unset)'} "
         f"FIREBASE_PROJECT_ID={os.getenv('FIREBASE_PROJECT_ID') or '(unset)'}",

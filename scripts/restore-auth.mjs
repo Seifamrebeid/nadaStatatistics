@@ -5,7 +5,7 @@
 import { readFile } from "node:fs/promises";
 
 const IN = process.argv[2] || "./firebase-emulator/seed/auth_export/accounts.json";
-const PROJECT = process.argv[3] || "emotion-detection-dev";
+const PROJECT = process.argv[3] || "fridgechef-jt50c";
 const URL = `http://localhost:9099/identitytoolkit.googleapis.com/v1/projects/${PROJECT}/accounts:batchCreate?key=fake-api-key`;
 
 const data = JSON.parse(await readFile(IN, "utf8"));

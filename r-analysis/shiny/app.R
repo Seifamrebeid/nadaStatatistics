@@ -25,7 +25,7 @@ source("../load_data.R")
 
 PALETTE <- list(
   primary   = "#4f46e5",  # indigo-600
-  primary2  = "#6366f1",
+  primary2  = "#7c3aed",
   accent    = "#06b6d4",  # cyan-500
   good      = "#10b981",  # emerald-500
   warn      = "#f59e0b",  # amber-500
@@ -33,11 +33,11 @@ PALETTE <- list(
   ink       = "#0f172a",  # slate-900
   ink_soft  = "#475569",  # slate-600
   line      = "#e2e8f0",  # slate-200
-  bg        = "#f8fafc"   # slate-50
+  bg        = "#f0f1f8"   # matches --surface-2
 )
 
 CHART_PALETTE <- c("#4f46e5", "#06b6d4", "#10b981", "#f59e0b",
-                   "#ef4444", "#a855f7", "#0ea5e9", "#84cc16")
+                   "#f97316", "#f43f5e", "#8b5cf6", "#0ea5e9")
 
 theme_classroom <- function() {
   theme_minimal(base_family = "Inter, system-ui, -apple-system, sans-serif",
@@ -82,433 +82,1127 @@ style_plotly <- function(p) {
 
 # Custom CSS layered on top of the AdminLTE skin.
 CUSTOM_CSS <- "
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap');
 
+/* ═══════════════════════════════════════════════ Design tokens */
 :root {
-  --ink: #0f172a;
-  --ink-soft: #475569;
-  --primary: #4f46e5;
-  --primary-2: #6366f1;
-  --accent: #06b6d4;
-  --good: #10b981;
-  --warn: #f59e0b;
-  --bad: #ef4444;
-  --line: #e2e8f0;
-  --bg: #f8fafc;
-  --card: #ffffff;
+  --brand:        #7c3aed;
+  --brand-dark:   #4338ca;
+  --brand-light:  #818cf8;
+  --brand-glow:   rgba(79,70,229,0.18);
+  --cyan:         #22d3ee;
+  --emerald:      #10b981;
+  --amber:        #f59e0b;
+  --rose:         #f43f5e;
+  --violet:       #a78bfa;
+  --orange:       #f97316;
+
+  --ink:          #0f172a;
+  --ink-2:        #1e293b;
+  --ink-3:        #334155;
+  --muted:        #64748b;
+  --subtle:       #94a3b8;
+  --line:         #e2e8f0;
+  --line-2:       #f1f5f9;
+
+  --surface:      #ffffff;
+  --surface-2:    #f0f1f8;
+  --surface-3:    #e9eaf4;
+
+  --sidebar-from: #09061a;
+  --sidebar-to:   #1a0d2e;
+  --sidebar-bg:   #09061a;
+  --sidebar-w:    260px;
+
+  --radius-sm:    8px;
+  --radius:       12px;
+  --radius-lg:    18px;
+  --radius-xl:    24px;
+
+  --shadow-sm:    0 1px 2px rgba(15,23,42,0.04);
+  --shadow:       0 1px 3px rgba(15,23,42,0.06), 0 1px 2px rgba(15,23,42,0.04);
+  --shadow-md:    0 4px 12px rgba(15,23,42,0.08), 0 2px 4px rgba(15,23,42,0.04);
+  --shadow-lg:    0 12px 32px rgba(15,23,42,0.10), 0 4px 8px rgba(15,23,42,0.04);
+  --shadow-brand: 0 8px 24px rgba(79,70,229,0.22);
+  --shadow-warm:  0 8px 24px rgba(249,115,22,0.20);
 }
 
-body {
-  background:
-    radial-gradient(circle at top left, rgba(99, 102, 241, 0.10), transparent 28%),
-    radial-gradient(circle at top right, rgba(6, 182, 212, 0.08), transparent 24%),
-    linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
-}
+/* ═══════════════════════════════════════════════ Base */
+*, *::before, *::after { box-sizing: border-box; }
 
-html, body, .content-wrapper, .right-side {
+html, body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
-  background-color: var(--bg) !important;
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.006em;
   color: var(--ink);
-  letter-spacing: -0.005em;
 }
 
-.wrapper {
-  background: transparent !important;
+body, .content-wrapper, .right-side, .wrapper {
+  background: var(--surface-2) !important;
 }
 
-.content-wrapper {
-  background: transparent !important;
-}
+/* ═══════════════════════════════════════════════ Header */
+.main-header { position: sticky; top: 0; z-index: 1030; }
 
-.main-header {
-  position: sticky;
-  top: 0;
-  z-index: 1030;
+.skin-blue .main-header .navbar {
+  background: rgba(255,255,255,0.88) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border-bottom: 1px solid rgba(226,232,240,0.9) !important;
+  box-shadow: 0 1px 0 var(--line), 0 2px 12px rgba(15,23,42,0.04) !important;
+  min-height: 64px !important;
+  display: flex;
+  align-items: center;
 }
-
-/* ---- Header ---- */
-.skin-blue .main-header .navbar { background-color: var(--card) !important;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); border-bottom: 1px solid var(--line); }
 .skin-blue .main-header .logo {
-  background: linear-gradient(135deg, var(--primary), var(--primary-2)) !important;
-  color: #fff !important; font-weight: 700; font-size: 18px;
-  letter-spacing: -0.02em; border-bottom-right-radius: 14px; }
-.skin-blue .main-header .logo:hover { background: linear-gradient(135deg, #4338ca, var(--primary)) !important; }
-.skin-blue .main-header .navbar .sidebar-toggle { color: var(--ink-soft); }
-.skin-blue .main-header .navbar .sidebar-toggle:hover { background: var(--bg); color: var(--primary); }
-
-/* ---- Sidebar ---- */
-.skin-blue .main-sidebar { background-color: var(--ink) !important; }
-.skin-blue .main-sidebar {
-  box-shadow: 8px 0 30px rgba(15, 23, 42, 0.16);
+  background: linear-gradient(145deg, #0f172a 0%, #312e81 48%, #7c3aed 100%) !important;
+  color: #fff !important;
+  font-family: 'Inter', sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 15px !important;
+  letter-spacing: -0.03em !important;
+  border-right: 1px solid rgba(255,255,255,0.06) !important;
+  width: var(--sidebar-w) !important;
+  height: 64px !important;
+  display: flex !important;
+  align-items: center !important;
+  padding: 0 20px !important;
 }
-.skin-blue .sidebar-menu > li.header { color: #94a3b8 !important;
-  text-transform: uppercase; font-size: 11px; font-weight: 700;
-  letter-spacing: 0.08em; padding: 16px 18px 8px; background: transparent; }
-.skin-blue .sidebar-menu > li > a { color: #cbd5e1 !important;
-  border-left: 3px solid transparent; padding: 12px 18px;
-  transition: background 0.15s, border-color 0.15s; font-weight: 500; }
-.skin-blue .sidebar-menu > li:hover > a,
+.skin-blue .main-header .navbar .sidebar-toggle {
+  color: var(--muted) !important;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  padding: 0 18px !important;
+  font-size: 16px !important;
+}
+.skin-blue .main-header .navbar .sidebar-toggle:hover {
+  background: var(--surface-2) !important;
+  color: var(--brand) !important;
+}
+
+/* right-side navbar items */
+.navbar-custom-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 20px;
+  margin-left: auto;
+}
+.navbar-role-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.navbar-role-badge.role-admin   { background: rgba(124,58,237,0.10); color: var(--brand); border: 1px solid rgba(124,58,237,0.20); }
+.navbar-role-badge.role-doctor  { background: rgba(16,185,129,0.10); color: #059669;      border: 1px solid rgba(16,185,129,0.20); }
+.navbar-role-badge.role-student { background: rgba(245,158,11,0.10); color: #d97706;      border: 1px solid rgba(245,158,11,0.20); }
+.navbar-role-badge.role-parent  { background: rgba(167,139,250,0.10); color: #7c3aed;    border: 1px solid rgba(167,139,250,0.20); }
+
+.navbar-divider {
+  width: 1px;
+  height: 28px;
+  background: var(--line);
+}
+.navbar-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--brand) 0%, var(--cyan) 100%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0;
+  box-shadow: 0 2px 6px rgba(124,58,237,0.28);
+  flex-shrink: 0;
+}
+.navbar-user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+.navbar-user-name  { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.navbar-user-email { font-size: 11px; color: var(--muted); }
+
+/* hide the default AdminLTE right navbar menu margin */
+.navbar-nav { margin: 0 !important; }
+
+/* ═══════════════════════════════════════════════ Sidebar */
+.skin-blue .main-sidebar {
+  background: linear-gradient(160deg, #081120 0%, #111827 34%, #1e1b4b 72%, #312e81 100%) !important;
+  width: var(--sidebar-w) !important;
+  box-shadow: 2px 0 20px rgba(15,23,42,0.20) !important;
+  border-right: none !important;
+  position: relative;
+}
+.skin-blue .main-sidebar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 130% 35% at 50% 0%, rgba(79,70,229,0.28) 0%, transparent 65%);
+  pointer-events: none;
+  z-index: 0;
+}
+.skin-blue .sidebar { position: relative; z-index: 1; }
+.skin-blue .sidebar { padding-top: 8px; }
+
+.skin-blue .sidebar-menu > li.header {
+  color: rgba(165,180,252,0.82) !important;
+  font-size: 9.5px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+  padding: 20px 18px 6px !important;
+  background: transparent !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+}
+.skin-blue .sidebar-menu > li.header::before {
+  content: '';
+  display: inline-block;
+  width: 18px;
+  height: 1.5px;
+  background: linear-gradient(90deg, rgba(79,70,229,0.7), transparent);
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.skin-blue .sidebar-menu > li > a {
+  color: #94a3b8 !important;
+  font-size: 13.5px !important;
+  font-weight: 500 !important;
+  padding: 9px 18px 9px 16px !important;
+  margin: 1px 8px !important;
+  border-radius: var(--radius-sm) !important;
+  border-left: none !important;
+  transition: background 0.13s, color 0.13s !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+.skin-blue .sidebar-menu > li > a > .fa {
+  width: 18px !important;
+  font-size: 14px !important;
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+.skin-blue .sidebar-menu > li:hover > a {
+  background: rgba(255,255,255,0.07) !important;
+  color: #e2e8f0 !important;
+}
 .skin-blue .sidebar-menu > li.active > a {
-  background: rgba(99, 102, 241, 0.12) !important; color: #fff !important;
-  border-left-color: var(--primary-2) !important; }
-.skin-blue .sidebar-menu > li > a > .fa,
-.skin-blue .sidebar-menu > li > a > .glyphicon { width: 20px; }
+  background: linear-gradient(90deg, rgba(79,70,229,0.30), rgba(6,182,212,0.16)) !important;
+  color: #eef2ff !important;
+  border: 1px solid rgba(99,102,241,0.32) !important;
+  box-shadow: 0 2px 18px rgba(79,70,229,0.22), inset 0 1px 0 rgba(255,255,255,0.06) !important;
+  font-weight: 700 !important;
+}
+.skin-blue .sidebar-menu > li.active > a > .fa {
+  opacity: 1;
+  color: #c4b5fd !important;
+  text-shadow: 0 0 8px rgba(167,139,250,0.50) !important;
+}
+.skin-blue .sidebar-menu > li > a:focus { outline: none !important; }
+
+.sidebar hr { border-top: 1px solid rgba(255,255,255,0.07) !important; margin: 10px 18px !important; }
 
 .sidebar .btn-primary {
-  background: var(--primary) !important; border: none !important;
-  border-radius: 10px !important; padding: 8px 14px !important;
-  font-weight: 600 !important; box-shadow: 0 2px 8px rgba(79, 70, 229, 0.4);
-  margin: 0 18px !important; }
-.sidebar .btn-primary:hover { background: #4338ca !important; }
-.sidebar hr { border-top: 1px solid #1e293b; margin: 12px 18px; }
-
-/* ---- Boxes / cards ---- */
-.box {
-  border: 1px solid var(--line) !important;
-  border-radius: 14px !important;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 1px 2px rgba(15, 23, 42, 0.03) !important;
-  background: var(--card) !important;
-  transition: box-shadow 0.2s ease;
-  overflow: hidden;
+  background: linear-gradient(135deg, var(--brand) 0%, #06b6d4 100%) !important;
+  border: none !important;
+  border-radius: var(--radius) !important;
+  padding: 9px 16px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  box-shadow: var(--shadow-brand) !important;
+  margin: 4px 10px !important;
+  width: calc(100% - 20px) !important;
+  transition: background 0.13s, box-shadow 0.13s !important;
 }
-.box:hover { box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04) !important; }
-.box.box-solid > .box-header, .box > .box-header {
-  background: transparent !important; color: var(--ink) !important;
-  border-bottom: 1px solid var(--line) !important; padding: 16px 20px;
-  border-radius: 14px 14px 0 0 !important; }
-.box-header > .box-title { font-weight: 600; font-size: 15px;
-  letter-spacing: -0.01em; }
-.box-body { padding: 20px !important; }
-.box-footer { background: var(--bg) !important; border-top: 1px solid var(--line) !important;
-  color: var(--ink-soft); font-size: 12px; padding: 10px 20px;
-  border-radius: 0 0 14px 14px !important; }
-
-/* ---- Value boxes (KPIs) ---- */
-.small-box {
-  border-radius: 14px !important; overflow: hidden;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04) !important;
-  border: 1px solid var(--line); position: relative;
+.sidebar .btn-primary:hover {
+  background: var(--brand-dark) !important;
+  box-shadow: 0 6px 20px rgba(79,70,229,0.30) !important;
 }
-.small-box > .inner { padding: 20px 22px; color: #fff; }
-.small-box > .inner > h3 { font-size: 36px !important; font-weight: 700 !important;
-  letter-spacing: -0.03em; margin: 0 0 4px; line-height: 1.1; }
-.small-box > .inner > p  { font-size: 13px !important; font-weight: 500;
-  text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.92; margin: 0; }
-.small-box .icon { color: rgba(255,255,255,0.28) !important; font-size: 80px !important;
-  top: 12px !important; right: 18px !important; }
-.small-box:hover { transform: translateY(-1px); transition: transform 0.15s ease; }
-.small-box:hover .icon { color: rgba(255,255,255,0.4) !important; }
+.sidebar .btn-default {
+  background: rgba(255,255,255,0.06) !important;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  color: #94a3b8 !important;
+  border-radius: var(--radius) !important;
+  padding: 9px 16px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  margin: 4px 10px !important;
+  width: calc(100% - 20px) !important;
+  transition: background 0.13s !important;
+}
+.sidebar .btn-default:hover {
+  background: rgba(255,255,255,0.10) !important;
+  color: #e2e8f0 !important;
+}
 
-.bg-aqua, .bg-light-blue { background: linear-gradient(135deg, var(--primary), var(--primary-2)) !important; }
-.bg-green { background: linear-gradient(135deg, var(--good), #059669) !important; }
-.bg-yellow { background: linear-gradient(135deg, var(--warn), #d97706) !important; }
-.bg-red { background: linear-gradient(135deg, var(--bad), #dc2626) !important; }
-.bg-purple { background: linear-gradient(135deg, #a855f7, #7c3aed) !important; }
+/* Colorful sidebar accents */
+.skin-blue .sidebar-menu > li > a { position: relative; padding-left: 22px !important; }
+.skin-blue .sidebar-menu > li > a::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, var(--brand) 0%, var(--cyan) 60%, var(--emerald) 100%);
+  opacity: 0; transform: scaleY(0.85);
+  transition: opacity 0.14s ease, transform 0.18s ease;
+}
+.skin-blue .sidebar-menu > li:hover > a::before,
+.skin-blue .sidebar-menu > li.active > a::before { opacity: 1; transform: scaleY(1); }
 
-/* ---- Tab content padding ---- */
-.content { padding: 24px !important; }
-.content-header { padding: 18px 24px 0 !important; }
+/* Make icons slightly colorful on hover/active */
+.skin-blue .sidebar-menu > li > a > .fa { color: rgba(255,255,255,0.82) !important; transition: color 0.12s ease, transform 0.12s ease; }
+.skin-blue .sidebar-menu > li:hover > a > .fa { color: #fff !important; transform: translateX(2px) scale(1.02); }
+.skin-blue .sidebar-menu > li.active > a > .fa { color: #fff !important; text-shadow: 0 6px 18px rgba(79,70,229,0.22); }
+
+/* Header chips — small gradient pills next to section headers */
+.skin-blue .sidebar-menu > li.header::after {
+  content: '';
+  display: inline-block;
+  width: 36px;
+  height: 6px;
+  margin-left: 10px;
+  vertical-align: middle;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand) 0%, #06b6d4 50%, var(--emerald) 100%);
+  opacity: 0.9;
+}
+
+/* Slightly larger clickable area and clearer focus for accessibility */
+.skin-blue .sidebar-menu > li > a { padding-top: 12px !important; padding-bottom: 12px !important; }
+
+/* Per-section accent colors */
+.skin-blue .sidebar-menu > li.sec-analytics > a::before {
+  background: linear-gradient(180deg, #4f46e5 0%, #06b6d4 70%);
+}
+.skin-blue .sidebar-menu > li.sec-cluster > a::before {
+  background: linear-gradient(180deg, #7c3aed 0%, #a78bfa 70%);
+}
+.skin-blue .sidebar-menu > li.sec-data > a::before {
+  background: linear-gradient(180deg, #f97316 0%, #f59e0b 70%);
+}
+.skin-blue .sidebar-menu > li.sec-insights > a::before {
+  background: linear-gradient(180deg, #10b981 0%, #06b6d4 70%);
+}
+
+/* Active item backgrounds per section */
+.skin-blue .sidebar-menu > li.sec-analytics.active > a {
+  background: linear-gradient(90deg, rgba(79,70,229,0.28), rgba(6,182,212,0.08)) !important;
+}
+.skin-blue .sidebar-menu > li.sec-cluster.active > a {
+  background: linear-gradient(90deg, rgba(167,139,250,0.26), rgba(99,102,241,0.06)) !important;
+}
+.skin-blue .sidebar-menu > li.sec-data.active > a {
+  background: linear-gradient(90deg, rgba(249,115,22,0.22), rgba(245,158,11,0.06)) !important;
+}
+.skin-blue .sidebar-menu > li.sec-insights.active > a {
+  background: linear-gradient(90deg, rgba(16,185,129,0.18), rgba(6,182,212,0.06)) !important;
+}
+
+/* Selectize inside sidebar */
+.sidebar .selectize-input {
+  background: rgba(255,255,255,0.08) !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+  color: #e2e8f0 !important;
+  border-radius: var(--radius-sm) !important;
+}
+.sidebar .selectize-input input { color: #e2e8f0 !important; }
+.sidebar .control-label { color: rgba(148,163,184,0.8) !important; font-size: 10px !important; padding: 0 10px; }
+.sidebar .form-group { margin: 0 0 4px !important; padding: 0 8px !important; }
+
+/* auto-refresh checkbox */
+.sidebar .checkbox { margin: 0 !important; }
+.sidebar .checkbox label { color: #94a3b8 !important; font-size: 11px !important;
+  text-transform: none !important; letter-spacing: 0 !important; font-weight: 500 !important; }
+#last_refresh_ui { color: #64748b; font-size: 10px; }
+
+/* ═══════════════════════════════════════════════ Content area */
+.content { padding: 24px 28px !important; }
+.content-header { padding: 20px 28px 4px !important; }
 .content-header > h1 {
-  font-weight: 700; font-size: 24px; letter-spacing: -0.02em; color: var(--ink);
-  margin: 0 0 4px; }
-.content-header > h1 > small { color: var(--ink-soft); font-weight: 500;
-  font-size: 14px; margin-left: 8px; }
+  font-size: 24px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.03em !important;
+  background: linear-gradient(135deg, var(--ink) 0%, var(--brand) 120%);
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+  margin: 0 0 2px !important;
+  display: inline-block !important;
+}
+.content-header > h1 > small {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  color: var(--muted) !important;
+  margin-left: 10px !important;
+  letter-spacing: 0 !important;
+  -webkit-text-fill-color: var(--muted) !important;
+}
 
-/* ---- Inputs ---- */
-.form-control, .selectize-input {
-  border-radius: 10px !important;
+/* ═══════════════════════════════════════════════ Cards / Boxes */
+.box {
+  border: 1px solid rgba(226,232,240,0.92) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.05), 0 8px 20px rgba(15,23,42,0.05) !important;
+  background: var(--surface) !important;
+  transition: box-shadow 0.20s ease, transform 0.20s ease !important;
+  overflow: hidden !important;
+  margin-bottom: 20px !important;
+  position: relative !important;
+}
+.box::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--brand) 0%, var(--cyan) 52%, var(--emerald) 100%);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  opacity: 0;
+  transition: opacity 0.20s;
+}
+.box:hover { transform: translateY(-2px) !important; box-shadow: var(--shadow-md) !important; }
+.box:hover::before { opacity: 1; }
+
+.box > .box-header, .box.box-solid > .box-header {
+  background: var(--surface) !important;
+  border-bottom: 1px solid var(--line) !important;
+  padding: 16px 22px 14px !important;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+.box-header > .box-title {
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.015em !important;
+  color: var(--ink-2) !important;
+}
+.box-body { padding: 20px 22px !important; }
+.box-footer {
+  background: linear-gradient(90deg, var(--surface-2), var(--line-2)) !important;
+  border-top: 1px solid var(--line) !important;
+  padding: 10px 22px !important;
+  font-size: 12px !important;
+  color: var(--muted) !important;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg) !important;
+}
+
+/* ═══════════════════════════════════════════════ KPI / Value boxes */
+.small-box {
+  border-radius: var(--radius-lg) !important;
+  overflow: hidden !important;
+  box-shadow: var(--shadow-md) !important;
+  border: none !important;
+  position: relative !important;
+  transition: transform 0.20s ease, box-shadow 0.20s ease !important;
+  margin-bottom: 20px !important;
+}
+.small-box::after {
+  content: '';
+  position: absolute;
+  top: -50%; left: -60%;
+  width: 60%; height: 200%;
+  background: linear-gradient(105deg, rgba(255,255,255,0) 30%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0) 70%);
+  transform: skewX(-20deg);
+  transition: left 0.5s ease;
+  pointer-events: none;
+  z-index: 3;
+}
+.small-box:hover::after { left: 130%; }
+.small-box:hover {
+  transform: translateY(-4px) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+.small-box > .inner {
+  padding: 22px 24px !important;
+  position: relative;
+  z-index: 2;
+}
+.small-box > .inner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at top right, rgba(255,255,255,0.18), transparent 60%);
+  pointer-events: none;
+}
+.small-box > .inner > h3 {
+  font-size: 38px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.05em !important;
+  margin: 0 0 4px !important;
+  line-height: 1 !important;
+  color: #fff !important;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
+}
+.small-box > .inner > p {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.10em !important;
+  color: rgba(255,255,255,0.82) !important;
+  margin: 0 !important;
+}
+.small-box .icon {
+  position: absolute !important;
+  right: 14px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  font-size: 70px !important;
+  color: rgba(255,255,255,0.16) !important;
+  z-index: 1 !important;
+  transition: color 0.20s, transform 0.20s !important;
+}
+.small-box:hover .icon {
+  color: rgba(255,255,255,0.26) !important;
+  transform: translateY(-52%) scale(1.06) !important;
+}
+
+.small-box > a.small-box-footer {
+  background: rgba(0,0,0,0.14) !important;
+  color: rgba(255,255,255,0.88) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  padding: 8px !important;
+  border-top: 1px solid rgba(255,255,255,0.12) !important;
+  transition: background 0.15s !important;
+}
+.small-box > a.small-box-footer:hover { background: rgba(0,0,0,0.22) !important; }
+
+.bg-aqua, .bg-light-blue {
+  background: linear-gradient(135deg, #2563eb 0%, #6366f1 45%, #06b6d4 100%) !important;
+  box-shadow: 0 10px 28px rgba(37,99,235,0.34) !important;
+}
+.bg-green {
+  background: linear-gradient(135deg, #047857 0%, #059669 50%, #10b981 100%) !important;
+  box-shadow: 0 10px 28px rgba(16,185,129,0.35) !important;
+}
+.bg-yellow {
+  background: linear-gradient(135deg, #b45309 0%, #d97706 50%, #f59e0b 100%) !important;
+  box-shadow: 0 10px 28px rgba(245,158,11,0.35) !important;
+}
+.bg-red {
+  background: linear-gradient(135deg, #be123c 0%, #e11d48 50%, #f43f5e 100%) !important;
+  box-shadow: 0 10px 28px rgba(244,63,94,0.35) !important;
+}
+.bg-purple {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #a78bfa 100%) !important;
+  box-shadow: 0 10px 28px rgba(79,70,229,0.34) !important;
+}
+.bg-navy {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 60%, #334155 100%) !important;
+  box-shadow: 0 8px 24px rgba(15,23,42,0.35) !important;
+}
+.bg-teal {
+  background: linear-gradient(135deg, #0e7490 0%, #0891b2 50%, #06b6d4 100%) !important;
+  box-shadow: 0 10px 28px rgba(6,182,212,0.35) !important;
+}
+.bg-orange {
+  background: linear-gradient(135deg, #c2410c 0%, #ea580c 50%, #f97316 100%) !important;
+  box-shadow: 0 10px 28px rgba(249,115,22,0.35) !important;
+}
+
+.value-box {
+  border-radius: var(--radius-lg) !important;
+  overflow: hidden !important;
+  box-shadow: 0 10px 28px rgba(15,23,42,0.08) !important;
+}
+
+.value-box .small-box { margin-bottom: 0 !important; }
+
+/* ═══════════════════════════════════════════════ Inputs */
+.form-control {
+  border-radius: var(--radius-sm) !important;
   border: 1px solid var(--line) !important;
+  background: var(--surface) !important;
+  color: var(--ink) !important;
+  font-size: 13.5px !important;
+  height: 36px !important;
   box-shadow: none !important;
-  font-size: 14px;
-  transition: border-color 0.15s, box-shadow 0.15s; }
-.form-control:focus, .selectize-input.focus {
-  border-color: var(--primary) !important;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12) !important; }
-label, .control-label { color: var(--ink-soft); font-weight: 600;
-  font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  transition: border-color 0.13s, box-shadow 0.13s !important;
+}
+.form-control:focus {
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px var(--brand-glow) !important;
+  outline: none !important;
+}
+.selectize-input {
+  border-radius: var(--radius-sm) !important;
+  border: 1px solid var(--line) !important;
+  background: var(--surface) !important;
+  font-size: 13.5px !important;
+  min-height: 36px !important;
+  box-shadow: none !important;
+  padding: 6px 10px !important;
+  transition: border-color 0.13s, box-shadow 0.13s !important;
+}
+.selectize-input.focus {
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px var(--brand-glow) !important;
+}
+label, .control-label {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--muted) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  margin-bottom: 5px !important;
+}
+.selectize-dropdown {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-sm) !important;
+  box-shadow: var(--shadow-md) !important;
+  font-size: 13.5px !important;
+}
+.selectize-dropdown .option.active { background: var(--brand-glow) !important; color: var(--brand-dark) !important; }
+.selectize-dropdown .option:hover  { background: var(--surface-2) !important; }
 
-/* ---- DataTable polish ---- */
-table.dataTable thead th { background: var(--bg) !important; color: var(--ink) !important;
-  border-bottom: 1px solid var(--line) !important; font-weight: 600;
-  font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
-table.dataTable tbody tr:hover { background: var(--bg) !important; }
-.dataTables_wrapper .dataTables_length, .dataTables_wrapper .dataTables_filter,
-.dataTables_wrapper .dataTables_info, .dataTables_wrapper .dataTables_paginate {
-  color: var(--ink-soft); font-size: 13px; }
-.paginate_button.current { background: var(--primary) !important; color: #fff !important;
-  border-radius: 8px !important; border: none !important; }
+/* ═══════════════════════════════════════════════ Buttons */
+.btn {
+  border-radius: var(--radius-sm) !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 7px 16px !important;
+  transition: background 0.13s, box-shadow 0.13s, transform 0.13s !important;
+}
+.btn-primary, .btn-primary:visited {
+  background: var(--brand) !important;
+  border-color: var(--brand) !important;
+  color: #fff !important;
+  box-shadow: 0 1px 3px rgba(124,58,237,0.30) !important;
+}
+.btn-primary:hover {
+  background: var(--brand-dark) !important;
+  border-color: var(--brand-dark) !important;
+  box-shadow: var(--shadow-brand) !important;
+  transform: translateY(-1px) !important;
+}
+.btn-default {
+  background: var(--surface) !important;
+  border: 1px solid var(--line) !important;
+  color: var(--ink-3) !important;
+}
+.btn-default:hover {
+  background: var(--surface-2) !important;
+  border-color: #cbd5e1 !important;
+  color: var(--ink) !important;
+}
 
-/* ---- Empty-state polish for plotly ---- */
-.plotly .plot-container { border-radius: 10px; }
+/* ═══════════════════════════════════════════════ DataTables */
+div.dataTables_wrapper { font-size: 13.5px !important; }
 
-/* ---- Subtle scrollbar ---- */
-::-webkit-scrollbar { width: 10px; height: 10px; }
+table.dataTable {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  width: 100% !important;
+}
+table.dataTable thead th {
+  background: var(--surface-2) !important;
+  color: var(--muted) !important;
+  border-bottom: 1px solid var(--line) !important;
+  border-top: none !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  padding: 10px 14px !important;
+  white-space: nowrap;
+}
+table.dataTable thead th:first-child { border-radius: var(--radius-sm) 0 0 0; }
+table.dataTable thead th:last-child  { border-radius: 0 var(--radius-sm) 0 0; }
+table.dataTable tbody td {
+  padding: 10px 14px !important;
+  border-bottom: 1px solid var(--line-2) !important;
+  color: var(--ink-2) !important;
+  vertical-align: middle;
+}
+table.dataTable tbody tr:hover td {
+  background: var(--surface-2) !important;
+}
+table.dataTable tbody tr:last-child td { border-bottom: none !important; }
+
+.dataTables_wrapper .dataTables_filter input {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 5px 10px !important;
+  font-size: 13px !important;
+  margin-left: 6px;
+}
+.dataTables_wrapper .dataTables_length select {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-sm) !important;
+  padding: 4px 8px !important;
+  font-size: 13px !important;
+}
+.dataTables_wrapper .dataTables_info,
+.dataTables_wrapper .dataTables_paginate { color: var(--muted) !important; font-size: 12px !important; }
+.dataTables_wrapper .dataTables_paginate .paginate_button {
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  border: none !important;
+  color: var(--muted) !important;
+  padding: 4px 9px !important;
+  margin: 0 1px !important;
+}
+.dataTables_wrapper .dataTables_paginate .paginate_button.current,
+.dataTables_wrapper .dataTables_paginate .paginate_button.current:hover {
+  background: var(--brand) !important;
+  color: #fff !important;
+  border: none !important;
+  box-shadow: 0 2px 6px rgba(124,58,237,0.30) !important;
+}
+.dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+  background: var(--surface-3) !important;
+  color: var(--ink) !important;
+  border: none !important;
+}
+
+/* ═══════════════════════════════════════════════ Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
-/* ---- Dashboard hero ---- */
+/* ═══════════════════════════════════════════════ Page hero banner */
 .page-hero {
-  border-radius: 20px;
-  padding: 22px 24px;
-  margin: 0 0 22px;
-  background:
-    linear-gradient(135deg, rgba(79, 70, 229, 0.96), rgba(6, 182, 212, 0.92));
+  border-radius: var(--radius-xl);
+  padding: 32px 34px 28px;
+  margin-bottom: 24px;
+  background: linear-gradient(125deg, #0f172a 0%, #1e3a8a 26%, #4f46e5 52%, #06b6d4 78%, #10b981 100%);
   color: #fff;
-  box-shadow: 0 16px 34px rgba(79, 70, 229, 0.18);
+  box-shadow: 0 12px 40px rgba(37,99,235,0.26), 0 2px 8px rgba(15,23,42,0.18);
   position: relative;
   overflow: hidden;
+}
+.page-hero__layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 0.8fr);
+  gap: 24px;
+  align-items: start;
+}
+.page-hero__copy {
+  min-width: 0;
+}
+.page-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 80% at 90% -10%, rgba(34,211,238,0.30) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 50% at 10% 110%, rgba(251,146,60,0.22) 0%, transparent 50%),
+    radial-gradient(ellipse at top right, rgba(255,255,255,0.10) 0%, transparent 45%);
+  pointer-events: none;
 }
 .page-hero::after {
   content: '';
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at top right, rgba(255,255,255,0.20), transparent 24%),
-    radial-gradient(circle at bottom left, rgba(255,255,255,0.12), transparent 22%);
+  background: url('data:image/svg+xml,%3Csvg width=%2260%22 height=%2260%22 viewBox=%220 0 60 60%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg fill=%22none%22 fill-rule=%22evenodd%22%3E%3Cg fill=%22%23ffffff%22 fill-opacity=%220.03%22%3E%3Cpath d=%22M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E');
   pointer-events: none;
+  opacity: 0.6;
 }
 .page-hero__eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
+  gap: 7px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: rgba(255,255,255,0.82);
+  letter-spacing: 0.14em;
+  color: rgba(255,255,255,0.72);
+  margin-bottom: 10px;
 }
 .page-hero__title {
-  font-size: 28px;
-  line-height: 1.1;
+  font-size: 34px;
   font-weight: 800;
-  letter-spacing: -0.03em;
-  margin: 10px 0 8px;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  margin: 0 0 10px;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.18);
 }
 .page-hero__text {
-  max-width: 72ch;
-  color: rgba(255,255,255,0.86);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.65;
+  color: rgba(255,255,255,0.80);
+  max-width: 70ch;
   margin: 0;
 }
 .page-hero__meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 16px;
+  gap: 8px;
+  margin-top: 18px;
 }
 .page-hero__pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.12);
-  color: #fff;
+  background: rgba(255,255,255,0.14);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.18);
+  color: rgba(255,255,255,0.92);
   font-size: 12px;
   font-weight: 600;
+}
+.page-hero__stats {
+  margin-left: auto;
+  display: grid;
+  gap: 10px;
+  min-width: 220px;
+}
+.page-hero__stat {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.12);
   backdrop-filter: blur(8px);
 }
+.page-hero__stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(255,255,255,0.70);
+  margin-bottom: 4px;
+}
+.page-hero__stat-value {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+.page-hero__stat-note {
+  font-size: 12px;
+  color: rgba(255,255,255,0.78);
+  margin-top: 4px;
+}
+@media (max-width: 991px) {
+  .page-hero__layout {
+    grid-template-columns: 1fr;
+  }
+  .page-hero__stats {
+    margin-left: 0;
+    min-width: 0;
+  }
+}
 
-/* ---- Login shell ---- */
+/* ═══════════════════════════════════════════════ Login */
 .login-shell {
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 32px 18px;
   background:
-    radial-gradient(circle at top left, rgba(79, 70, 229, 0.16), transparent 26%),
-    radial-gradient(circle at top right, rgba(6, 182, 212, 0.12), transparent 24%),
-    linear-gradient(180deg, #eff6ff 0%, #eef2ff 42%, #f8fafc 100%);
+    radial-gradient(ellipse 60% 55% at 5% 10%, rgba(124,58,237,0.18) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 50% at 95% 90%, rgba(6,182,212,0.14) 0%, transparent 50%),
+    radial-gradient(ellipse 40% 40% at 50% 50%, rgba(167,139,250,0.06) 0%, transparent 60%),
+    linear-gradient(160deg, #eff6ff 0%, #f8fafc 45%, #fef3c7 100%);
 }
 .login-card {
-  width: min(1080px, 100%);
+  width: min(1040px, 100%);
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
-  gap: 0;
-  border-radius: 28px;
+  grid-template-columns: 1.15fr 1fr;
+  border-radius: var(--radius-xl);
   overflow: hidden;
-  background: rgba(255,255,255,0.82);
-  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.16);
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(226, 232, 240, 0.9);
+  box-shadow: 0 40px 100px rgba(15,23,42,0.20), 0 2px 4px rgba(15,23,42,0.06), 0 0 0 1px rgba(124,58,237,0.10);
+  border: 1px solid rgba(226,232,240,0.60);
 }
 .login-hero {
-  padding: 42px;
+  padding: 48px 40px;
   color: #fff;
-  background:
-    linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(79, 70, 229, 0.94)),
-    radial-gradient(circle at top right, rgba(255,255,255,0.18), transparent 22%);
+  background: linear-gradient(145deg, #0f172a 0%, #1e3a8a 32%, #4338ca 62%, #7c3aed 84%, #06b6d4 100%);
   position: relative;
+  overflow: hidden;
+}
+.login-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 70% 50% at 85% 15%, rgba(34,211,238,0.28) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 60% at 5% 85%, rgba(167,139,250,0.25) 0%, transparent 50%),
+    radial-gradient(ellipse 30% 30% at 50% 50%, rgba(255,255,255,0.04) 0%, transparent 60%);
+  pointer-events: none;
 }
 .login-hero::after {
   content: '';
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at bottom left, rgba(255,255,255,0.12), transparent 18%),
-    radial-gradient(circle at top right, rgba(6, 182, 212, 0.18), transparent 18%);
+  background: url('data:image/svg+xml,%3Csvg width=%2240%22 height=%2240%22 viewBox=%220 0 40 40%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cg fill=%22%23ffffff%22 fill-opacity=%220.025%22%3E%3Ccircle cx=%2220%22 cy=%2220%22 r=%221%22/%3E%3C/g%3E%3C/svg%3E');
   pointer-events: none;
 }
 .login-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 7px;
+  padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.12);
-  font-size: 12px;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.14);
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.10em;
   text-transform: uppercase;
+  color: rgba(255,255,255,0.85);
+  position: relative;
+  z-index: 1;
 }
 .login-hero h1 {
-  margin: 18px 0 10px;
-  font-size: 42px;
-  line-height: 1.05;
+  position: relative;
+  z-index: 1;
+  margin: 20px 0 12px;
+  font-size: 38px;
+  line-height: 1.06;
   letter-spacing: -0.04em;
   font-weight: 800;
 }
 .login-hero p {
-  color: rgba(255,255,255,0.84);
-  font-size: 15px;
-  line-height: 1.65;
-  max-width: 54ch;
+  position: relative;
+  z-index: 1;
+  color: rgba(255,255,255,0.76);
+  font-size: 14.5px;
+  line-height: 1.70;
+  max-width: 50ch;
 }
 .login-points {
+  position: relative;
+  z-index: 1;
   display: grid;
-  gap: 12px;
-  margin-top: 24px;
+  gap: 10px;
+  margin-top: 28px;
 }
 .login-point {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(255,255,255,0.08);
-  color: rgba(255,255,255,0.92);
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.09);
+  color: rgba(255,255,255,0.88);
+  font-size: 13.5px;
+  font-weight: 500;
 }
 .login-panel {
-  padding: 36px;
-  background: rgba(255,255,255,0.98);
+  padding: 40px 36px;
+  background: var(--surface);
 }
 .login-panel__topline {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
+  gap: 7px;
+  padding: 5px 11px;
   border-radius: 999px;
-  background: rgba(79, 70, 229, 0.08);
-  color: var(--primary);
-  font-size: 11px;
+  background: rgba(79,70,229,0.08);
+  color: #4338ca;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.10em;
+  margin-bottom: 14px;
 }
 .login-panel h2 {
-  margin: 0;
-  font-size: 28px;
-  letter-spacing: -0.03em;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.035em;
   color: var(--ink);
+  margin: 0 0 6px;
+}
+.login-panel .form-control,
+.login-panel .selectize-input {
+  border-radius: 14px !important;
+}
+
+.login-panel .btn-primary {
+  background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%) !important;
+  border: none !important;
+  box-shadow: 0 10px 22px rgba(79,70,229,0.24) !important;
+}
+
+.login-panel .btn-primary:hover {
+  box-shadow: 0 12px 28px rgba(79,70,229,0.30) !important;
 }
 .login-panel .subtle {
-  margin-top: 8px;
-  color: var(--ink-soft);
+  color: var(--muted);
   font-size: 14px;
   line-height: 1.6;
+  margin-bottom: 20px;
 }
 .login-grid {
   display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
-  margin-top: 18px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 20px;
 }
 .login-role-card {
-  border: 1px solid var(--line);
-  border-radius: 16px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
   padding: 14px;
-  background: linear-gradient(180deg, #fff, #f8fafc);
+  background: var(--surface-2);
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 .login-role-card:hover {
+  border-color: var(--brand-light);
+  box-shadow: 0 4px 14px rgba(124,58,237,0.12);
   transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
-  border-color: rgba(79, 70, 229, 0.25);
 }
 .login-role-card.active {
-  border-color: rgba(79, 70, 229, 0.5);
-  background: linear-gradient(180deg, rgba(79,70,229,0.08), rgba(6,182,212,0.06));
+  border-color: var(--brand);
+  background: linear-gradient(135deg, rgba(124,58,237,0.09) 0%, rgba(34,211,238,0.05) 100%);
+  box-shadow: 0 0 0 3px rgba(124,58,237,0.12), 0 4px 14px rgba(124,58,237,0.12);
 }
 .login-role-card .role-name {
   font-weight: 700;
+  font-size: 14px;
   color: var(--ink);
   text-transform: capitalize;
+  margin-bottom: 4px;
 }
 .login-role-card .role-note {
-  color: var(--ink-soft);
+  color: var(--muted);
   font-size: 12px;
-  margin-top: 6px;
   line-height: 1.5;
 }
 .login-role-card .role-chip {
   display: inline-flex;
-  margin-top: 12px;
-  padding: 6px 10px;
+  margin-top: 10px;
+  padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(79, 70, 229, 0.08);
-  color: var(--primary);
-  font-size: 11px;
+  background: rgba(124,58,237,0.08);
+  color: var(--brand);
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 .login-credentials {
-  margin-top: 18px;
   padding: 14px 16px;
-  border-radius: 16px;
-  background: var(--bg);
+  border-radius: var(--radius);
+  background: var(--surface-2);
   border: 1px solid var(--line);
+  margin-bottom: 16px;
 }
+.login-credentials strong { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 .login-credentials pre {
-  display: block;
-  margin-top: 6px;
+  margin: 8px 0 0;
   padding: 10px 12px;
-  border-radius: 12px;
-  background: #fff;
+  border-radius: 8px;
+  background: var(--surface);
   border: 1px solid var(--line);
-  color: var(--ink);
-  font-family: 'Inter', system-ui, sans-serif;
-  font-size: 13px;
+  color: var(--ink-3);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
   white-space: pre-wrap;
-  margin-bottom: 0;
+  line-height: 1.7;
 }
 .login-error {
-  margin-top: 14px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #b91c1c;
+  margin-top: 12px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  color: #be123c;
   font-size: 13px;
+  font-weight: 500;
 }
 .login-filter-note {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(6, 182, 212, 0.08);
-  border: 1px solid rgba(6, 182, 212, 0.18);
-  color: var(--ink-soft);
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(34,211,238,0.06);
+  border: 1px solid rgba(34,211,238,0.18);
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
 }
-@media (max-width: 920px) {
+
+@media (max-width: 860px) {
   .login-card { grid-template-columns: 1fr; }
-  .login-hero { padding: 30px; }
-  .login-panel { padding: 28px; }
+  .login-hero { padding: 32px 28px; }
+  .login-panel { padding: 28px 24px; }
   .login-grid { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════════════════════════════════ Misc polish */
+.tab-content > .tab-pane { animation: fadeUp 0.22s ease; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.alert {
+  border-radius: var(--radius) !important;
+  border-left-width: 4px !important;
+  border-left-style: solid !important;
+  border-top: none !important; border-right: none !important; border-bottom: none !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+}
+.alert-info    { background: rgba(34,211,238,0.08) !important; color: #0e7490 !important; border-left-color: #06b6d4 !important; }
+.alert-warning { background: rgba(245,158,11,0.08) !important; color: #92400e !important; border-left-color: #f59e0b !important; }
+.alert-danger  { background: rgba(244,63,94,0.08) !important;  color: #be123c !important; border-left-color: #f43f5e !important; }
+.alert-success { background: rgba(16,185,129,0.08) !important; color: #065f46 !important; border-left-color: #10b981 !important; }
+
+.progress-bar {
+  background: linear-gradient(90deg, var(--brand), var(--cyan)) !important;
+  border-radius: 999px !important;
+}
+.progress { border-radius: 999px !important; background: var(--surface-3) !important; height: 7px !important; }
+
+/* Vibrant DataTable row highlight on hover */
+table.dataTable tbody tr:hover td {
+  background: linear-gradient(90deg, rgba(124,58,237,0.04), rgba(6,182,212,0.03)) !important;
+}
+table.dataTable tbody tr.selected td {
+  background: rgba(124,58,237,0.08) !important;
+  color: var(--brand-dark) !important;
+}
+
+/* Recommendation cards */
+.rec-card {
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--brand);
+  background: linear-gradient(90deg, rgba(124,58,237,0.05) 0%, transparent 100%);
+  font-size: 13.5px;
+  color: var(--ink-2);
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+.rec-card.good   { border-left-color: var(--emerald); background: linear-gradient(90deg, rgba(16,185,129,0.05) 0%, transparent 100%); }
+.rec-card.warn   { border-left-color: var(--amber);   background: linear-gradient(90deg, rgba(245,158,11,0.05) 0%, transparent 100%); }
+.rec-card.danger { border-left-color: var(--rose);    background: linear-gradient(90deg, rgba(244,63,94,0.05) 0%, transparent 100%); }
+
+/* Stat number emphasis inside box-body */
+.stat-number {
+  font-size: 36px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.04em !important;
+  line-height: 1 !important;
+  background: linear-gradient(135deg, var(--brand) 0%, var(--cyan) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 "
 
@@ -552,10 +1246,10 @@ recommendation_text_r <- function(attention, mark = NA_real_, grade = NA_charact
 
 tabs_for_role <- function(role) {
   switch(role,
-    admin   = c("overview", "dist", "emotion_dist", "per_lecture", "trends", "cluster_doc", "cluster_ss", "student_search", "grades", "raw"),
-    doctor  = c("overview", "dist", "emotion_dist", "per_lecture", "trends", "student_search", "grades", "raw"),
-    student = c("overview", "dist", "emotion_dist", "per_lecture", "doctor_search", "grades", "raw"),
-    parent  = c("overview", "dist", "emotion_dist", "grades", "raw"),
+    admin   = c("overview", "dist", "emotion_dist", "per_lecture", "trends", "cluster_doc", "cluster_ss", "student_search", "grades", "raw", "attendance", "attention_analysis", "cheating_detection", "recommendations_tab"),
+    doctor  = c("overview", "dist", "emotion_dist", "per_lecture", "trends", "student_search", "grades", "raw", "attendance", "attention_analysis", "cheating_detection", "recommendations_tab"),
+    student = c("overview", "dist", "emotion_dist", "per_lecture", "doctor_search", "grades", "raw", "attention_analysis", "recommendations_tab"),
+    parent  = c("overview", "dist", "emotion_dist", "grades", "raw", "recommendations_tab"),
     character(0)
   )
 }
@@ -602,7 +1296,6 @@ login_ui <- function() {
           selectInput("login_role", "Role", choices = c("admin", "doctor", "student", "parent"), selected = "doctor"),
           textInput("login_email", "Email", value = ROLE_CREDENTIALS$doctor$email, placeholder = "you@example.com"),
           passwordInput("login_password", "Password", value = ROLE_CREDENTIALS$doctor$password),
-          textInput("login_api_token", "API token (optional)", value = "", placeholder = "owner (emulator) or leave blank"),
           actionButton("login_submit", "Sign in", class = "btn-primary", width = "100%"),
           div(class = "login-error", textOutput("login_error", inline = TRUE))
         )
@@ -612,37 +1305,74 @@ login_ui <- function() {
 }
 
 build_dashboard_ui <- function(role) {
+  role_email <- ROLE_CREDENTIALS[[role]]$email %||% ""
+  initials   <- toupper(substr(role_email, 1, 2))
+
   dashboardPage(
     skin = "blue",
     dashboardHeader(
-      title = span("Classroom Emotions", tags$small(paste0(" · ", role_cap(role)))),
-      titleWidth = 260
+      title = tags$span(
+        tags$span(style = "font-weight:800; letter-spacing:-0.03em;", "Classroom"),
+        tags$span(style = "font-weight:400; opacity:0.55; margin-left:4px;", "Analytics")
+      ),
+      titleWidth = 260,
+      # right-side content injected as a custom dropdown-less li
+      tags$li(
+        class = "dropdown",
+        style = "margin-left:auto;",
+        tags$a(
+          href = "#", class = "dropdown-toggle", `data-toggle` = "",
+          style = "cursor:default; padding:0;",
+          div(
+            class = "navbar-custom-right",
+            div(class = paste0("navbar-role-badge role-", role),
+                icon(switch(role, admin="shield-halved", doctor="stethoscope", student="graduation-cap", "users")),
+                role_cap(role)
+            ),
+            div(class = "navbar-divider"),
+            div(class = "navbar-avatar", initials),
+            div(class = "navbar-user-info",
+                div(class = "navbar-user-name",  role_cap(role)),
+                div(class = "navbar-user-email", role_email)
+            )
+          )
+        )
+      )
     ),
     dashboardSidebar(
       width = 260,
       sidebarMenu(
         tags$li(class = "header", "Analytics"),
-        if ("overview" %in% tabs_for_role(role)) menuItem("Overview", tabName = "overview", icon = icon("gauge-high")),
-        if ("dist" %in% tabs_for_role(role)) menuItem("Distributions", tabName = "dist", icon = icon("chart-pie")),
-        if ("emotion_dist" %in% tabs_for_role(role)) menuItem("Emotion distribution", tabName = "emotion_dist", icon = icon("chart-column")),
-        if ("per_lecture" %in% tabs_for_role(role)) menuItem("Per-lecture", tabName = "per_lecture", icon = icon("chalkboard-user")),
-        if ("trends" %in% tabs_for_role(role)) menuItem("Engagement trends", tabName = "trends", icon = icon("chart-line")),
+        if ("overview" %in% tabs_for_role(role)) menuItem("Overview", tabName = "overview", icon = icon("gauge-high"), class = "sec-analytics"),
+        if ("dist" %in% tabs_for_role(role)) menuItem("Distributions", tabName = "dist", icon = icon("chart-pie"), class = "sec-analytics"),
+        if ("emotion_dist" %in% tabs_for_role(role)) menuItem("Emotion distribution", tabName = "emotion_dist", icon = icon("chart-column"), class = "sec-analytics"),
+        if ("per_lecture" %in% tabs_for_role(role)) menuItem("Per-lecture", tabName = "per_lecture", icon = icon("chalkboard-user"), class = "sec-analytics"),
+        if ("trends" %in% tabs_for_role(role)) menuItem("Engagement trends", tabName = "trends", icon = icon("chart-line"), class = "sec-analytics"),
         tags$li(class = "header", "Clustering"),
-        if ("cluster_doc" %in% tabs_for_role(role)) menuItem("Lecturer clusters", tabName = "cluster_doc", icon = icon("user-tie")),
-        if ("cluster_ss" %in% tabs_for_role(role)) menuItem("Student × Subject", tabName = "cluster_ss", icon = icon("users")),
+        if ("cluster_doc" %in% tabs_for_role(role)) menuItem("Lecturer clusters", tabName = "cluster_doc", icon = icon("user-tie"), class = "sec-cluster"),
+        if ("cluster_ss" %in% tabs_for_role(role)) menuItem("Student × Subject", tabName = "cluster_ss", icon = icon("users"), class = "sec-cluster"),
         tags$li(class = "header", "Data"),
-        if ("doctor_search" %in% tabs_for_role(role)) menuItem("Doctor search", tabName = "doctor_search", icon = icon("search")),
-        if ("student_search" %in% tabs_for_role(role)) menuItem("Student search", tabName = "student_search", icon = icon("search")),
-        if ("grades" %in% tabs_for_role(role)) menuItem("Grades", tabName = "grades", icon = icon("award")),
-        if ("raw" %in% tabs_for_role(role)) menuItem("Raw observations", tabName = "raw", icon = icon("table"))
+        if ("doctor_search" %in% tabs_for_role(role)) menuItem("Doctor search", tabName = "doctor_search", icon = icon("search"), class = "sec-data"),
+        if ("student_search" %in% tabs_for_role(role)) menuItem("Student search", tabName = "student_search", icon = icon("search"), class = "sec-data"),
+        if ("grades" %in% tabs_for_role(role)) menuItem("Grades", tabName = "grades", icon = icon("award"), class = "sec-data"),
+        if ("raw" %in% tabs_for_role(role)) menuItem("Raw observations", tabName = "raw", icon = icon("table"), class = "sec-data"),
+        tags$li(class = "header", "Insights"),
+        if ("attendance" %in% tabs_for_role(role)) menuItem("Attendance", tabName = "attendance", icon = icon("clipboard-check"), class = "sec-insights"),
+        if ("attention_analysis" %in% tabs_for_role(role)) menuItem("Attention Analysis", tabName = "attention_analysis", icon = icon("eye"), class = "sec-insights"),
+        if ("cheating_detection" %in% tabs_for_role(role)) menuItem("Cheating Detection", tabName = "cheating_detection", icon = icon("shield-halved"), class = "sec-insights"),
+        if ("recommendations_tab" %in% tabs_for_role(role)) menuItem("Recommendations", tabName = "recommendations_tab", icon = icon("lightbulb"), class = "sec-insights")
       ),
       selectInput("student_filter", "Student filter", choices = c("All students" = "__all__"), selected = "__all__"),
       div(class = "login-filter-note", "Focus the dashboard on one student at a time. Choose All students to restore the full class view."),
       hr(),
-      actionButton("refresh", "↻ Refresh data", class = "btn-primary",
+      actionButton("refresh", "↻ Refresh now", class = "btn-primary",
                    width = "calc(100% - 36px)"),
+      div(style = "margin: 8px 10px 0; display:flex; align-items:center; gap:8px;",
+        checkboxInput("auto_refresh", "Auto-refresh (30s)", value = TRUE),
+        uiOutput("last_refresh_ui")
+      ),
       actionButton("logout", "Log out", class = "btn-default",
-                   width = "calc(100% - 36px)", style = "margin: 10px 18px 0; border-radius: 10px;")
+                   width = "calc(100% - 36px)", style = "margin: 6px 18px 0; border-radius: 10px;")
     ),
     dashboardBody(
       tags$head(tags$style(HTML(CUSTOM_CSS))),
@@ -650,15 +1380,31 @@ build_dashboard_ui <- function(role) {
         # -- Overview --
         tabItem(tabName = "overview",
           div(class = "page-hero",
-              div(class = "page-hero__eyebrow", icon("star"), paste("Signed in as", role_cap(role))),
-              div(class = "page-hero__title", "Overview"),
-              p(class = "page-hero__text",
+            div(class = "page-hero__layout",
+              div(class = "page-hero__copy",
+                div(class = "page-hero__eyebrow", icon("star"), paste("Signed in as", role_cap(role))),
+                div(class = "page-hero__title", "Overview"),
+                p(class = "page-hero__text",
                 "Track engagement, sleep rate, emotion mix, and lecturer performance from one polished dashboard. The layout now uses a calmer shell, stronger hierarchy, and softer cards so the data reads faster."),
-              div(class = "page-hero__meta",
+                div(class = "page-hero__meta",
                   span(class = "page-hero__pill", icon("chart-line"), "Real-time engagement"),
                   span(class = "page-hero__pill", icon("chart-pie"), "Emotion mix"),
                   span(class = "page-hero__pill", icon("users"), "Lecturer comparisons")
+                )
+              ),
+              div(class = "page-hero__stats",
+                div(class = "page-hero__stat",
+                  div(class = "page-hero__stat-label", "Dashboard state"),
+                  div(class = "page-hero__stat-value", "Live + role aware"),
+                  div(class = "page-hero__stat-note", "Fresh data, filtered to your access level")
+                ),
+                div(class = "page-hero__stat",
+                  div(class = "page-hero__stat-label", "Visual style"),
+                  div(class = "page-hero__stat-value", "Vibrant, calm, clear"),
+                  div(class = "page-hero__stat-note", "Bright accents with readable surfaces")
+                )
               )
+            )
           ),
           fluidRow(
             valueBoxOutput("kpi_students",   width = 3),
@@ -813,6 +1559,89 @@ build_dashboard_ui <- function(role) {
         tabItem(tabName = "raw",
           h1("Raw observations", tags$small("filter, sort, and export every record")),
           fluidRow(box(title = NULL, width = 12, DTOutput("raw_table")))
+        ),
+
+        # ── Tab 1: Attendance ──────────────────────────────────────────────────
+        tabItem(tabName = "attendance",
+          h1("Attendance", tags$small("students detected per lecture")),
+          fluidRow(
+            box(width = 4,
+                selectInput("att_lecture_filter", "Lecture filter",
+                            choices = c("All lectures" = "__all__"),
+                            selected = "__all__"))
+          ),
+          fluidRow(
+            box(title = "Detected students per lecture", width = 12,
+                plotOutput("att_bar_plot", height = 380),
+                footer = "A student is counted as present if they appear in at least one observation for that lecture.")
+          ),
+          fluidRow(
+            box(title = "Attendance summary", width = 12,
+                DTOutput("att_table"))
+          )
+        ),
+
+        # ── Tab 2: Attention Analysis ──────────────────────────────────────────
+        tabItem(tabName = "attention_analysis",
+          h1("Attention Analysis", tags$small("attention scores and warnings across lectures")),
+          fluidRow(
+            box(width = 4,
+                selectInput("attn_lecture_filter", "Lecture filter",
+                            choices = c("All lectures" = "__all__"),
+                            selected = "__all__"))
+          ),
+          fluidRow(
+            box(title = "Attention score distribution", width = 6,
+                plotOutput("attn_hist", height = 340),
+                footer = "Histogram of attention_score across all filtered observations."),
+            box(title = "Attention score by student (top 20)", width = 6,
+                plotOutput("attn_boxplot", height = 340),
+                footer = "Box plot of attention_score per student; top 20 students by observation count.")
+          ),
+          fluidRow(
+            box(title = "Attention warnings per student (top 10)", width = 12,
+                plotOutput("attn_warn_bar", height = 340),
+                footer = "Count of records where attention_warning == TRUE, top 10 students.")
+          )
+        ),
+
+        # ── Tab 3: Cheating Detection ──────────────────────────────────────────
+        tabItem(tabName = "cheating_detection",
+          h1("Cheating Detection", tags$small("exam-mode cheat score analysis")),
+          fluidRow(
+            box(width = 4,
+                selectInput("cheat_student_filter", "Student",
+                            choices = c("All students" = "__all__"),
+                            selected = "__all__"))
+          ),
+          fluidRow(
+            box(title = "Cheat warnings per student", width = 6,
+                plotOutput("cheat_warn_bar", height = 340),
+                footer = "Only exam-mode records (cheat_score > 0) are included."),
+            box(title = "Cheat score over time (selected student)", width = 6,
+                plotOutput("cheat_timeseries", height = 340),
+                footer = "Select a specific student above to view their cheat score trajectory.")
+          ),
+          fluidRow(
+            box(title = "Cheating summary table", width = 12,
+                DTOutput("cheat_summary_table"),
+                footer = "Sorted by warning_count descending. Only exam-mode records shown.")
+          )
+        ),
+
+        # ── Tab 4: Recommendations ─────────────────────────────────────────────
+        tabItem(tabName = "recommendations_tab",
+          h1("Recommendations", tags$small("per-student aggregates and intervention suggestions")),
+          fluidRow(
+            box(title = "Avg attention per student", width = 12,
+                plotOutput("rec_bar", height = 360),
+                footer = "Students sorted by average attention score ascending (worst first).")
+          ),
+          fluidRow(
+            box(title = "Student recommendation table", width = 12,
+                DTOutput("rec_table"),
+                footer = "Red < 45, amber 45-70, green > 70. Sorted worst attention first.")
+          )
         )
       )
     )
@@ -842,7 +1671,12 @@ ui_preview <- dashboardPage(
       menuItem("Lecturer clusters",    tabName = "cluster_doc",  icon = icon("user-tie")),
       menuItem("Student × Subject",    tabName = "cluster_ss",   icon = icon("users")),
       tags$li(class = "header", "Data"),
-      menuItem("Raw observations",     tabName = "raw",          icon = icon("table"))
+      menuItem("Raw observations",     tabName = "raw",          icon = icon("table")),
+      tags$li(class = "header", "Insights"),
+      menuItem("Attendance",           tabName = "attendance",          icon = icon("clipboard-check")),
+      menuItem("Attention Analysis",   tabName = "attention_analysis",  icon = icon("eye")),
+      menuItem("Cheating Detection",   tabName = "cheating_detection",  icon = icon("shield-halved")),
+      menuItem("Recommendations",      tabName = "recommendations_tab", icon = icon("lightbulb"))
     ),
     hr(),
     actionButton("refresh", "↻ Refresh data", class = "btn-primary",
@@ -970,6 +1804,38 @@ ui_preview <- dashboardPage(
       tabItem(tabName = "raw",
         h1("Raw observations", tags$small("filter, sort, and export every record")),
         fluidRow(box(title = NULL, width = 12, DTOutput("raw_table")))
+      ),
+      # -- Attendance --
+      tabItem(tabName = "attendance",
+        h1("Attendance", tags$small("students detected per lecture")),
+        fluidRow(box(title = "Detected students per lecture", width = 12,
+                     plotOutput("att_bar_plot", height = 380))),
+        fluidRow(box(title = "Attendance summary", width = 12, DTOutput("att_table")))
+      ),
+      # -- Attention Analysis --
+      tabItem(tabName = "attention_analysis",
+        h1("Attention Analysis", tags$small("attention scores and warnings")),
+        fluidRow(
+          box(title = "Attention score distribution", width = 6, plotOutput("attn_hist", height = 340)),
+          box(title = "Attention by student (top 20)", width = 6, plotOutput("attn_boxplot", height = 340))
+        ),
+        fluidRow(box(title = "Attention warnings per student (top 10)", width = 12,
+                     plotOutput("attn_warn_bar", height = 340)))
+      ),
+      # -- Cheating Detection --
+      tabItem(tabName = "cheating_detection",
+        h1("Cheating Detection", tags$small("exam-mode cheat score analysis")),
+        fluidRow(
+          box(title = "Cheat warnings per student", width = 6, plotOutput("cheat_warn_bar", height = 340)),
+          box(title = "Cheat score over time", width = 6, plotOutput("cheat_timeseries", height = 340))
+        ),
+        fluidRow(box(title = "Cheating summary table", width = 12, DTOutput("cheat_summary_table")))
+      ),
+      # -- Recommendations --
+      tabItem(tabName = "recommendations_tab",
+        h1("Recommendations", tags$small("per-student aggregates and intervention suggestions")),
+        fluidRow(box(title = "Avg attention per student", width = 12, plotOutput("rec_bar", height = 360))),
+        fluidRow(box(title = "Student recommendation table", width = 12, DTOutput("rec_table")))
       )
     )
   )
@@ -1015,8 +1881,6 @@ server <- function(input, output, session) {
         identical(input$login_password %||% "", creds$password)) {
       auth$role <- input$login_role
       auth$email <- input$login_email
-      # capture optional API token for this Shiny session
-      auth$api_token <- trimws(input$login_api_token %||% "")
       auth$error <- NULL
     } else {
       auth$error <- sprintf("Invalid %s login. Use the demo credentials shown on the panel.", role_cap(input$login_role))
@@ -1027,10 +1891,29 @@ server <- function(input, output, session) {
     auth$role <- NULL
     auth$email <- NULL
     auth$error <- NULL
-    auth$api_token <- NULL
+  })
+
+  # ---- Auto-refresh timer (30 s) ----
+  auto_timer <- reactiveTimer(30000)
+
+  # Fires whenever either the button is clicked OR the timer ticks (if enabled).
+  refresh_trigger <- reactive({
+    input$refresh
+    if (isTRUE(input$auto_refresh)) auto_timer()
+    Sys.time()
+  })
+
+  last_refresh_time <- reactiveVal(Sys.time())
+  observeEvent(refresh_trigger(), { last_refresh_time(Sys.time()) }, ignoreInit = FALSE)
+
+  output$last_refresh_ui <- renderUI({
+    t <- last_refresh_time()
+    span(style = "font-size:10px; color:#94a3b8;",
+         format(t, "%H:%M:%S"))
   })
 
   observe({
+    refresh_trigger()
     df <- load_emotions() |> attach_doctor_id()
     students <- sort(unique(df$student_id))
     choices <- c("All students" = "__all__", stats::setNames(students, students))
@@ -1042,11 +1925,8 @@ server <- function(input, output, session) {
     updateSelectInput(session, "student_filter", choices = choices, selected = selected)
   })
 
-  # Reload on demand. `load_emotions()` prefers Firestore when the emulator
-  # (or a real service-account key) is configured and falls back to the CSV
-  # backup otherwise. Force one path with env var DATA_SOURCE=csv|firestore.
   data_r <- reactive({
-    input$refresh  # trigger reactive
+    refresh_trigger()
     df <- load_emotions() |> attach_doctor_id()
     if (!is.null(input$student_filter) && input$student_filter != "__all__") {
       df <- df |> filter(student_id == input$student_filter)
@@ -1054,20 +1934,18 @@ server <- function(input, output, session) {
     df
   })
 
-  # Cache lecture labels so we don't hit Firestore on every reactive turn.
   lecture_labels_r <- reactive({
-    input$refresh
+    refresh_trigger()
     load_lecture_labels()
   })
 
-  # Full student directory (used by the Student search tab for admin/doctor).
   students_directory_r <- reactive({
-    input$refresh
+    refresh_trigger()
     load_students_directory()
   })
 
   doctors_directory_r <- reactive({
-    input$refresh
+    refresh_trigger()
     load_doctors_directory()
   })
 
@@ -1103,11 +1981,13 @@ server <- function(input, output, session) {
   })
   output$kpi_engagement <- renderValueBox({
     e <- mean(data_r()$engagement_score, na.rm = TRUE)
+    if (!is.finite(e)) e <- 0
     valueBox(sprintf("%.2f", e), "mean engagement", icon = icon("bolt"),
              color = if (e >= 0.5) "green" else if (e >= 0.3) "yellow" else "red")
   })
   output$kpi_sleep_rate <- renderValueBox({
     r <- mean(data_r()$state == "sleeping", na.rm = TRUE)
+    if (!is.finite(r)) r <- 0
     valueBox(sprintf("%.1f%%", r * 100), "sleep rate", icon = icon("bed"),
              color = if (r < 0.05) "green" else if (r < 0.15) "yellow" else "red")
   })
@@ -1124,6 +2004,7 @@ server <- function(input, output, session) {
   output$kpi_attention <- renderValueBox({
     df <- data_r()
     a <- mean(as.numeric(df$attention_score), na.rm = TRUE)
+    if (!is.finite(a)) a <- 0
     valueBox(sprintf("%.1f", a), "attention", icon = icon("eye"),
              color = if (a >= 70) "green" else if (a >= 50) "yellow" else "red")
   })
@@ -1476,7 +2357,7 @@ server <- function(input, output, session) {
 
   # ---------- Grades tab ----------
   grades_r <- reactive({
-    input$refresh
+    refresh_trigger()
     sid <- NULL
     # prefer explicit grades_student picker, fall back to the main student_filter
     if (!is.null(input$grades_student) && input$grades_student != "__all__") {
@@ -1485,30 +2366,12 @@ server <- function(input, output, session) {
       sid <- input$student_filter
     }
 
-    # Try API first. Prefer session's `auth$api_token`, then env `SHINY_API_TOKEN`,
-    # finally fall back to 'owner' which the emulator accepts.
-    token <- if (!is.null(auth$api_token) && nzchar(auth$api_token)) {
-      auth$api_token
-    } else if (nzchar(Sys.getenv("SHINY_API_TOKEN", unset = ""))) {
-      Sys.getenv("SHINY_API_TOKEN", unset = "")
-    } else {
-      "owner"
-    }
     df <- tryCatch({
-      load_grades_api(base = API_URL, token = token, student_id = sid)
+      load_grades(student_id = sid)
     }, error = function(e) {
-      message(sprintf("grades_r (api): %s", conditionMessage(e)))
+      message(sprintf("grades_r: %s", conditionMessage(e)))
       dplyr::tibble()
     })
-
-    if (nrow(df) == 0) {
-      df <- tryCatch({
-        load_grades(student_id = sid)
-      }, error = function(e) {
-        message(sprintf("grades_r (local): %s", conditionMessage(e)))
-        dplyr::tibble()
-      })
-    }
 
     # Subject filter from picker
     if (!is.null(input$grades_subject) && input$grades_subject != "__all__") {
@@ -1685,6 +2548,365 @@ server <- function(input, output, session) {
                      dom = "lftipr",
                      language = list(search = "",
                                      searchPlaceholder = "Search doctors..."))
+    )
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Tab 1 — Attendance
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  # Populate the lecture filter selector for the Attendance tab
+  observe({
+    df <- data_r()
+    lecs <- sort(unique(df$lecture_id))
+    choices <- c("All lectures" = "__all__", stats::setNames(lecs, lecs))
+    updateSelectInput(session, "att_lecture_filter", choices = choices,
+                      selected = input$att_lecture_filter %||% "__all__")
+  })
+
+  att_data_r <- reactive({
+    df <- data_r()
+    if (!is.null(input$att_lecture_filter) && input$att_lecture_filter != "__all__") {
+      df <- df |> filter(lecture_id == input$att_lecture_filter)
+    }
+    df
+  })
+
+  att_summary_r <- reactive({
+    att_data_r() |>
+      group_by(lecture_id) |>
+      summarise(
+        students_detected  = n_distinct(student_id),
+        total_observations = dplyr::n(),
+        .groups = "drop"
+      ) |>
+      arrange(lecture_id)
+  })
+
+  output$att_bar_plot <- renderPlot({
+    df <- att_summary_r()
+    if (nrow(df) == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5, label = "No data available.",
+                        size = 5, colour = PALETTE$ink_soft) +
+               theme_void())
+    }
+    ggplot(df, aes(x = reorder(lecture_id, students_detected),
+                   y = students_detected,
+                   fill = students_detected)) +
+      geom_col(width = 0.65, show.legend = FALSE) +
+      geom_text(aes(label = students_detected), hjust = -0.25, size = 3.8,
+                colour = PALETTE$ink_soft) +
+      scale_fill_gradient(low = PALETTE$accent, high = PALETTE$primary) +
+      coord_flip() +
+      expand_limits(y = max(df$students_detected, na.rm = TRUE) * 1.12) +
+      labs(title = "Students detected per lecture",
+           x = NULL, y = "Students detected") +
+      theme_classroom()
+  })
+
+  output$att_table <- renderDT({
+    df <- att_summary_r()
+    if (nrow(df) == 0) {
+      return(datatable(data.frame(Message = "No data available."),
+                       rownames = FALSE,
+                       options = list(dom = "t", paging = FALSE)))
+    }
+    names(df) <- c("Lecture ID", "Students Detected", "Total Observations")
+    datatable(df, rownames = FALSE, class = "stripe hover row-border",
+              options = list(pageLength = 20, scrollX = TRUE,
+                             dom = "lftipr",
+                             language = list(search = "",
+                                             searchPlaceholder = "Search...")))
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Tab 2 — Attention Analysis
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  observe({
+    df <- data_r()
+    lecs <- sort(unique(df$lecture_id))
+    choices <- c("All lectures" = "__all__", stats::setNames(lecs, lecs))
+    updateSelectInput(session, "attn_lecture_filter", choices = choices,
+                      selected = input$attn_lecture_filter %||% "__all__")
+  })
+
+  attn_data_r <- reactive({
+    df <- data_r() |>
+      mutate(attention_score = suppressWarnings(as.numeric(attention_score)),
+             attention_warning = suppressWarnings(as.logical(attention_warning)))
+    if (!is.null(input$attn_lecture_filter) && input$attn_lecture_filter != "__all__") {
+      df <- df |> filter(lecture_id == input$attn_lecture_filter)
+    }
+    df
+  })
+
+  output$attn_hist <- renderPlot({
+    df <- attn_data_r() |> filter(!is.na(attention_score))
+    if (nrow(df) == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5, label = "No attention data.",
+                        size = 5, colour = PALETTE$ink_soft) +
+               theme_void())
+    }
+    ggplot(df, aes(x = attention_score)) +
+      geom_histogram(bins = 30, fill = PALETTE$primary, colour = "white", linewidth = 0.3) +
+      labs(title = "Attention score distribution",
+           x = "Attention score", y = "Observations") +
+      theme_classroom()
+  })
+
+  output$attn_boxplot <- renderPlot({
+    df <- attn_data_r() |> filter(!is.na(attention_score))
+    if (nrow(df) == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5, label = "No attention data.",
+                        size = 5, colour = PALETTE$ink_soft) +
+               theme_void())
+    }
+    top20 <- df |>
+      count(student_id, sort = TRUE) |>
+      head(20) |>
+      pull(student_id)
+    df20 <- df |> filter(student_id %in% top20)
+    ggplot(df20, aes(x = reorder(student_id, attention_score, FUN = median),
+                     y = attention_score,
+                     fill = student_id)) +
+      geom_boxplot(show.legend = FALSE, outlier.size = 1.2,
+                   outlier.colour = PALETTE$bad, width = 0.65) +
+      scale_fill_manual(values = rep(CHART_PALETTE, length.out = length(top20))) +
+      coord_flip() +
+      labs(title = "Attention score by student (top 20)",
+           x = NULL, y = "Attention score") +
+      theme_classroom()
+  })
+
+  output$attn_warn_bar <- renderPlot({
+    df <- attn_data_r() |>
+      filter(!is.na(attention_warning), isTRUE(attention_warning) | attention_warning == TRUE) |>
+      count(student_id, sort = TRUE) |>
+      head(10)
+    if (nrow(df) == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5,
+                        label = "No attention warnings in current filter.",
+                        size = 5, colour = PALETTE$ink_soft) +
+               theme_void())
+    }
+    ggplot(df, aes(x = reorder(student_id, n), y = n)) +
+      geom_col(fill = PALETTE$warn, width = 0.65) +
+      geom_text(aes(label = n), hjust = -0.25, size = 3.8, colour = PALETTE$ink_soft) +
+      coord_flip() +
+      expand_limits(y = max(df$n, na.rm = TRUE) * 1.15) +
+      labs(title = "Attention warnings per student (top 10)",
+           x = NULL, y = "Warning count") +
+      theme_classroom()
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Tab 3 — Cheating Detection
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  cheat_base_r <- reactive({
+    data_r() |>
+      mutate(
+        cheat_score   = suppressWarnings(as.numeric(cheat_score)),
+        cheat_warning = suppressWarnings(as.logical(cheat_warning))
+      ) |>
+      filter(!is.na(cheat_score), cheat_score > 0)
+  })
+
+  observe({
+    df <- cheat_base_r()
+    studs <- sort(unique(df$student_id))
+    choices <- c("All students" = "__all__", stats::setNames(studs, studs))
+    updateSelectInput(session, "cheat_student_filter", choices = choices,
+                      selected = input$cheat_student_filter %||% "__all__")
+  })
+
+  output$cheat_warn_bar <- renderPlot({
+    df <- cheat_base_r() |>
+      filter(!is.na(cheat_warning), isTRUE(cheat_warning) | cheat_warning == TRUE) |>
+      count(student_id, sort = TRUE)
+    if (nrow(df) == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5,
+                        label = "No cheat warnings in exam-mode records.",
+                        size = 5, colour = PALETTE$ink_soft) +
+               theme_void())
+    }
+    ggplot(df, aes(x = reorder(student_id, n), y = n)) +
+      geom_col(fill = PALETTE$bad, width = 0.65) +
+      geom_text(aes(label = n), hjust = -0.25, size = 3.8, colour = PALETTE$ink_soft) +
+      coord_flip() +
+      expand_limits(y = max(df$n, na.rm = TRUE) * 1.15) +
+      labs(title = "Cheat warnings per student (exam-mode only)",
+           x = NULL, y = "Warning count") +
+      theme_classroom()
+  })
+
+  output$cheat_timeseries <- renderPlot({
+    df_all <- cheat_base_r()
+    sid <- input$cheat_student_filter %||% "__all__"
+    if (sid != "__all__") {
+      df_all <- df_all |> filter(student_id == sid)
+    } else {
+      # default: pick student with most exam records
+      top_sid <- df_all |> count(student_id, sort = TRUE) |> head(1) |> pull(student_id)
+      if (length(top_sid) == 0) {
+        return(ggplot() +
+                 annotate("text", x = 0.5, y = 0.5,
+                          label = "No exam-mode records available.",
+                          size = 5, colour = PALETTE$ink_soft) +
+                 theme_void())
+      }
+      df_all <- df_all |> filter(student_id == top_sid)
+      sid <- top_sid
+    }
+    if (nrow(df_all) == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5,
+                        label = "No exam-mode records for this student.",
+                        size = 5, colour = PALETTE$ink_soft) +
+               theme_void())
+    }
+    ggplot(df_all, aes(x = timestamp, y = cheat_score)) +
+      geom_line(colour = PALETTE$bad, linewidth = 1.0) +
+      geom_point(aes(colour = cheat_warning), size = 2.5, show.legend = TRUE) +
+      scale_colour_manual(values = c("TRUE" = PALETTE$bad, "FALSE" = PALETTE$accent),
+                          na.value = PALETTE$ink_soft,
+                          name = "Warning") +
+      labs(title = sprintf("Cheat score over time — %s", sid),
+           x = "Time", y = "Cheat score") +
+      theme_classroom()
+  })
+
+  output$cheat_summary_table <- renderDT({
+    df <- cheat_base_r() |>
+      group_by(student_id) |>
+      summarise(
+        avg_cheat_score = round(mean(cheat_score, na.rm = TRUE), 2),
+        warning_count   = sum(isTRUE(cheat_warning) | cheat_warning == TRUE, na.rm = TRUE),
+        max_cheat_score = round(max(cheat_score, na.rm = TRUE), 2),
+        .groups = "drop"
+      ) |>
+      arrange(desc(warning_count))
+    if (nrow(df) == 0) {
+      return(datatable(data.frame(Message = "No exam-mode records (cheat_score > 0) found."),
+                       rownames = FALSE,
+                       options = list(dom = "t", paging = FALSE)))
+    }
+    names(df) <- c("Student ID", "Avg Cheat Score", "Warning Count", "Max Cheat Score")
+    datatable(df, rownames = FALSE, class = "stripe hover row-border",
+              options = list(pageLength = 20, scrollX = TRUE,
+                             dom = "lftipr",
+                             language = list(search = "",
+                                             searchPlaceholder = "Search...")))
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Tab 4 — Recommendations
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  rec_agg_r <- reactive({
+    data_r() |>
+      mutate(
+        attention_score  = suppressWarnings(as.numeric(attention_score)),
+        engagement_score = suppressWarnings(as.numeric(engagement_score)),
+        attention_warning = suppressWarnings(as.logical(attention_warning)),
+        is_sleeping = state == "sleeping",
+        is_yawning  = yawning == TRUE | tolower(as.character(yawning)) == "true"
+      ) |>
+      group_by(student_id) |>
+      summarise(
+        avg_attention  = round(mean(attention_score,  na.rm = TRUE), 1),
+        avg_engagement = round(mean(engagement_score, na.rm = TRUE), 3),
+        pct_sleeping   = round(mean(is_sleeping, na.rm = TRUE) * 100, 1),
+        pct_yawning    = round(mean(is_yawning,  na.rm = TRUE) * 100, 1),
+        warning_rate   = round(mean(isTRUE(attention_warning) | attention_warning == TRUE,
+                                    na.rm = TRUE) * 100, 1),
+        .groups = "drop"
+      ) |>
+      mutate(
+        recommendation = dplyr::case_when(
+          avg_attention < 45 ~ "Low attention — needs intervention",
+          avg_attention < 70 ~ "Moderate attention — encourage engagement",
+          TRUE               ~ "Good attention"
+        )
+      ) |>
+      arrange(avg_attention)
+  })
+
+  output$rec_bar <- renderPlot({
+    df <- rec_agg_r()
+    if (nrow(df) == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5, label = "No data available.",
+                        size = 5, colour = PALETTE$ink_soft) +
+               theme_void())
+    }
+    df <- df |>
+      mutate(
+        attn_band = dplyr::case_when(
+          avg_attention < 45 ~ "low",
+          avg_attention < 70 ~ "medium",
+          TRUE               ~ "good"
+        ),
+        attn_band = factor(attn_band, levels = c("low", "medium", "good"))
+      )
+    band_colours <- c("low" = PALETTE$bad, "medium" = PALETTE$warn, "good" = PALETTE$good)
+
+    ggplot(df, aes(x = reorder(student_id, avg_attention),
+                   y = avg_attention,
+                   fill = attn_band)) +
+      geom_col(width = 0.65) +
+      geom_hline(yintercept = c(45, 70), linetype = "dashed",
+                 colour = PALETTE$ink_soft, linewidth = 0.5) +
+      geom_text(aes(label = sprintf("%.1f", avg_attention)),
+                hjust = -0.25, size = 3.4, colour = PALETTE$ink_soft) +
+      scale_fill_manual(values = band_colours, name = "Attention band") +
+      coord_flip() +
+      expand_limits(y = max(df$avg_attention, na.rm = TRUE) * 1.15) +
+      labs(title = "Average attention per student (worst first)",
+           x = NULL, y = "Avg attention score") +
+      theme_classroom()
+  })
+
+  output$rec_table <- renderDT({
+    df <- rec_agg_r()
+    if (nrow(df) == 0) {
+      return(datatable(data.frame(Message = "No data available."),
+                       rownames = FALSE,
+                       options = list(dom = "t", paging = FALSE)))
+    }
+    display <- df |>
+      dplyr::select(student_id, avg_attention, avg_engagement,
+                    pct_sleeping, pct_yawning, warning_rate, recommendation)
+    names(display) <- c("Student ID", "Avg Attention", "Avg Engagement",
+                        "% Sleeping", "% Yawning", "Warning Rate %", "Recommendation")
+
+    datatable(
+      display,
+      rownames = FALSE,
+      class = "stripe hover row-border",
+      options = list(
+        pageLength = 25, scrollX = TRUE,
+        dom = "lftipr",
+        language = list(search = "", searchPlaceholder = "Search..."),
+        columnDefs = list(
+          list(targets = 1,  # Avg Attention column (0-indexed)
+               render = DT::JS(
+                 "function(data, type, row, meta) {",
+                 "  if (type !== 'display') return data;",
+                 "  var val = parseFloat(data);",
+                 "  var colour = val < 45 ? '#ef4444' : val < 70 ? '#f59e0b' : '#10b981';",
+                 "  return '<span style=\"color:' + colour + '; font-weight:700;\">' + data + '</span>';",
+                 "}"
+               ))
+        )
+      ),
+      escape = FALSE
     )
   })
 }

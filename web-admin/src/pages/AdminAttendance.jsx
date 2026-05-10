@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, Save } from "lucide-react";
 import {
-  collection, doc, getDocs, query, setDoc, where, serverTimestamp,
+  collection, doc, getDocs, onSnapshot, query, setDoc, where, serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../firebase";
 
@@ -14,6 +14,12 @@ const STATUS_STYLE = {
   excused: "bg-blue-100 text-blue-800",
   "":      "bg-slate-100 text-slate-500",
 };
+
+function formatDetectedAt(ts) {
+  if (!ts) return null;
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
 
 export default function AdminAttendance() {
   const [subjects,  setSubjects]  = useState([]);
@@ -66,29 +72,52 @@ export default function AdminAttendance() {
 
   useEffect(() => { setSelWeek(null); setEdits({}); }, [selClass]);
 
-  const activeLecture = useMemo(() =>
-    lectures.find((l) => l.subject_id === selSubject && l.class_id === selClass && l.week_number === selWeek) || null,
-    [lectures, selSubject, selClass, selWeek],
-  );
+  const activeLecture = useMemo(() => {
+    const week = weeks.find((w) => w.class_id === selClass && w.week_number === selWeek);
+    if (!week) return null;
+    return lectures.find((l) => l.week_id === week.id) || null;
+  }, [lectures, weeks, selSubject, selClass, selWeek]);
 
   const enrolledStudents = useMemo(() => {
     const cls = classes.find((c) => c.id === selClass);
     return students.filter((s) => (cls?.enrolled_student_ids || []).includes(s.id));
   }, [classes, students, selClass]);
 
+  // Real-time attendance subscription
   useEffect(() => {
     if (!activeLecture) { setAttMap({}); setEdits({}); return; }
-    getDocs(query(collection(db, "attendance"), where("lecture_id", "==", activeLecture.id)))
-      .then((snap) => {
-        const m = {}, e = {};
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          m[data.student_id] = { id: d.id, ...data };
-          e[data.student_id] = data.status || "";
-        });
-        setAttMap(m); setEdits(e);
-      })
-      .catch((ex) => setErr(ex.message));
+    const q = query(collection(db, "attendance"), where("lecture_id", "==", activeLecture.id));
+    const unsub = onSnapshot(q, (snap) => {
+      const m = {};
+      const eUpdates = {};
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        m[data.student_id] = { id: d.id, ...data };
+        // Auto-detected students get "present" unless the user has already manually edited
+        if (data.auto_detected === true) {
+          eUpdates[data.student_id] = "present";
+        } else {
+          eUpdates[data.student_id] = data.status || "";
+        }
+      });
+      setAttMap(m);
+      // Merge: don't override existing manual edits for non-auto students
+      setEdits((prev) => {
+        const next = { ...prev };
+        for (const [studentId, doc] of Object.entries(m)) {
+          if (doc.auto_detected === true) {
+            // Only set to present if there's no prior manual edit (i.e., not already in edits)
+            if (!(studentId in prev)) {
+              next[studentId] = "present";
+            }
+          } else if (!(studentId in prev)) {
+            next[studentId] = doc.status || "";
+          }
+        }
+        return next;
+      });
+    }, (ex) => setErr(ex.message));
+    return unsub;
   }, [activeLecture?.id]);
 
   async function saveAll() {
@@ -106,19 +135,22 @@ export default function AdminAttendance() {
           }, { merge: true });
         })
       );
-      const snap = await getDocs(query(collection(db, "attendance"), where("lecture_id", "==", activeLecture.id)));
-      const m = {};
-      snap.docs.forEach((d) => { m[d.data().student_id] = { id: d.id, ...d.data() }; });
-      setAttMap(m);
+      // attMap will update automatically via onSnapshot; no manual refresh needed
     } catch (e) { alert("Save failed: " + e.message); }
     finally { setSaving(false); }
   }
 
   const stats = useMemo(() => {
-    const c = { present: 0, absent: 0, late: 0, excused: 0 };
-    for (const s of enrolledStudents) { const st = edits[s.id] || "absent"; if (c[st] !== undefined) c[st]++; }
+    const c = { present: 0, absent: 0, late: 0, excused: 0, autoDetected: 0 };
+    for (const s of enrolledStudents) {
+      const st = edits[s.id] || "absent";
+      if (c[st] !== undefined) c[st]++;
+      if (attMap[s.id]?.auto_detected === true && (edits[s.id] === "present" || (!edits[s.id] && attMap[s.id]?.status === "present"))) {
+        c.autoDetected++;
+      }
+    }
     return c;
-  }, [edits, enrolledStudents]);
+  }, [edits, enrolledStudents, attMap]);
 
   return (
     <div className="space-y-5">
@@ -170,13 +202,17 @@ export default function AdminAttendance() {
 
       {activeLecture && enrolledStudents.length > 0 && (
         <>
-          <div className="grid grid-cols-4 gap-3">
-            {Object.entries(stats).map(([st, n]) => (
+          <div className="grid grid-cols-5 gap-3">
+            {Object.entries({ present: stats.present, absent: stats.absent, late: stats.late, excused: stats.excused }).map(([st, n]) => (
               <div key={st} className={`rounded-xl border p-3 text-center ${STATUS_STYLE[st]}`}>
                 <div className="text-lg font-semibold">{n}</div>
                 <div className="capitalize text-xs mt-0.5">{st}</div>
               </div>
             ))}
+            <div className="rounded-xl border p-3 text-center bg-emerald-50 border-emerald-200 text-emerald-700">
+              <div className="text-lg font-semibold">{stats.autoDetected}</div>
+              <div className="text-xs mt-0.5">Auto-detected</div>
+            </div>
           </div>
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -194,12 +230,15 @@ export default function AdminAttendance() {
                   <th className="px-4 py-3">Student</th>
                   <th className="px-4 py-3 text-center">Status</th>
                   <th className="px-4 py-3 text-center">Saved</th>
+                  <th className="px-4 py-3 text-center">Source</th>
                 </tr>
               </thead>
               <tbody>
                 {enrolledStudents.map((s) => {
-                  const current = edits[s.id] || "";
-                  const saved   = attMap[s.id]?.status || "";
+                  const current     = edits[s.id] || "";
+                  const saved       = attMap[s.id]?.status || "";
+                  const isAuto      = attMap[s.id]?.auto_detected === true;
+                  const detectedAt  = isAuto ? formatDetectedAt(attMap[s.id]?.detected_at) : null;
                   return (
                     <tr key={s.id} className="border-t border-slate-100">
                       <td className="px-4 py-3 font-medium text-slate-900">{s.name || s.id}</td>
@@ -215,6 +254,16 @@ export default function AdminAttendance() {
                         {saved
                           ? <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${STATUS_STYLE[saved]}`}>{saved}{current !== saved ? " *" : ""}</span>
                           : <span className="text-slate-400 text-xs">not saved</span>}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {isAuto ? (
+                          <span className="inline-flex flex-col items-center gap-0.5">
+                            <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Auto</span>
+                            {detectedAt && <span className="text-xs text-slate-400">{detectedAt}</span>}
+                          </span>
+                        ) : (
+                          <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">Manual</span>
+                        )}
                       </td>
                     </tr>
                   );

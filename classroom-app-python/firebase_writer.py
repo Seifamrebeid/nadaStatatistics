@@ -60,8 +60,21 @@ def _project_id() -> str:
     return pid
 
 
+_EMULATOR_ENV_VARS = (
+    "FIRESTORE_EMULATOR_HOST",
+    "FIREBASE_AUTH_EMULATOR_HOST",
+    "FIREBASE_STORAGE_EMULATOR_HOST",
+    "STORAGE_EMULATOR_HOST",
+)
+
+
 def init_firebase():
-    """Initialise firebase-admin once, return the Firestore client."""
+    """Initialise firebase-admin once, return the Firestore client.
+
+    When FIREBASE_SERVICE_ACCOUNT_JSON is set the app always connects to
+    real Firebase — all emulator env vars are stripped so a stale shell
+    environment can never redirect writes to a local emulator.
+    """
     global _db, _bucket
     if firebase_admin._apps:
         _db = firestore.client()
@@ -69,23 +82,42 @@ def init_firebase():
         return _db
 
     project_id = _project_id()
-    # Python's storage client expects STORAGE_EMULATOR_HOST; keep support for
-    # FIREBASE_STORAGE_EMULATOR_HOST used elsewhere in this repo.
-    if os.getenv("FIREBASE_STORAGE_EMULATOR_HOST") and not os.getenv("STORAGE_EMULATOR_HOST"):
-        host = os.getenv("FIREBASE_STORAGE_EMULATOR_HOST", "")
-        if host and not host.startswith(("http://", "https://")):
-            host = "http://" + host
-        os.environ["STORAGE_EMULATOR_HOST"] = host
-    if os.getenv("FIRESTORE_EMULATOR_HOST"):
-        cred = _EmulatorCredential()
-    else:
-        key_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
-        if not key_path:
+    key_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+
+    if key_path:
+        # Production mode: clear every emulator variable so they cannot
+        # silently redirect Firestore / Storage writes.
+        for var in _EMULATOR_ENV_VARS:
+            os.environ.pop(var, None)
+
+        # Resolve relative paths relative to this file's directory so the
+        # app works regardless of the current working directory.
+        resolved = Path(key_path)
+        if not resolved.is_absolute():
+            resolved = (Path(__file__).parent / resolved).resolve()
+        if not resolved.exists():
             raise RuntimeError(
-                "FIREBASE_SERVICE_ACCOUNT_JSON must point at the prod "
-                "service-account JSON when emulator mode is off."
+                f"Service-account file not found: {resolved}\n"
+                f"(from FIREBASE_SERVICE_ACCOUNT_JSON={key_path!r})"
             )
-        cred = credentials.Certificate(key_path)
+        cred = credentials.Certificate(str(resolved))
+        print(f"[firebase] using real Firebase — project={project_id}", flush=True)
+    else:
+        # Emulator mode (explicit — key path not provided).
+        emu_host = os.getenv("FIRESTORE_EMULATOR_HOST", "")
+        if not emu_host:
+            raise RuntimeError(
+                "Set FIREBASE_SERVICE_ACCOUNT_JSON (real Firebase) or "
+                "FIRESTORE_EMULATOR_HOST (emulator)."
+            )
+        # Sync STORAGE_EMULATOR_HOST from FIREBASE_STORAGE_EMULATOR_HOST.
+        fs_host = os.getenv("FIREBASE_STORAGE_EMULATOR_HOST", "")
+        if fs_host and not os.getenv("STORAGE_EMULATOR_HOST"):
+            if not fs_host.startswith(("http://", "https://")):
+                fs_host = "http://" + fs_host
+            os.environ["STORAGE_EMULATOR_HOST"] = fs_host
+        cred = _EmulatorCredential()
+        print(f"[firebase] using LOCAL EMULATOR — host={emu_host}", flush=True)
 
     firebase_admin.initialize_app(cred, {
         "projectId": project_id,
@@ -241,3 +273,63 @@ def mark_transcript_completed(transcript_id: str) -> None:
         "completed": True,
         "last_updated_at": datetime.now(timezone.utc),
     })
+
+
+def mark_attendance_present(
+    lecture_id: str,
+    student_id: str,
+    class_id: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    doctor_id: Optional[str] = None,
+) -> None:
+    """Auto-mark a student present when their face is first detected this session."""
+    db = get_db()
+    doc_id = f"{lecture_id}_{student_id}"
+    db.collection("attendance").document(doc_id).set({
+        "lecture_id": lecture_id,
+        "student_id": student_id,
+        "class_id": class_id,
+        "subject_id": subject_id,
+        "doctor_id": doctor_id,
+        "status": "present",
+        "auto_detected": True,
+        "detected_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+    }, merge=True)
+
+
+def write_warning(
+    student_id: str,
+    lecture_id: str,
+    warning_type: str,
+    score: float,
+) -> None:
+    """Write a real-time warning event (attention or cheating) to Firestore."""
+    db = get_db()
+    db.collection("warnings").add({
+        "student_id": student_id,
+        "lecture_id": lecture_id,
+        "type": warning_type,
+        "score": round(float(score), 1),
+        "timestamp": datetime.now(timezone.utc),
+    })
+
+
+def write_recommendation(
+    student_id: str,
+    lecture_id: str,
+    items: list,
+    attention_score: float,
+    attendance_rate: Optional[float] = None,
+) -> None:
+    """Upsert a recommendations document for a student (per lecture)."""
+    db = get_db()
+    doc_id = f"{lecture_id}_{student_id}"
+    db.collection("recommendations").document(doc_id).set({
+        "student_id": student_id,
+        "lecture_id": lecture_id,
+        "items": items,
+        "attention_score": round(float(attention_score), 1),
+        "attendance_rate": attendance_rate,
+        "generated_at": datetime.now(timezone.utc),
+    }, merge=True)

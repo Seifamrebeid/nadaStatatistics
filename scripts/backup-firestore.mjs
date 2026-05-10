@@ -5,7 +5,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
-const PROJECT = process.argv[2] || "emotion-detection-dev";
+const PROJECT = process.argv[2] || "fridgechef-jt50c";
 const OUT = process.argv[3] || "./firebase-emulator/backup/firestore-backup.json";
 const FS = `http://localhost:8080/v1/projects/${PROJECT}/databases/(default)/documents`;
 const H = { Authorization: "Bearer owner", "Content-Type": "application/json" };
