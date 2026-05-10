@@ -1400,13 +1400,14 @@ build_dashboard_ui <- function(role) {
         if ("cheating_detection"%in% tabs_for_role(role)) menuItem("Cheating Detection",  tabName = "cheating_detection",icon = icon("shield-halved"),      class = "sec-insights"),
         if ("recommendations_tab"%in% tabs_for_role(role)) menuItem("Recommendations",   tabName = "recommendations_tab",icon = icon("lightbulb"),          class = "sec-insights")
       ),
-      selectInput("student_filter", "Student filter", choices = c("All students" = "__all__"), selected = "__all__"),
+      selectizeInput("student_filter", "Student filter", choices = NULL,
+                     options = list(placeholder = "All students…")),
       div(class = "login-filter-note", "Focus the dashboard on one student at a time. Choose All students to restore the full class view."),
       hr(),
       actionButton("refresh", "↻ Refresh now", class = "btn-primary",
                    width = "calc(100% - 36px)"),
       div(style = "margin: 8px 10px 0; display:flex; align-items:center; gap:8px;",
-        checkboxInput("auto_refresh", "Auto-refresh (30s)", value = TRUE),
+        checkboxInput("auto_refresh", "Auto-refresh (5 min)", value = FALSE),
         uiOutput("last_refresh_ui")
       ),
       actionButton("logout", "Log out", class = "btn-default",
@@ -1556,7 +1557,7 @@ build_dashboard_ui <- function(role) {
           h1("Student View", tags$small("personal dashboard")),
           fluidRow(
             box(width = 4,
-                selectInput("sv_student_pick", "Student", choices = c("Select student" = "")))
+                selectizeInput("sv_student_pick", "Student", choices = NULL, options = list(placeholder = "Select student…")))
           ),
           fluidRow(
             valueBoxOutput("sv_enrolled",      width = 2),
@@ -1584,7 +1585,7 @@ build_dashboard_ui <- function(role) {
           h1("Parent View", tags$small("per-child overview")),
           fluidRow(
             box(width = 4,
-                selectInput("pv_child_pick", "Child", choices = c("Select child" = "")))
+                selectizeInput("pv_child_pick", "Child", choices = NULL, options = list(placeholder = "Select child…")))
           ),
           fluidRow(
             valueBoxOutput("pv_lectures",    width = 3),
@@ -1716,7 +1717,7 @@ build_dashboard_ui <- function(role) {
           h1("Grades", tags$small("marks out of 100 and letter grades")),
           fluidRow(
             box(width = 8,
-                selectInput("grades_student", "Student", choices = c("All students" = "__all__"), selected = "__all__"),
+                selectizeInput("grades_student", "Student", choices = NULL, options = list(placeholder = "All students…")),
                 selectInput("grades_subject", "Subject", choices = c("All subjects" = "__all__"), selected = "__all__")
             ),
             box(width = 4, style = "display:flex; align-items:center; justify-content:flex-end; gap:12px;",
@@ -2076,11 +2077,13 @@ server <- function(input, output, session) {
     auth$error <- NULL
   })
 
-  # ---- Auto-refresh timer (30 s) ----
-  auto_timer <- reactiveTimer(30000)
+  # ---- Auto-refresh timer (5 min) ----
+  auto_timer <- reactiveTimer(300000)
 
-  # Fires whenever either the button is clicked OR the timer ticks (if enabled).
+  # Fires on manual button click, OR on timer tick if enabled.
+  # Only active after login to prevent pre-login data loads.
   refresh_trigger <- reactive({
+    req(!is.null(auth$role))
     input$refresh
     if (isTRUE(input$auto_refresh)) auto_timer()
     Sys.time()
@@ -2096,22 +2099,28 @@ server <- function(input, output, session) {
   })
 
   observe({
-    refresh_trigger()
+    req(!is.null(auth$role))
+    input$refresh   # only on manual refresh, not auto-timer
     df <- load_emotions() |> attach_doctor_id()
-    students <- sort(unique(df$student_id))
+    students <- na.omit(sort(unique(df$student_id)))
     choices <- c("All students" = "__all__", stats::setNames(students, students))
     selected <- if (!is.null(input$student_filter) && input$student_filter %in% names(choices)) {
       input$student_filter
     } else {
       "__all__"
     }
-    updateSelectInput(session, "student_filter", choices = choices, selected = selected)
+    updateSelectizeInput(session, "student_filter", choices = choices,
+                         selected = selected, server = TRUE)
   })
 
   data_r <- reactive({
-    refresh_trigger()
-    df <- load_emotions() |> attach_doctor_id()
-    if (!is.null(input$student_filter) && input$student_filter != "__all__") {
+    refresh_trigger()   # req(auth$role) is already inside refresh_trigger
+    df <- tryCatch(
+      load_emotions() |> attach_doctor_id(),
+      error = function(e) { message("data_r: ", e$message); dplyr::tibble() }
+    )
+    if (!is.null(input$student_filter) && nzchar(input$student_filter %||% "") &&
+        input$student_filter != "__all__") {
       df <- df |> filter(student_id == input$student_filter)
     }
     df
@@ -2119,16 +2128,19 @@ server <- function(input, output, session) {
 
   lecture_labels_r <- reactive({
     refresh_trigger()
-    load_lecture_labels()
+    tryCatch(load_lecture_labels(), error = function(e) character(0))
   })
 
+  # Load once on login (not every 30 s) — these rarely change mid-session
   students_directory_r <- reactive({
-    refresh_trigger()
+    req(!is.null(auth$role))
+    input$refresh   # still refreshable via the manual button
     load_students_directory()
   })
 
   doctors_directory_r <- reactive({
-    refresh_trigger()
+    req(!is.null(auth$role))
+    input$refresh
     load_doctors_directory()
   })
 
@@ -2567,18 +2579,21 @@ server <- function(input, output, session) {
 
   # populate student/subject pickers when data changes
   observe({
+    req(!is.null(auth$role))
     df <- grades_r()
     studs <- students_directory_r()
     stud_choices <- c("All students" = "__all__")
     if (nrow(studs) > 0) {
-      sid <- studs$student_id %||% studs$id
-      stud_choices <- c(stud_choices, stats::setNames(as.character(sid), as.character(studs$name %||% sid)))
+      sid <- na.omit(as.character(studs$student_id %||% studs$id))
+      nm  <- na.omit(as.character(studs$name %||% sid))
+      if (length(sid) > 0) stud_choices <- c(stud_choices, stats::setNames(sid, nm))
     } else if (nrow(df) > 0) {
       # fallback to students seen in grades
-      sids <- unique(as.character(df$student_id))
-      stud_choices <- c(stud_choices, stats::setNames(sids, sids))
+      sids <- na.omit(unique(as.character(df$student_id)))
+      if (length(sids) > 0) stud_choices <- c(stud_choices, stats::setNames(sids, sids))
     }
-    updateSelectInput(session, "grades_student", choices = stud_choices, selected = input$grades_student %||% "__all__")
+    updateSelectizeInput(session, "grades_student", choices = stud_choices,
+                          selected = input$grades_student %||% "__all__", server = TRUE)
 
     subj_choices <- c("All subjects" = "__all__")
     if (nrow(df) > 0 && "subject_id" %in% names(df)) {
@@ -2747,8 +2762,10 @@ server <- function(input, output, session) {
     students   = dplyr::tibble()
   )
 
-  observe({
-    refresh_trigger()
+  # Load Firestore collections once on login + manual refresh only.
+  # Do NOT tie to auto_timer — 7 parallel HTTP requests every 30s kills performance.
+  observeEvent(list(auth$role, input$refresh), {
+    req(!is.null(auth$role))
     if (.have_fs()) {
       tryCatch({
         fs_data$subjects   <- .fs_rows("subjects")
@@ -2762,16 +2779,23 @@ server <- function(input, output, session) {
         message(sprintf("[fs_data observer] %s", conditionMessage(e)))
       })
     }
-  })
+  }, ignoreInit = FALSE)
 
   # ══════════════════════════════════════════════════════════════════════════════
   # Tab 1 — Attendance (cascading Subject → Class → Week)
   # ══════════════════════════════════════════════════════════════════════════════
 
   observe({
+    req(!is.null(auth$role))
     subjs <- fs_data$subjects
-    if (nrow(subjs) > 0 && "name" %in% names(subjs)) {
-      choices <- stats::setNames(as.character(subjs$id), as.character(subjs$name))
+    if (nrow(subjs) > 0 && "name" %in% names(subjs) && "id" %in% names(subjs)) {
+      sid <- na.omit(as.character(subjs$id))
+      snm <- na.omit(as.character(subjs$name))
+      if (length(sid) > 0 && length(snm) == length(sid)) {
+        choices <- stats::setNames(sid, snm)
+      } else {
+        choices <- character(0)
+      }
     } else {
       choices <- character(0)
     }
@@ -2781,7 +2805,7 @@ server <- function(input, output, session) {
   })
 
   observe({
-    req(nzchar(input$att_subject %||% ""))
+    req(!is.null(auth$role), nzchar(input$att_subject %||% ""))
     cls <- fs_data$classes
     cls <- cls[!is.na(cls$subject_id) & as.character(cls$subject_id) == input$att_subject, ]
     if (nrow(cls) > 0 && "name" %in% names(cls)) {
@@ -3473,19 +3497,21 @@ server <- function(input, output, session) {
   # ══════════════════════════════════════════════════════════════════════════════
 
   observe({
+    req(!is.null(auth$role))
     dir <- students_directory_r()
     df  <- data_r()
-    if (nrow(dir) > 0) {
-      sid <- as.character(dir$id %||% dir$student_id)
-      nm  <- as.character(dir$name %||% sid)
-      choices <- stats::setNames(sid, nm)
+    if (nrow(dir) > 0 && length(intersect(c("id","student_id"), names(dir))) > 0) {
+      raw_id <- if ("id" %in% names(dir)) dir$id else dir$student_id
+      sid <- na.omit(as.character(raw_id))
+      nm  <- na.omit(as.character(dir$name %||% sid))
+      if (length(nm) != length(sid)) nm <- sid
+      choices <- if (length(sid) > 0) stats::setNames(sid, nm) else character(0)
     } else if (nrow(df) > 0) {
-      sid <- sort(unique(df$student_id))
-      choices <- stats::setNames(sid, sid)
+      sid <- sort(na.omit(unique(as.character(df$student_id))))
+      choices <- if (length(sid) > 0) stats::setNames(sid, sid) else character(0)
     } else {
       choices <- character(0)
     }
-    # For student role, default to their own ID
     role <- auth$role %||% ""
     default_sid <- if (role == "student" && !is.null(input$student_filter) && input$student_filter != "__all__") {
       input$student_filter
@@ -3494,9 +3520,9 @@ server <- function(input, output, session) {
     } else {
       ""
     }
-    updateSelectInput(session, "sv_student_pick",
-                      choices  = c("Select student" = "", choices),
-                      selected = default_sid)
+    updateSelectizeInput(session, "sv_student_pick",
+                          choices  = c("Select student" = "", choices),
+                          selected = default_sid, server = TRUE)
   })
 
   sv_df_r <- reactive({
@@ -3614,21 +3640,25 @@ server <- function(input, output, session) {
   # ══════════════════════════════════════════════════════════════════════════════
 
   observe({
+    req(!is.null(auth$role))
     dir <- students_directory_r()
     df  <- data_r()
-    if (nrow(dir) > 0) {
-      sid <- as.character(dir$id %||% dir$student_id)
-      nm  <- as.character(dir$name %||% sid)
-      choices <- stats::setNames(sid, nm)
+    if (nrow(dir) > 0 && length(intersect(c("id","student_id"), names(dir))) > 0) {
+      raw_id <- if ("id" %in% names(dir)) dir$id else dir$student_id
+      sid <- na.omit(as.character(raw_id))
+      nm  <- na.omit(as.character(dir$name %||% sid))
+      if (length(nm) != length(sid)) nm <- sid
+      choices <- if (length(sid) > 0) stats::setNames(sid, nm) else character(0)
     } else if (nrow(df) > 0) {
-      sid <- sort(unique(df$student_id))
-      choices <- stats::setNames(sid, sid)
+      sid <- sort(na.omit(unique(as.character(df$student_id))))
+      choices <- if (length(sid) > 0) stats::setNames(sid, sid) else character(0)
     } else {
       choices <- character(0)
     }
-    updateSelectInput(session, "pv_child_pick",
-                      choices  = c("Select child" = "", choices),
-                      selected = if (length(choices) > 0) choices[[1]] else "")
+    updateSelectizeInput(session, "pv_child_pick",
+                          choices  = c("Select child" = "", choices),
+                          selected = if (length(choices) > 0) choices[[1]] else "",
+                          server = TRUE)
   })
 
   pv_df_r <- reactive({

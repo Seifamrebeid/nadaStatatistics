@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Classroom Parent",
+    "slug": "classroom-parent",
+    "version": "1.0.0",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "edu.college.emotions.parent"
+    },
+    "android": {
+      "package": "edu.college.emotions.parent"
+    },
+    "web": {},
+    "scheme": "classroom-parent",
+    "plugins": [["expo-router"]]
+  }
+}

@@ -5,8 +5,8 @@ import { colors } from "../../components/ui";
 const tabIcons = {
   index: ["home-outline", "home"],
   lectures: ["book-outline", "book"],
-  live: ["radio-outline", "radio"],
-  history: ["analytics-outline", "analytics"],
+  transcripts: ["document-text-outline", "document-text"],
+  grades: ["school-outline", "school"],
   profile: ["person-circle-outline", "person-circle"],
 };
 
@@ -35,11 +35,20 @@ export default function StudentTabs() {
         },
       }}
     >
+      {/* Visible tabs */}
       <Tabs.Screen name="index" options={{ title: "Home", tabBarIcon: tabBarIcon("index") }} />
       <Tabs.Screen name="lectures" options={{ title: "Lectures", tabBarIcon: tabBarIcon("lectures") }} />
-      <Tabs.Screen name="live" options={{ title: "Live", tabBarIcon: tabBarIcon("live") }} />
-      <Tabs.Screen name="history" options={{ title: "History", tabBarIcon: tabBarIcon("history") }} />
+      <Tabs.Screen name="transcripts" options={{ title: "Transcripts", tabBarIcon: tabBarIcon("transcripts") }} />
+      <Tabs.Screen name="grades" options={{ title: "Grades", tabBarIcon: tabBarIcon("grades") }} />
       <Tabs.Screen name="profile" options={{ title: "Profile", tabBarIcon: tabBarIcon("profile") }} />
+
+      {/* Hidden screens — pushed via router.push but not shown in tab bar */}
+      <Tabs.Screen name="live" options={{ href: null }} />
+      <Tabs.Screen name="attendance" options={{ href: null }} />
+      <Tabs.Screen name="engagement" options={{ href: null }} />
+      <Tabs.Screen name="doctor-search" options={{ href: null }} />
+      <Tabs.Screen name="hierarchy" options={{ href: null }} />
+      <Tabs.Screen name="history" options={{ href: null }} />
     </Tabs>
   );
 }

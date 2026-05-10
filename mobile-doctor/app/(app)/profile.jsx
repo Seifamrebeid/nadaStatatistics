@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Alert, Text } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { router } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { getDoc, doc } from "firebase/firestore";
@@ -52,6 +52,19 @@ export default function ProfileScreen() {
           ) : null}
         </Card>
       ) : null}
+      <Header title="Management" />
+      <View style={{ gap: 8 }}>
+        <Button title="Attendance" onPress={() => router.push("/(app)/attendance")} variant="secondary" />
+        <Button title="Notifications" onPress={() => router.push("/(app)/notifications")} variant="secondary" />
+        <Button title="Subjects" onPress={() => router.push("/(app)/subjects")} variant="secondary" />
+        <Button title="Classes" onPress={() => router.push("/(app)/classes")} variant="secondary" />
+        <Button title="Weeks" onPress={() => router.push("/(app)/weeks")} variant="secondary" />
+        <Button title="Hierarchy" onPress={() => router.push("/(app)/hierarchy")} variant="secondary" />
+        <Button title="Student search" onPress={() => router.push("/(app)/student-search")} variant="secondary" />
+        <Button title="Analytics" onPress={() => router.push("/(app)/analytics")} variant="secondary" />
+        <Button title="Messages" onPress={() => router.push("/(app)/messages")} variant="secondary" />
+      </View>
+
       <Button title="Sign out" onPress={logout} variant="danger" />
     </Screen>
   );

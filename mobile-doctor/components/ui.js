@@ -41,15 +41,35 @@ export const colors = {
   info:    "#3b82f6",
 };
 
-export function Screen({ children, scroll = true }) {
-  const Wrapper = scroll ? ScrollView : View;
+export function Screen({ children, scroll = true, refreshControl }) {
+  if (scroll) {
+    return (
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.screenContent}
+        refreshControl={refreshControl}
+      >
+        {children}
+      </ScrollView>
+    );
+  }
+  return <View style={styles.screen}>{children}</View>;
+}
+
+export function Pill({ text, tone = "slate" }) {
+  const palette = {
+    success: { bg: "#d1fae5", fg: "#065f46" },
+    danger:  { bg: "#fee2e2", fg: "#991b1b" },
+    warning: { bg: "#fef3c7", fg: "#92400e" },
+    info:    { bg: "#dbeafe", fg: "#1e40af" },
+    slate:   { bg: "#e2e8f0", fg: "#334155" },
+    brand:   { bg: colors.brand100, fg: colors.brand700 },
+  };
+  const { bg, fg } = palette[tone] || palette.slate;
   return (
-    <Wrapper
-      style={styles.screen}
-      contentContainerStyle={scroll ? styles.screenContent : undefined}
-    >
-      {children}
-    </Wrapper>
+    <View style={[styles.pill, { backgroundColor: bg }]}>
+      <Text style={[styles.pillText, { color: fg }]}>{text}</Text>
+    </View>
   );
 }
 
@@ -289,5 +309,16 @@ export const styles = StyleSheet.create({
   loadingLabel: {
     color: colors.muted,
     fontSize: 13,
+  },
+  pill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+  },
+  pillText: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.2,
   },
 });

@@ -62,6 +62,7 @@ export default function StudentLecturesScreen() {
       {lectures.map((lecture) => {
         const id = lecture.id;
         const isLive = lecture.status === "recording";
+        const hasTranscript = !!lecture.transcript_id;
         return (
           <Card key={id}>
             <Text style={styles.emptyTitle}>{lecture.title || id}</Text>
@@ -71,10 +72,10 @@ export default function StudentLecturesScreen() {
             <Text style={{ color: isLive ? colors.danger : colors.primary, marginTop: 7, fontWeight: "800" }}>
               {isLive ? "Live now" : lecture.status || "scheduled"}
             </Text>
-            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-              {isLive ? (
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+              {(isLive || hasTranscript) ? (
                 <Button
-                  title="Open live"
+                  title={isLive ? "Watch live" : "View transcript"}
                   onPress={() => router.push({ pathname: "/(app)/live", params: { lectureId: id } })}
                 />
               ) : null}

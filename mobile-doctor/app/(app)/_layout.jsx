@@ -6,21 +6,14 @@ const tabIcons = {
   index: ["home-outline", "home"],
   lectures: ["book-outline", "book"],
   live: ["pulse-outline", "pulse"],
-  analytics: ["bar-chart-outline", "bar-chart"],
-  messages: ["mail-outline", "mail"],
+  grades: ["school-outline", "school"],
   profile: ["person-circle-outline", "person-circle"],
 };
 
 function tabBarIcon(name) {
   return ({ color, focused, size }) => {
     const [outline, filled] = tabIcons[name];
-    return (
-      <Ionicons
-        name={focused ? filled : outline}
-        size={size}
-        color={color}
-      />
-    );
+    return <Ionicons name={focused ? filled : outline} size={size} color={color} />;
   };
 }
 
@@ -44,30 +37,23 @@ export default function DoctorTabs() {
         },
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{ title: "Home", tabBarIcon: tabBarIcon("index") }}
-      />
-      <Tabs.Screen
-        name="lectures"
-        options={{ title: "Lectures", tabBarIcon: tabBarIcon("lectures") }}
-      />
-      <Tabs.Screen
-        name="live"
-        options={{ title: "Live", tabBarIcon: tabBarIcon("live") }}
-      />
-      <Tabs.Screen
-        name="analytics"
-        options={{ title: "Analytics", tabBarIcon: tabBarIcon("analytics") }}
-      />
-      <Tabs.Screen
-        name="messages"
-        options={{ title: "Messages", tabBarIcon: tabBarIcon("messages") }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{ title: "Profile", tabBarIcon: tabBarIcon("profile") }}
-      />
+      {/* Visible tabs */}
+      <Tabs.Screen name="index" options={{ title: "Home", tabBarIcon: tabBarIcon("index") }} />
+      <Tabs.Screen name="lectures" options={{ title: "Lectures", tabBarIcon: tabBarIcon("lectures") }} />
+      <Tabs.Screen name="live" options={{ title: "Live", tabBarIcon: tabBarIcon("live") }} />
+      <Tabs.Screen name="grades" options={{ title: "Grades", tabBarIcon: tabBarIcon("grades") }} />
+      <Tabs.Screen name="profile" options={{ title: "Profile", tabBarIcon: tabBarIcon("profile") }} />
+
+      {/* Hidden screens — pushed via router.push */}
+      <Tabs.Screen name="attendance" options={{ href: null }} />
+      <Tabs.Screen name="notifications" options={{ href: null }} />
+      <Tabs.Screen name="classes" options={{ href: null }} />
+      <Tabs.Screen name="subjects" options={{ href: null }} />
+      <Tabs.Screen name="weeks" options={{ href: null }} />
+      <Tabs.Screen name="hierarchy" options={{ href: null }} />
+      <Tabs.Screen name="student-search" options={{ href: null }} />
+      <Tabs.Screen name="analytics" options={{ href: null }} />
+      <Tabs.Screen name="messages" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Alert, Text } from "react-native";
+import { Alert, Text, View } from "react-native";
 import { router } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { getDoc, doc, updateDoc } from "firebase/firestore";
@@ -91,6 +91,15 @@ export default function ProfileScreen() {
           <Text style={{ color: colors.muted }}>Student profile not loaded yet.</Text>
         </Card>
       )}
+      <Header title="More" />
+      <View style={{ gap: 8 }}>
+        <Button title="Attendance" onPress={() => router.push("/(app)/attendance")} variant="secondary" />
+        <Button title="Engagement" onPress={() => router.push("/(app)/engagement")} variant="secondary" />
+        <Button title="History" onPress={() => router.push("/(app)/history")} variant="secondary" />
+        <Button title="Doctor search" onPress={() => router.push("/(app)/doctor-search")} variant="secondary" />
+        <Button title="My classes" onPress={() => router.push("/(app)/hierarchy")} variant="secondary" />
+      </View>
+
       <Button title="Sign out" onPress={logout} variant="danger" />
     </Screen>
   );

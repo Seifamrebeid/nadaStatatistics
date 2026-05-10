@@ -19,10 +19,19 @@ import Button from "../../components/Button";
 import { colors, radii, spacing, shadow } from "../../components/theme";
 
 const TILES = [
-  { key: "students", label: "Students",  icon: "👥", route: "/(app)/students", accent: colors.brand500 },
-  { key: "doctors",  label: "Doctors",   icon: "🩺", route: "/(app)/doctors",  accent: colors.info },
-  { key: "admins",   label: "Admins",    icon: "🛡️", route: "/(app)/admins",   accent: colors.warning },
-  { key: "lectures", label: "Lectures",  icon: "📚", route: "/(app)/lectures", accent: "#8b5cf6" },
+  { key: "students",       label: "Students",     icon: "👥", route: "/(app)/students",        accent: colors.brand500 },
+  { key: "doctors",        label: "Doctors",      icon: "🩺", route: "/(app)/doctors",         accent: colors.info },
+  { key: "admins",         label: "Admins",       icon: "🛡️", route: "/(app)/admins",          accent: colors.warning },
+  { key: "parents",        label: "Parents",      icon: "👨‍👩‍👧", route: "/(app)/parents",         accent: "#f97316" },
+  { key: "lectures",       label: "Lectures",     icon: "📚", route: "/(app)/lectures",        accent: "#8b5cf6" },
+  { key: "subjects",       label: "Subjects",     icon: "📖", route: "/(app)/subjects",        accent: colors.brand600 },
+  { key: "classes",        label: "Classes",      icon: "🏫", route: "/(app)/classes",         accent: colors.info },
+  { key: "weeks",          label: "Weeks",        icon: "🗓️", route: "/(app)/weeks",           accent: "#06b6d4" },
+  { key: "attendance",     label: "Attendance",   icon: "✅", route: "/(app)/attendance",      accent: colors.success },
+  { key: "grades",         label: "Grades",       icon: "📊", route: "/(app)/grades",          accent: "#ec4899" },
+  { key: "analytics",      label: "Analytics",    icon: "📈", route: "/(app)/analytics",       accent: colors.brand500 },
+  { key: "student-search", label: "Search",       icon: "🔍", route: "/(app)/student-search",  accent: colors.warning },
+  { key: "settings",       label: "Settings",     icon: "⚙️", route: "/(app)/settings",        accent: "#64748b" },
 ];
 
 export default function AdminHomeScreen() {

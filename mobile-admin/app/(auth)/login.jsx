@@ -9,11 +9,21 @@ import {
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../../firebase";
+import { signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "../../firebase";
 import Screen from "../../components/Screen";
 import Button from "../../components/Button";
 import { colors, radii, spacing, shadow } from "../../components/theme";
+
+async function assertAdmin(user) {
+  const snap = await getDoc(doc(db, "users", user.uid));
+  const role = snap.exists() ? snap.data()?.role : null;
+  if (role && role !== "admin") {
+    await signOut(auth);
+    throw new Error("This account belongs to another portal.");
+  }
+}
 
 const QUICK = { email: "admin@classroom.local", password: "admin-password-change-me" };
 
@@ -30,7 +40,8 @@ export default function LoginScreen() {
     }
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      await assertAdmin(cred.user);
       router.replace("/(app)");
     } catch (error) {
       Alert.alert("Login failed", error.message.replace(/^Firebase:\s*/, ""));
