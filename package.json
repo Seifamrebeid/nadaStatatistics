@@ -6,6 +6,8 @@
   "scripts": {
     "emu:start": "node scripts/start-emulators.mjs",
     "emu:start:fresh": "node scripts/start-emulators.mjs --no-restore",
+    "emu:save": "node scripts/emu-snapshot.mjs",
+    "emu:save:full": "node scripts/emu-snapshot.mjs --jsonbak",
     "emu:backup": "node scripts/backup-firestore.mjs && node scripts/backup-auth.mjs",
     "emu:restore": "node scripts/restore-firestore.mjs && node scripts/restore-auth.mjs",
     "cloud:upload": "node scripts/upload-to-cloud.mjs",

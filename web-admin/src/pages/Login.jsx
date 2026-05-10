@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext";
 import { LayoutDashboard, ShieldCheck, Sparkles, BarChart3, AlertCircle } from "lucide-react";
 import Spinner from "../components/Spinner";
 
-const QUICK = { email: "admin@classroom.local", password: "admin-password-change-me" };
+const QUICK = { email: "admin@classroom.local", password: "123456789" };
 
 export default function Login() {
   const { mismatchError, setMismatchError } = useAuth();

@@ -15,7 +15,7 @@
 //   4. forward SIGINT/SIGTERM so Ctrl+C cleanly stops the emulator
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -71,7 +71,10 @@ function runNode(scriptPath, scriptArgs = []) {
 // Storage). The legacy JSON backup pipeline below still runs as a fallback
 // and for grep-friendly archives.
 const SNAPSHOT_DIR = resolve(EMU_DIR, "snapshot");
-const haveSnapshot = existsSync(SNAPSHOT_DIR);
+// Treat snapshot as usable only when it exists AND has the firebase-export-
+// metadata.json marker file the emulator writes on a successful export.
+const haveSnapshot = existsSync(SNAPSHOT_DIR) &&
+  existsSync(resolve(SNAPSHOT_DIR, "firebase-export-metadata.json"));
 log(`spawning Firebase emulators in ${EMU_DIR} (project=${PROJECT})`);
 log(`snapshot dir: ${SNAPSHOT_DIR}  (${haveSnapshot ? "found, will import" : "missing, fresh start"})`);
 const isWin = process.platform === "win32";

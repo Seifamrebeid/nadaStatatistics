@@ -1,0 +1,17 @@
+{
+  "name": "students/231004345/face.jpg",
+  "bucket": "fridgechef-jt50c.firebasestorage.app",
+  "metageneration": 2,
+  "generation": 1778455025891,
+  "contentType": "application/octet-stream",
+  "storageClass": "STANDARD",
+  "downloadTokens": [
+    "bac1cb3f-681c-42b9-9b74-cac923c56d71"
+  ],
+  "etag": "tWM1EhMY5pUlEYFnDKetzmD06oA",
+  "timeCreated": "2026-05-10T23:17:05.891Z",
+  "updated": "2026-05-10T23:26:26.614Z",
+  "size": 167020,
+  "md5Hash": "fp7S7P+gIIXjgk4KeWUTPA==",
+  "crc32c": "394209584"
+}
