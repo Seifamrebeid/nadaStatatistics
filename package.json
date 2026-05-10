@@ -12,6 +12,7 @@
     "seed:lectures": "node scripts/seed-lectures.mjs"
   },
   "dependencies": {
-    "firebase-admin": "^13.9.0"
+    "firebase-admin": "^13.9.0",
+    "firebase-tools": "^15.17.0"
   }
 }

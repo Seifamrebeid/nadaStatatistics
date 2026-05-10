@@ -1,4 +1,4 @@
-﻿# ── Shared helpers (sourced by each role app) ─────────────────────────────
+# ── Shared helpers (sourced by each role app) ─────────────────────────────
 
 `%||%` <- function(x, y) {
   if (is.null(x)) y else x
@@ -32,32 +32,8 @@ recommendation_text_r <- function(attention, mark = NA_real_, grade = NA_charact
     nzchar(Sys.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", unset = ""))
 }
 
-.fs_rows <- function(coll) {
-  if (!.have_fs()) return(dplyr::tibble())
-  tryCatch({
-    root <- .find_repo_root()
-    if (is.na(root) || is.null(root)) return(dplyr::tibble())
-    source(file.path(root, "backend-r-plumber", "R", "config.R"), local = FALSE)
-    source(file.path(root, "backend-r-plumber", "R", "firestore.R"), local = FALSE)
-    docs <- fs_list(coll)
-    if (!length(docs)) return(dplyr::tibble())
-    rows <- lapply(docs, function(d) {
-      flat <- tryCatch(fs_unwrap_fields(d$fields), error = function(e) list())
-      doc_id <- basename(as.character(d[["name"]] %||% ""))
-      flat <- lapply(flat, function(x) {
-        if (is.null(x) || length(x) == 0) return(NA)
-        if (length(x) > 1) return(paste(x, collapse = ", "))
-        x
-      })
-      if (!"id" %in% names(flat)) flat[["id"]] <- doc_id
-      tryCatch(dplyr::as_tibble(flat), error = function(e) dplyr::tibble(id = doc_id))
-    })
-    dplyr::bind_rows(rows)
-  }, error = function(e) {
-    message(sprintf("[fs_rows] %s: %s", coll, conditionMessage(e)))
-    dplyr::tibble()
-  })
-}
+# NOTE: .fs_rows lives in r-analysis/load_data.R (richer list-column handling).
+# Do not redefine here — the load_data.R version must win.
 
 # ============================================================ Theme =========
 
@@ -68,7 +44,10 @@ recommendation_text_r <- function(attention, mark = NA_real_, grade = NA_charact
           values = stats::as.formula(paste0('~', value_col)),
           type   = 'pie', hole = 0.55, sort = FALSE,
           textinfo = 'label+percent',
-          marker = list(colors = palette, line = list(color = '#ffffff', width = 1))) |>
+          insidetextfont = list(color = "#0f172a"),
+          outsidetextfont = list(color = PALETTE$ink),
+          marker = list(colors = palette,
+                        line = list(color = PALETTE$surface, width = 2))) |>
     plotly::layout(showlegend = TRUE) |>
     style_plotly()
 }
