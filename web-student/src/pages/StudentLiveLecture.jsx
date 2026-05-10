@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { db } from "../firebase";
 import {
   onSnapshot,
@@ -7,116 +7,153 @@ import {
   query,
   orderBy,
   doc,
-  getDoc,
 } from "firebase/firestore";
+import { FileText, ArrowLeft, ExternalLink } from "lucide-react";
 
 export default function StudentLiveLecture() {
   const { lectureId } = useParams();
   const navigate = useNavigate();
-  const [transcriptSegments, setTranscriptSegments] = useState([]);
+  const [segments, setSegments] = useState([]);
+  const [lectureTitle, setLectureTitle] = useState("");
+  const [isLive, setIsLive] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [reportUrl, setReportUrl] = useState(null);
+  const [transcriptId, setTranscriptId] = useState(null);
   const [err, setErr] = useState(null);
+  const bottomRef = useRef(null);
+
+  // Auto-scroll to bottom whenever segments update
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [segments]);
 
   useEffect(() => {
-    if (!lectureId) {
-      setErr("No lecture ID provided");
-      return;
-    }
+    if (!lectureId) { setErr("No lecture ID provided."); return; }
 
-    try {
-      // Subscribe to transcript segments
-      const segmentsRef = collection(db, "transcripts", lectureId, "segments");
-      const q = query(segmentsRef, orderBy("chunk_index"));
+    // Step 1: watch lecture doc for transcript_id + status
+    const lectureUnsub = onSnapshot(doc(db, "lectures", lectureId), (snap) => {
+      if (!snap.exists()) { setErr("Lecture not found."); return; }
+      const data = snap.data();
+      setLectureTitle(data.title || lectureId);
+      setIsLive(data.status === "recording");
+      setCompleted(data.status === "finished" || !!data.finalized_at);
+      if (data.report_pdf_url) setReportUrl(data.report_pdf_url);
+      if (data.transcript_id) setTranscriptId(data.transcript_id);
+    }, (e) => setErr(e.message));
 
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const segments = snapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }));
-        setTranscriptSegments(segments);
-      });
-
-      // Subscribe to the lecture doc to detect finalization and get report URL
-      const lectureRef = doc(db, "lectures", lectureId);
-      const unsubscribeLecture = onSnapshot(lectureRef, (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data.status === "finished" || data.finalized_at) {
-            setCompleted(true);
-          }
-          if (data.report_pdf_url) {
-            setReportUrl(data.report_pdf_url);
-          }
-        }
-      });
-
-      return () => {
-        unsubscribe();
-        unsubscribeLecture();
-      };
-    } catch (error) {
-      console.error("Error subscribing to transcripts:", error);
-      setErr(error.message);
-    }
+    return () => lectureUnsub();
   }, [lectureId]);
 
+  useEffect(() => {
+    if (!transcriptId) return;
+
+    // Step 2: once we have transcript_id, subscribe to its segments
+    const segUnsub = onSnapshot(
+      query(collection(db, "transcripts", transcriptId, "segments"), orderBy("chunk_index")),
+      (snap) => setSegments(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (e) => setErr(e.message),
+    );
+
+    return () => segUnsub();
+  }, [transcriptId]);
+
+  function fmtTime(sec) {
+    if (sec == null) return "";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${String(s).padStart(2, "0")}`;
+  }
+
   if (err) {
-    return <div className="text-red-600 p-4">Error: {err}</div>;
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-800">
+        {err}
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Live Lecture Transcript</h1>
-        {completed && (
-          <button
-            onClick={() => navigate("/lectures")}
-            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-          >
-            Back to Lectures
-          </button>
-        )}
-      </div>
-
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-lg font-semibold mb-4">
-          {completed ? "Transcript (Completed)" : "Live Captions"}
-        </h2>
-        <div className="space-y-2 max-h-96 overflow-y-auto bg-gray-50 p-4 rounded">
-          {transcriptSegments.length > 0 ? (
-            transcriptSegments.map((seg) => (
-              <div key={seg.id} className="text-sm border-b pb-2">
-                <span className="text-gray-600 text-xs">
-                  {seg.start?.toFixed(1)}s - {seg.end?.toFixed(1)}s
-                </span>
-                <div className="text-gray-800">{seg.text}</div>
+    <div className="space-y-5">
+      {/* Header */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <Link to="/transcripts" className="mt-0.5 text-slate-400 hover:text-slate-700 transition-colors">
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-2xl font-semibold text-slate-900">{lectureTitle || "Lecture"}</h1>
+                {isLive && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
+                    LIVE
+                  </span>
+                )}
+                {completed && (
+                  <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                    Completed
+                  </span>
+                )}
               </div>
-            ))
-          ) : (
-            <div className="text-gray-500 text-center py-8">
-              {completed ? "No transcript available" : "Waiting for captions…"}
+              <p className="mt-1 text-sm text-slate-500">
+                {completed ? "Full transcript" : isLive ? "Live captions — updating as the doctor speaks" : "Waiting for lecture to start…"}
+              </p>
             </div>
+          </div>
+
+          {completed && reportUrl && (
+            <a href={reportUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <ExternalLink className="h-4 w-4" />
+              View Report
+            </a>
           )}
         </div>
       </div>
 
-      {completed && reportUrl && (
-        <div className="bg-blue-50 border border-blue-200 p-4 rounded">
-          <p className="text-blue-800">
-            Lecture recording is complete. You can now{" "}
-            <a
-              href={reportUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold hover:underline"
-            >
-              view the full report
-            </a>
-            .
-          </p>
+      {/* Transcript panel */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center gap-2 border-b border-slate-100 px-5 py-3">
+          <FileText className="h-4 w-4 text-slate-400" />
+          <span className="text-sm font-semibold text-slate-700">
+            {completed ? "Transcript" : "Live Captions"}
+          </span>
+          {segments.length > 0 && (
+            <span className="ml-auto text-xs text-slate-400">{segments.length} segment{segments.length !== 1 ? "s" : ""}</span>
+          )}
         </div>
-      )}
+
+        <div className="h-[28rem] overflow-y-auto px-5 py-4 space-y-3">
+          {segments.length > 0 ? (
+            <>
+              {segments.map((seg) => (
+                <div key={seg.id} className="flex gap-3">
+                  <span className="shrink-0 w-16 text-right text-xs text-slate-400 mt-0.5 font-mono">
+                    {fmtTime(seg.start)}
+                  </span>
+                  <p className="text-sm text-slate-800 leading-relaxed" dir="auto">{seg.text}</p>
+                </div>
+              ))}
+              <div ref={bottomRef} />
+            </>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-slate-400">
+              {!transcriptId ? (
+                <>
+                  <FileText className="h-8 w-8 opacity-30" />
+                  <p className="text-sm">{isLive ? "Transcription starting…" : "No transcript yet"}</p>
+                </>
+              ) : (
+                <>
+                  <FileText className="h-8 w-8 opacity-30" />
+                  <p className="text-sm">Waiting for first segment…</p>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

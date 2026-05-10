@@ -21,6 +21,39 @@ suppressPackageStartupMessages({
 
 source("../load_data.R")
 
+# ── Firestore generic row loader ─────────────────────────────────────────────
+.have_fs <- function() {
+  nzchar(Sys.getenv("FIRESTORE_EMULATOR_HOST", unset = "")) ||
+    nzchar(Sys.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", unset = ""))
+}
+
+.fs_rows <- function(coll) {
+  if (!.have_fs()) return(dplyr::tibble())
+  tryCatch({
+    root <- .find_repo_root()
+    if (is.na(root) || is.null(root)) return(dplyr::tibble())
+    source(file.path(root, "backend-r-plumber", "R", "config.R"), local = FALSE)
+    source(file.path(root, "backend-r-plumber", "R", "firestore.R"), local = FALSE)
+    docs <- fs_list(coll)
+    if (!length(docs)) return(dplyr::tibble())
+    rows <- lapply(docs, function(d) {
+      flat <- tryCatch(fs_unwrap_fields(d$fields), error = function(e) list())
+      doc_id <- basename(as.character(d[["name"]] %||% ""))
+      flat <- lapply(flat, function(x) {
+        if (is.null(x) || length(x) == 0) return(NA)
+        if (length(x) > 1) return(paste(x, collapse = ", "))
+        x
+      })
+      if (!"id" %in% names(flat)) flat[["id"]] <- doc_id
+      tryCatch(dplyr::as_tibble(flat), error = function(e) dplyr::tibble(id = doc_id))
+    })
+    dplyr::bind_rows(rows)
+  }, error = function(e) {
+    message(sprintf("[fs_rows] %s: %s", coll, conditionMessage(e)))
+    dplyr::tibble()
+  })
+}
+
 # ============================================================ Theme =========
 
 PALETTE <- list(
@@ -1246,10 +1279,10 @@ recommendation_text_r <- function(attention, mark = NA_real_, grade = NA_charact
 
 tabs_for_role <- function(role) {
   switch(role,
-    admin   = c("overview", "dist", "emotion_dist", "per_lecture", "trends", "cluster_doc", "cluster_ss", "student_search", "grades", "raw", "attendance", "attention_analysis", "cheating_detection", "recommendations_tab"),
-    doctor  = c("overview", "dist", "emotion_dist", "per_lecture", "trends", "student_search", "grades", "raw", "attendance", "attention_analysis", "cheating_detection", "recommendations_tab"),
-    student = c("overview", "dist", "emotion_dist", "per_lecture", "doctor_search", "grades", "raw", "attention_analysis", "recommendations_tab"),
-    parent  = c("overview", "dist", "emotion_dist", "grades", "raw", "recommendations_tab"),
+    admin   = c("overview", "doctor_dashboard", "live_classroom", "dist", "emotion_dist", "per_lecture", "trends", "cluster_doc", "cluster_ss", "student_search", "grades", "raw", "attendance", "student_view", "attention_analysis", "cheating_detection", "recommendations_tab"),
+    doctor  = c("overview", "doctor_dashboard", "live_classroom", "dist", "emotion_dist", "per_lecture", "trends", "student_search", "grades", "raw", "attendance", "student_view", "attention_analysis", "cheating_detection", "recommendations_tab"),
+    student = c("overview", "student_view", "dist", "emotion_dist", "per_lecture", "doctor_search", "grades", "raw", "attention_analysis", "recommendations_tab"),
+    parent  = c("overview", "parent_view", "dist", "emotion_dist", "grades", "raw", "recommendations_tab"),
     character(0)
   )
 }
@@ -1342,25 +1375,30 @@ build_dashboard_ui <- function(role) {
     dashboardSidebar(
       width = 260,
       sidebarMenu(
+        tags$li(class = "header", "Dashboards"),
+        if ("overview"          %in% tabs_for_role(role)) menuItem("Overview",           tabName = "overview",          icon = icon("gauge-high"),       class = "sec-analytics"),
+        if ("doctor_dashboard"  %in% tabs_for_role(role)) menuItem("Doctor Dashboard",   tabName = "doctor_dashboard",  icon = icon("stethoscope"),       class = "sec-analytics"),
+        if ("live_classroom"    %in% tabs_for_role(role)) menuItem("Live Classroom",      tabName = "live_classroom",    icon = icon("video"),              class = "sec-analytics"),
+        if ("student_view"      %in% tabs_for_role(role)) menuItem("Student View",        tabName = "student_view",      icon = icon("graduation-cap"),     class = "sec-analytics"),
+        if ("parent_view"       %in% tabs_for_role(role)) menuItem("Parent View",         tabName = "parent_view",       icon = icon("house-user"),         class = "sec-analytics"),
         tags$li(class = "header", "Analytics"),
-        if ("overview" %in% tabs_for_role(role)) menuItem("Overview", tabName = "overview", icon = icon("gauge-high"), class = "sec-analytics"),
-        if ("dist" %in% tabs_for_role(role)) menuItem("Distributions", tabName = "dist", icon = icon("chart-pie"), class = "sec-analytics"),
-        if ("emotion_dist" %in% tabs_for_role(role)) menuItem("Emotion distribution", tabName = "emotion_dist", icon = icon("chart-column"), class = "sec-analytics"),
-        if ("per_lecture" %in% tabs_for_role(role)) menuItem("Per-lecture", tabName = "per_lecture", icon = icon("chalkboard-user"), class = "sec-analytics"),
-        if ("trends" %in% tabs_for_role(role)) menuItem("Engagement trends", tabName = "trends", icon = icon("chart-line"), class = "sec-analytics"),
+        if ("dist"              %in% tabs_for_role(role)) menuItem("Distributions",       tabName = "dist",              icon = icon("chart-pie"),          class = "sec-analytics"),
+        if ("emotion_dist"      %in% tabs_for_role(role)) menuItem("Emotion distribution",tabName = "emotion_dist",      icon = icon("chart-column"),       class = "sec-analytics"),
+        if ("per_lecture"       %in% tabs_for_role(role)) menuItem("Per-lecture",         tabName = "per_lecture",       icon = icon("chalkboard-user"),    class = "sec-analytics"),
+        if ("trends"            %in% tabs_for_role(role)) menuItem("Engagement trends",   tabName = "trends",            icon = icon("chart-line"),         class = "sec-analytics"),
         tags$li(class = "header", "Clustering"),
-        if ("cluster_doc" %in% tabs_for_role(role)) menuItem("Lecturer clusters", tabName = "cluster_doc", icon = icon("user-tie"), class = "sec-cluster"),
-        if ("cluster_ss" %in% tabs_for_role(role)) menuItem("Student × Subject", tabName = "cluster_ss", icon = icon("users"), class = "sec-cluster"),
+        if ("cluster_doc"       %in% tabs_for_role(role)) menuItem("Lecturer clusters",   tabName = "cluster_doc",       icon = icon("user-tie"),           class = "sec-cluster"),
+        if ("cluster_ss"        %in% tabs_for_role(role)) menuItem("Student × Subject",   tabName = "cluster_ss",        icon = icon("users"),              class = "sec-cluster"),
         tags$li(class = "header", "Data"),
-        if ("doctor_search" %in% tabs_for_role(role)) menuItem("Doctor search", tabName = "doctor_search", icon = icon("search"), class = "sec-data"),
-        if ("student_search" %in% tabs_for_role(role)) menuItem("Student search", tabName = "student_search", icon = icon("search"), class = "sec-data"),
-        if ("grades" %in% tabs_for_role(role)) menuItem("Grades", tabName = "grades", icon = icon("award"), class = "sec-data"),
-        if ("raw" %in% tabs_for_role(role)) menuItem("Raw observations", tabName = "raw", icon = icon("table"), class = "sec-data"),
+        if ("doctor_search"     %in% tabs_for_role(role)) menuItem("Doctor search",       tabName = "doctor_search",     icon = icon("magnifying-glass"),   class = "sec-data"),
+        if ("student_search"    %in% tabs_for_role(role)) menuItem("Student search",      tabName = "student_search",    icon = icon("magnifying-glass"),   class = "sec-data"),
+        if ("grades"            %in% tabs_for_role(role)) menuItem("Grades",              tabName = "grades",            icon = icon("award"),              class = "sec-data"),
+        if ("raw"               %in% tabs_for_role(role)) menuItem("Raw observations",    tabName = "raw",               icon = icon("table"),              class = "sec-data"),
         tags$li(class = "header", "Insights"),
-        if ("attendance" %in% tabs_for_role(role)) menuItem("Attendance", tabName = "attendance", icon = icon("clipboard-check"), class = "sec-insights"),
-        if ("attention_analysis" %in% tabs_for_role(role)) menuItem("Attention Analysis", tabName = "attention_analysis", icon = icon("eye"), class = "sec-insights"),
-        if ("cheating_detection" %in% tabs_for_role(role)) menuItem("Cheating Detection", tabName = "cheating_detection", icon = icon("shield-halved"), class = "sec-insights"),
-        if ("recommendations_tab" %in% tabs_for_role(role)) menuItem("Recommendations", tabName = "recommendations_tab", icon = icon("lightbulb"), class = "sec-insights")
+        if ("attendance"        %in% tabs_for_role(role)) menuItem("Attendance",          tabName = "attendance",        icon = icon("clipboard-check"),    class = "sec-insights"),
+        if ("attention_analysis"%in% tabs_for_role(role)) menuItem("Attention Analysis",  tabName = "attention_analysis",icon = icon("eye"),                class = "sec-insights"),
+        if ("cheating_detection"%in% tabs_for_role(role)) menuItem("Cheating Detection",  tabName = "cheating_detection",icon = icon("shield-halved"),      class = "sec-insights"),
+        if ("recommendations_tab"%in% tabs_for_role(role)) menuItem("Recommendations",   tabName = "recommendations_tab",icon = icon("lightbulb"),          class = "sec-insights")
       ),
       selectInput("student_filter", "Student filter", choices = c("All students" = "__all__"), selected = "__all__"),
       div(class = "login-filter-note", "Focus the dashboard on one student at a time. Choose All students to restore the full class view."),
@@ -1433,6 +1471,139 @@ build_dashboard_ui <- function(role) {
                 footer = "Top 10 lecturers ranked by mean engagement.")
           )
         ),
+        # ── Doctor Dashboard ─────────────────────────────────────────────────────
+        tabItem(tabName = "doctor_dashboard",
+          div(class = "page-hero",
+            div(class = "page-hero__layout",
+              div(class = "page-hero__copy",
+                div(class = "page-hero__eyebrow", icon("stethoscope"), "Doctor Dashboard"),
+                div(class = "page-hero__title", "Live Teaching Stats"),
+                p(class = "page-hero__text",
+                  "Real-time snapshot of today's lectures, engagement, hand raises, toilet requests, and attention alerts."),
+                div(class = "page-hero__meta",
+                  span(class = "page-hero__pill", icon("video"), "Live recording badge"),
+                  span(class = "page-hero__pill", icon("bolt"), "Engagement tracking"),
+                  span(class = "page-hero__pill", icon("hand"), "Gesture detection")
+                )
+              ),
+              div(class = "page-hero__stats",
+                div(class = "page-hero__stat",
+                  div(class = "page-hero__stat-label", "Refresh"),
+                  div(class = "page-hero__stat-value", "Every 30s"),
+                  div(class = "page-hero__stat-note", "Auto-updates while live")
+                )
+              )
+            )
+          ),
+          fluidRow(
+            valueBoxOutput("doc_today_lectures",   width = 3),
+            valueBoxOutput("doc_avg_engagement",   width = 3),
+            valueBoxOutput("doc_hand_raises",      width = 3),
+            valueBoxOutput("doc_toilet_requests",  width = 3)
+          ),
+          fluidRow(
+            valueBoxOutput("doc_attention_alerts", width = 4),
+            valueBoxOutput("doc_cheat_alerts",     width = 4),
+            valueBoxOutput("doc_camera_detected",  width = 4)
+          ),
+          fluidRow(
+            box(title = "Engagement over time (today)", width = 8,
+                plotlyOutput("doc_engagement_trend", height = 320)),
+            box(title = "Emotion mix (today)", width = 4,
+                plotlyOutput("doc_emotion_donut", height = 320))
+          ),
+          fluidRow(
+            box(title = "Student status snapshot", width = 12,
+                DTOutput("doc_student_snapshot"))
+          )
+        ),
+
+        # ── Live Classroom ───────────────────────────────────────────────────────
+        tabItem(tabName = "live_classroom",
+          h1("Live Classroom", tags$small("real-time per-student status")),
+          fluidRow(
+            box(width = 5,
+                selectInput("live_lecture_pick", "Select lecture", choices = NULL)),
+            box(width = 7,
+                fluidRow(
+                  column(4, div(style="text-align:center;",
+                    div(class="stat-number", uiOutput("live_awake_count")),
+                    p(style="color:var(--emerald);font-size:11px;font-weight:700;text-transform:uppercase;", "Awake"))),
+                  column(4, div(style="text-align:center;",
+                    div(class="stat-number", style="background:linear-gradient(135deg,var(--rose),#f97316);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;",
+                        uiOutput("live_sleep_count")),
+                    p(style="color:var(--rose);font-size:11px;font-weight:700;text-transform:uppercase;", "Sleeping"))),
+                  column(4, div(style="text-align:center;",
+                    div(class="stat-number", style="background:linear-gradient(135deg,var(--amber),var(--orange));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;",
+                        uiOutput("live_hand_count")),
+                    p(style="color:var(--amber);font-size:11px;font-weight:700;text-transform:uppercase;", "Hand Raised")))
+                ))
+          ),
+          fluidRow(
+            box(title = "Per-student status", width = 12,
+                DTOutput("live_student_table"))
+          ),
+          fluidRow(
+            box(title = "Recent warnings", width = 6,
+                DTOutput("live_warnings_table")),
+            box(title = "Engagement timeline (last 5 min)", width = 6,
+                plotlyOutput("live_engagement_sparkline", height = 260))
+          )
+        ),
+
+        # ── Student View ─────────────────────────────────────────────────────────
+        tabItem(tabName = "student_view",
+          h1("Student View", tags$small("personal dashboard")),
+          fluidRow(
+            box(width = 4,
+                selectInput("sv_student_pick", "Student", choices = c("Select student" = "")))
+          ),
+          fluidRow(
+            valueBoxOutput("sv_enrolled",      width = 2),
+            valueBoxOutput("sv_attended",      width = 2),
+            valueBoxOutput("sv_att_rate",      width = 2),
+            valueBoxOutput("sv_avg_engagement",width = 3),
+            valueBoxOutput("sv_avg_attention", width = 3)
+          ),
+          fluidRow(
+            box(title = "You vs. Class Average", width = 6,
+                plotlyOutput("sv_compare_bar", height = 300)),
+            box(title = "Engagement over lectures", width = 6,
+                plotlyOutput("sv_lecture_trend", height = 300))
+          ),
+          fluidRow(
+            box(title = "Recommendations", width = 6,
+                uiOutput("sv_recommendations")),
+            box(title = "Recent warnings", width = 6,
+                DTOutput("sv_warnings_table"))
+          )
+        ),
+
+        # ── Parent View ──────────────────────────────────────────────────────────
+        tabItem(tabName = "parent_view",
+          h1("Parent View", tags$small("per-child overview")),
+          fluidRow(
+            box(width = 4,
+                selectInput("pv_child_pick", "Child", choices = c("Select child" = "")))
+          ),
+          fluidRow(
+            valueBoxOutput("pv_lectures",    width = 3),
+            valueBoxOutput("pv_engagement",  width = 3),
+            valueBoxOutput("pv_attention",   width = 3),
+            valueBoxOutput("pv_warnings",    width = 3)
+          ),
+          fluidRow(
+            box(title = "Engagement per lecture", width = 7,
+                plotlyOutput("pv_lecture_trend", height = 300)),
+            box(title = "Recommendation", width = 5,
+                uiOutput("pv_recommendation"))
+          ),
+          fluidRow(
+            box(title = "Grades summary", width = 12,
+                DTOutput("pv_grades_table"))
+          )
+        ),
+
         # -- Distributions (pies/donuts) --
         tabItem(tabName = "dist",
           h1("Distributions", tags$small("share of observations by category")),
@@ -1563,20 +1734,32 @@ build_dashboard_ui <- function(role) {
 
         # ── Tab 1: Attendance ──────────────────────────────────────────────────
         tabItem(tabName = "attendance",
-          h1("Attendance", tags$small("students detected per lecture")),
+          h1("Attendance", tags$small("Mark and review attendance per lecture")),
           fluidRow(
-            box(width = 4,
-                selectInput("att_lecture_filter", "Lecture filter",
-                            choices = c("All lectures" = "__all__"),
-                            selected = "__all__"))
+            box(width = 12,
+              fluidRow(
+                column(4, selectInput("att_subject",  "Subject",
+                                      choices = c("Select subject" = ""), width = "100%")),
+                column(4, selectInput("att_class",    "Class",
+                                      choices = c("Select class" = ""),   width = "100%")),
+                column(4, uiOutput("att_week_ui"))
+              )
+            )
           ),
           fluidRow(
-            box(title = "Detected students per lecture", width = 12,
-                plotOutput("att_bar_plot", height = 380),
-                footer = "A student is counted as present if they appear in at least one observation for that lecture.")
+            uiOutput("att_summary_boxes")
           ),
           fluidRow(
-            box(title = "Attendance summary", width = 12,
+            box(title = "Attendance records", width = 12,
+                DTOutput("att_detail_table"))
+          ),
+          fluidRow(
+            box(title = "Camera-detected presence (from emotions)", width = 12,
+                plotlyOutput("att_bar_plot", height = 320),
+                footer = "A student is counted as present if they appear in at least one emotion observation for that lecture.")
+          ),
+          fluidRow(
+            box(title = "Camera detection summary", width = 12,
                 DTOutput("att_table"))
           )
         ),
@@ -1809,7 +1992,7 @@ ui_preview <- dashboardPage(
       tabItem(tabName = "attendance",
         h1("Attendance", tags$small("students detected per lecture")),
         fluidRow(box(title = "Detected students per lecture", width = 12,
-                     plotOutput("att_bar_plot", height = 380))),
+                     plotlyOutput("att_bar_plot", height = 320))),
         fluidRow(box(title = "Attendance summary", width = 12, DTOutput("att_table")))
       ),
       # -- Attention Analysis --
@@ -2552,28 +2735,207 @@ server <- function(input, output, session) {
   })
 
   # ══════════════════════════════════════════════════════════════════════════════
-  # Tab 1 — Attendance
+  # Firestore collections reactiveValues
+  # ══════════════════════════════════════════════════════════════════════════════
+  fs_data <- reactiveValues(
+    subjects   = dplyr::tibble(),
+    classes    = dplyr::tibble(),
+    weeks      = dplyr::tibble(),
+    lectures   = dplyr::tibble(),
+    attendance = dplyr::tibble(),
+    warnings   = dplyr::tibble(),
+    students   = dplyr::tibble()
+  )
+
+  observe({
+    refresh_trigger()
+    if (.have_fs()) {
+      tryCatch({
+        fs_data$subjects   <- .fs_rows("subjects")
+        fs_data$classes    <- .fs_rows("classes")
+        fs_data$weeks      <- .fs_rows("weeks")
+        fs_data$lectures   <- .fs_rows("lectures")
+        fs_data$attendance <- .fs_rows("attendance")
+        fs_data$warnings   <- .fs_rows("warnings")
+        fs_data$students   <- .fs_rows("students")
+      }, error = function(e) {
+        message(sprintf("[fs_data observer] %s", conditionMessage(e)))
+      })
+    }
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Tab 1 — Attendance (cascading Subject → Class → Week)
   # ══════════════════════════════════════════════════════════════════════════════
 
-  # Populate the lecture filter selector for the Attendance tab
   observe({
-    df <- data_r()
-    lecs <- sort(unique(df$lecture_id))
-    choices <- c("All lectures" = "__all__", stats::setNames(lecs, lecs))
-    updateSelectInput(session, "att_lecture_filter", choices = choices,
-                      selected = input$att_lecture_filter %||% "__all__")
-  })
-
-  att_data_r <- reactive({
-    df <- data_r()
-    if (!is.null(input$att_lecture_filter) && input$att_lecture_filter != "__all__") {
-      df <- df |> filter(lecture_id == input$att_lecture_filter)
+    subjs <- fs_data$subjects
+    if (nrow(subjs) > 0 && "name" %in% names(subjs)) {
+      choices <- stats::setNames(as.character(subjs$id), as.character(subjs$name))
+    } else {
+      choices <- character(0)
     }
-    df
+    updateSelectInput(session, "att_subject",
+                      choices = c("Select subject" = "", choices),
+                      selected = input$att_subject %||% "")
   })
 
+  observe({
+    req(nzchar(input$att_subject %||% ""))
+    cls <- fs_data$classes
+    cls <- cls[!is.na(cls$subject_id) & as.character(cls$subject_id) == input$att_subject, ]
+    if (nrow(cls) > 0 && "name" %in% names(cls)) {
+      choices <- stats::setNames(as.character(cls$id), as.character(cls$name))
+    } else {
+      choices <- character(0)
+    }
+    updateSelectInput(session, "att_class",
+                      choices = c("Select class" = "", choices),
+                      selected = input$att_class %||% "")
+  })
+
+  output$att_week_ui <- renderUI({
+    req(nzchar(input$att_class %||% ""))
+    wks <- fs_data$weeks
+    wks <- wks[!is.na(wks$class_id) & as.character(wks$class_id) == input$att_class, ]
+    nums <- sort(unique(suppressWarnings(as.integer(wks$week_number))))
+    nums <- nums[!is.na(nums)]
+    tagList(
+      tags$label("Week", class = "control-label"),
+      div(class = "flex flex-wrap gap-2",
+        lapply(nums, function(n) {
+          btn_id <- paste0("att_week_btn_", n)
+          sel <- isTRUE(!is.null(input$att_week_sel) && input$att_week_sel == n)
+          tags$button(
+            id = btn_id,
+            class = if (sel) "btn btn-primary btn-xs" else "btn btn-default btn-xs",
+            style = "min-width:36px; margin:2px;",
+            onclick = sprintf("Shiny.setInputValue('att_week_sel', %d, {priority:'event'});", n),
+            as.character(n)
+          )
+        })
+      )
+    )
+  })
+
+  att_active_lecture_r <- reactive({
+    req(nzchar(input$att_class %||% ""), !is.null(input$att_week_sel))
+    wks  <- fs_data$weeks
+    lecs <- fs_data$lectures
+    wk   <- wks[!is.na(wks$class_id)  & as.character(wks$class_id) == input$att_class &
+                !is.na(wks$week_number) & suppressWarnings(as.integer(wks$week_number)) == as.integer(input$att_week_sel), ]
+    if (nrow(wk) == 0) return(NULL)
+    wk_id <- as.character(wk$id[[1]])
+    lec   <- lecs[!is.na(lecs$week_id) & as.character(lecs$week_id) == wk_id, ]
+    if (nrow(lec) == 0) return(NULL)
+    lec[1, ]
+  })
+
+  att_enrolled_r <- reactive({
+    req(nzchar(input$att_class %||% ""))
+    cls <- fs_data$classes
+    cls_row <- cls[as.character(cls$id) == input$att_class, ]
+    if (nrow(cls_row) == 0) return(dplyr::tibble())
+    enrolled_ids_raw <- cls_row$enrolled_student_ids[[1]]
+    if (is.null(enrolled_ids_raw) || length(enrolled_ids_raw) == 0) {
+      # Try comma-separated string
+      enrolled_ids_raw <- strsplit(as.character(cls_row$enrolled_student_ids %||% ""), ",\\s*")[[1]]
+    }
+    enrolled_ids <- as.character(enrolled_ids_raw)
+    enrolled_ids <- enrolled_ids[nzchar(enrolled_ids) & !is.na(enrolled_ids)]
+    studs <- fs_data$students
+    if (nrow(studs) > 0 && length(enrolled_ids) > 0) {
+      studs[as.character(studs$id) %in% enrolled_ids, ]
+    } else {
+      dplyr::tibble(id = enrolled_ids, name = enrolled_ids)
+    }
+  })
+
+  att_records_r <- reactive({
+    lec <- att_active_lecture_r()
+    if (is.null(lec)) return(dplyr::tibble())
+    att <- fs_data$attendance
+    if (nrow(att) == 0) return(dplyr::tibble())
+    att[!is.na(att$lecture_id) & as.character(att$lecture_id) == as.character(lec$id[[1]]), ]
+  })
+
+  output$att_summary_boxes <- renderUI({
+    lec <- att_active_lecture_r()
+    if (is.null(lec)) {
+      if (!is.null(input$att_week_sel) && nzchar(input$att_class %||% "")) {
+        return(div(class = "alert alert-warning",
+                   sprintf("No lecture found for Week %s in this class.", input$att_week_sel)))
+      }
+      return(NULL)
+    }
+    enrolled <- att_enrolled_r()
+    records  <- att_records_r()
+    n_total  <- nrow(enrolled)
+    n_present <- if (nrow(records) > 0) sum(as.character(records$status) == "present", na.rm = TRUE) else 0
+    n_absent  <- if (nrow(records) > 0) sum(as.character(records$status) == "absent",  na.rm = TRUE) else 0
+    n_late    <- if (nrow(records) > 0) sum(as.character(records$status) == "late",    na.rm = TRUE) else 0
+    n_excused <- if (nrow(records) > 0) sum(as.character(records$status) == "excused", na.rm = TRUE) else 0
+    n_auto    <- if (nrow(records) > 0) sum(as.logical(records$auto_detected %||% FALSE), na.rm = TRUE) else 0
+    fluidRow(
+      column(2, div(class = "small-box bg-green",
+        div(class = "inner", tags$h3(n_present), tags$p("Present")),
+        div(class = "icon", icon("user-check")))),
+      column(2, div(class = "small-box bg-red",
+        div(class = "inner", tags$h3(n_absent), tags$p("Absent")),
+        div(class = "icon", icon("user-xmark")))),
+      column(2, div(class = "small-box bg-yellow",
+        div(class = "inner", tags$h3(n_late), tags$p("Late")),
+        div(class = "icon", icon("clock")))),
+      column(2, div(class = "small-box bg-aqua",
+        div(class = "inner", tags$h3(n_excused), tags$p("Excused")),
+        div(class = "icon", icon("file-medical")))),
+      column(4, div(class = "small-box bg-purple",
+        div(class = "inner", tags$h3(n_auto), tags$p("Auto-detected (camera)")),
+        div(class = "icon", icon("camera"))))
+    )
+  })
+
+  output$att_detail_table <- renderDT({
+    lec      <- att_active_lecture_r()
+    enrolled <- att_enrolled_r()
+    records  <- att_records_r()
+    if (is.null(lec) || nrow(enrolled) == 0) {
+      return(datatable(data.frame(Message = "Select a subject, class, and week to view attendance."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    rows <- lapply(seq_len(nrow(enrolled)), function(i) {
+      sid  <- as.character(enrolled$id[[i]])
+      sname <- as.character(enrolled$name[[i]] %||% sid)
+      rec  <- if (nrow(records) > 0) records[as.character(records$student_id) == sid, ] else dplyr::tibble()
+      status    <- if (nrow(rec) > 0) as.character(rec$status[[1]]) else "not saved"
+      is_auto   <- if (nrow(rec) > 0) isTRUE(as.logical(rec$auto_detected[[1]])) else FALSE
+      det_at    <- if (is_auto && nrow(rec) > 0) as.character(rec$detected_at[[1]] %||% "") else ""
+      source_lbl <- if (is_auto) "<span style='background:#d1fae5;color:#065f46;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;'>Auto</span>" else "<span style='background:#f1f5f9;color:#475569;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;'>Manual</span>"
+      status_col <- switch(status,
+        "present" = "#d1fae5", "absent" = "#fee2e2",
+        "late" = "#fef3c7", "excused" = "#dbeafe", "#f1f5f9")
+      status_txt <- switch(status,
+        "present" = "#065f46", "absent" = "#991b1b",
+        "late" = "#92400e", "excused" = "#1e40af", "#64748b")
+      status_html <- sprintf("<span style='background:%s;color:%s;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;text-transform:capitalize;'>%s</span>",
+                             status_col, status_txt, status)
+      data.frame(
+        Student = sname, ID = sid,
+        Status = status_html, Source = source_lbl,
+        DetectedAt = det_at, stringsAsFactors = FALSE
+      )
+    })
+    df <- do.call(rbind, rows)
+    datatable(df, rownames = FALSE, escape = FALSE,
+              class = "stripe hover row-border",
+              options = list(pageLength = 30, scrollX = TRUE,
+                             dom = "lftipr",
+                             language = list(search = "", searchPlaceholder = "Search...")))
+  })
+
+  # Camera-detected attendance (from emotions collection) ─────────────────────
   att_summary_r <- reactive({
-    att_data_r() |>
+    data_r() |>
       group_by(lecture_id) |>
       summarise(
         students_detected  = n_distinct(student_id),
@@ -2583,26 +2945,26 @@ server <- function(input, output, session) {
       arrange(lecture_id)
   })
 
-  output$att_bar_plot <- renderPlot({
+  output$att_bar_plot <- renderPlotly({
     df <- att_summary_r()
     if (nrow(df) == 0) {
-      return(ggplot() +
-               annotate("text", x = 0.5, y = 0.5, label = "No data available.",
-                        size = 5, colour = PALETTE$ink_soft) +
-               theme_void())
+      return(plotly_empty() |> plotly::layout(annotations = list(
+        list(text = "No emotion data yet.", showarrow = FALSE,
+             x = 0.5, y = 0.5, xref = "paper", yref = "paper",
+             font = list(size = 14, color = PALETTE$ink_soft)))))
     }
-    ggplot(df, aes(x = reorder(lecture_id, students_detected),
-                   y = students_detected,
-                   fill = students_detected)) +
-      geom_col(width = 0.65, show.legend = FALSE) +
-      geom_text(aes(label = students_detected), hjust = -0.25, size = 3.8,
-                colour = PALETTE$ink_soft) +
-      scale_fill_gradient(low = PALETTE$accent, high = PALETTE$primary) +
-      coord_flip() +
-      expand_limits(y = max(df$students_detected, na.rm = TRUE) * 1.12) +
-      labs(title = "Students detected per lecture",
-           x = NULL, y = "Students detected") +
-      theme_classroom()
+    df <- df |> arrange(students_detected)
+    plot_ly(df, x = ~students_detected, y = ~lecture_id, type = "bar",
+            orientation = "h",
+            marker = list(
+              color = ~students_detected,
+              colorscale = list(list(0, PALETTE$accent), list(1, PALETTE$primary)),
+              showscale = FALSE
+            ),
+            text = ~students_detected, textposition = "outside") |>
+      plotly::layout(xaxis = list(title = "Students detected"),
+                     yaxis = list(title = "")) |>
+      style_plotly()
   })
 
   output$att_table <- renderDT({
@@ -2895,7 +3257,7 @@ server <- function(input, output, session) {
         dom = "lftipr",
         language = list(search = "", searchPlaceholder = "Search..."),
         columnDefs = list(
-          list(targets = 1,  # Avg Attention column (0-indexed)
+          list(targets = 1,
                render = DT::JS(
                  "function(data, type, row, meta) {",
                  "  if (type !== 'display') return data;",
@@ -2908,6 +3270,444 @@ server <- function(input, output, session) {
       ),
       escape = FALSE
     )
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Doctor Dashboard
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  doc_today_r <- reactive({
+    df <- data_r()
+    if (nrow(df) == 0) return(df)
+    today <- as.Date(Sys.Date())
+    df |> filter(as.Date(timestamp) == today)
+  })
+
+  output$doc_today_lectures <- renderValueBox({
+    n <- length(unique(doc_today_r()$lecture_id))
+    valueBox(n, "Lectures today", icon = icon("chalkboard"), color = "purple")
+  })
+  output$doc_avg_engagement <- renderValueBox({
+    e <- mean(doc_today_r()$engagement_score, na.rm = TRUE)
+    if (!is.finite(e)) e <- mean(data_r()$engagement_score, na.rm = TRUE)
+    if (!is.finite(e)) e <- 0
+    valueBox(sprintf("%.2f", e), "Avg engagement",
+             icon = icon("bolt"),
+             color = if (e >= 0.5) "green" else if (e >= 0.3) "yellow" else "red")
+  })
+  output$doc_hand_raises <- renderValueBox({
+    n <- sum(data_r()$gesture == "hand_raised", na.rm = TRUE)
+    valueBox(n, "Hand raises", icon = icon("hand"), color = "aqua")
+  })
+  output$doc_toilet_requests <- renderValueBox({
+    n <- sum(tolower(as.character(data_r()$gesture %||% "")) == "toilet_request", na.rm = TRUE)
+    valueBox(n, "Toilet requests", icon = icon("restroom"), color = "yellow")
+  })
+  output$doc_attention_alerts <- renderValueBox({
+    n <- sum(suppressWarnings(as.logical(data_r()$attention_warning %||% FALSE)) == TRUE, na.rm = TRUE)
+    valueBox(n, "Attention alerts", icon = icon("triangle-exclamation"),
+             color = if (n == 0) "green" else "orange")
+  })
+  output$doc_cheat_alerts <- renderValueBox({
+    n <- sum(suppressWarnings(as.numeric(data_r()$cheat_score %||% 0)) >= 60, na.rm = TRUE)
+    valueBox(n, "Cheat alerts", icon = icon("shield-halved"),
+             color = if (n == 0) "green" else "red")
+  })
+  output$doc_camera_detected <- renderValueBox({
+    n <- length(unique(data_r()$student_id))
+    valueBox(n, "Students seen", icon = icon("camera"), color = "teal")
+  })
+
+  output$doc_engagement_trend <- renderPlotly({
+    df <- doc_today_r()
+    if (nrow(df) == 0) df <- data_r()
+    if (nrow(df) == 0) {
+      return(plotly_empty() |> plotly::layout(annotations = list(
+        list(text = "No data yet.", showarrow = FALSE, x = 0.5, y = 0.5,
+             xref = "paper", yref = "paper",
+             font = list(size = 14, color = PALETTE$ink_soft)))))
+    }
+    b <- df |>
+      mutate(bucket = lubridate::floor_date(timestamp, "2 minutes")) |>
+      group_by(bucket) |>
+      summarise(engagement = mean(engagement_score, na.rm = TRUE), .groups = "drop")
+    plot_ly(b, x = ~bucket, y = ~engagement, type = "scatter", mode = "lines+markers",
+            fill = "tozeroy",
+            line = list(color = PALETTE$primary, width = 2.5),
+            fillcolor = "rgba(79,70,229,0.08)",
+            marker = list(size = 5, color = PALETTE$primary)) |>
+      plotly::layout(xaxis = list(title = "Time"),
+                     yaxis = list(title = "Engagement", range = c(0, 1))) |>
+      style_plotly()
+  })
+
+  output$doc_emotion_donut <- renderPlotly({
+    df <- data_r() |> count(emotion, sort = TRUE)
+    if (nrow(df) == 0) return(plotly_empty())
+    .pie(df, "emotion", "n")
+  })
+
+  output$doc_student_snapshot <- renderDT({
+    df <- data_r()
+    if (nrow(df) == 0) {
+      return(datatable(data.frame(Message = "No data."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    snap <- df |>
+      group_by(student_id) |>
+      slice_max(timestamp, n = 1, with_ties = FALSE) |>
+      ungroup() |>
+      dplyr::select(student_id, emotion, state, gesture,
+                    attention_score, engagement_score, cheat_score) |>
+      arrange(student_id)
+    names(snap) <- c("Student", "Emotion", "State", "Gesture",
+                     "Attention", "Engagement", "Cheat Score")
+    datatable(snap, rownames = FALSE, class = "stripe hover row-border",
+              options = list(pageLength = 20, scrollX = TRUE,
+                             dom = "lftipr",
+                             language = list(search = "", searchPlaceholder = "Search...")))
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Live Classroom
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  observe({
+    labels <- lecture_labels_r()
+    df     <- data_r()
+    seen   <- unique(df$lecture_id)
+    if (!is.null(labels) && length(labels) > 0) {
+      keep <- labels[labels %in% seen]
+      if (length(keep) == 0) keep <- labels
+      choices <- keep
+    } else {
+      choices <- sort(seen)
+    }
+    updateSelectInput(session, "live_lecture_pick",
+                      choices  = choices,
+                      selected = if (length(choices) > 0) unname(choices)[1] else NULL)
+  })
+
+  live_df_r <- reactive({
+    req(input$live_lecture_pick)
+    data_r() |> filter(lecture_id == input$live_lecture_pick)
+  })
+
+  live_snap_r <- reactive({
+    df <- live_df_r()
+    if (nrow(df) == 0) return(dplyr::tibble())
+    df |>
+      group_by(student_id) |>
+      slice_max(timestamp, n = 1, with_ties = FALSE) |>
+      ungroup()
+  })
+
+  output$live_awake_count  <- renderUI({ n <- sum(live_snap_r()$state == "awake", na.rm=TRUE); HTML(as.character(n)) })
+  output$live_sleep_count  <- renderUI({ n <- sum(live_snap_r()$state == "sleeping", na.rm=TRUE); HTML(as.character(n)) })
+  output$live_hand_count   <- renderUI({ n <- sum(live_snap_r()$gesture == "hand_raised", na.rm=TRUE); HTML(as.character(n)) })
+
+  output$live_student_table <- renderDT({
+    df <- live_snap_r()
+    if (nrow(df) == 0) {
+      return(datatable(data.frame(Message = "No live data for this lecture."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    view <- df |>
+      dplyr::select(student_id, emotion, state, gesture,
+                    attention_score, engagement_score, cheat_score) |>
+      mutate(across(c(attention_score, engagement_score, cheat_score),
+                    ~ round(suppressWarnings(as.numeric(.)), 2)))
+    state_html <- ifelse(view$state == "sleeping",
+      "<span style='background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;'>Sleeping</span>",
+      "<span style='background:#d1fae5;color:#065f46;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;'>Awake</span>")
+    view$state <- state_html
+    names(view) <- c("Student", "Emotion", "State", "Gesture",
+                     "Attention", "Engagement", "Cheat Score")
+    datatable(view, rownames = FALSE, escape = FALSE,
+              class = "stripe hover row-border",
+              options = list(pageLength = 20, scrollX = TRUE,
+                             dom = "lftipr",
+                             language = list(search = "", searchPlaceholder = "Filter...")))
+  })
+
+  output$live_warnings_table <- renderDT({
+    warns <- fs_data$warnings
+    if (nrow(warns) == 0) {
+      return(datatable(data.frame(Message = "No warnings data in Firestore."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    req(input$live_lecture_pick)
+    w <- warns[!is.na(warns$lecture_id) & as.character(warns$lecture_id) == input$live_lecture_pick, ]
+    if (nrow(w) == 0) {
+      return(datatable(data.frame(Message = "No warnings for this lecture."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    cols <- intersect(c("student_id","type","message","timestamp"), names(w))
+    datatable(w[, cols, drop = FALSE], rownames = FALSE,
+              class = "stripe hover row-border",
+              options = list(pageLength = 10, dom = "tp"))
+  })
+
+  output$live_engagement_sparkline <- renderPlotly({
+    df <- live_df_r()
+    if (nrow(df) == 0) return(plotly_empty())
+    cutoff <- max(df$timestamp, na.rm = TRUE) - lubridate::dminutes(5)
+    recent <- df |> filter(timestamp >= cutoff)
+    if (nrow(recent) == 0) recent <- df
+    b <- recent |>
+      mutate(bucket = lubridate::floor_date(timestamp, "15 seconds")) |>
+      group_by(bucket) |>
+      summarise(engagement = mean(engagement_score, na.rm = TRUE), .groups = "drop")
+    plot_ly(b, x = ~bucket, y = ~engagement, type = "scatter", mode = "lines+markers",
+            fill = "tozeroy",
+            line = list(color = PALETTE$good, width = 2),
+            fillcolor = "rgba(16,185,129,0.10)",
+            marker = list(size = 4, color = PALETTE$good)) |>
+      plotly::layout(xaxis = list(title = "Time"),
+                     yaxis = list(title = "Engagement", range = c(0, 1))) |>
+      style_plotly()
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Student View
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  observe({
+    dir <- students_directory_r()
+    df  <- data_r()
+    if (nrow(dir) > 0) {
+      sid <- as.character(dir$id %||% dir$student_id)
+      nm  <- as.character(dir$name %||% sid)
+      choices <- stats::setNames(sid, nm)
+    } else if (nrow(df) > 0) {
+      sid <- sort(unique(df$student_id))
+      choices <- stats::setNames(sid, sid)
+    } else {
+      choices <- character(0)
+    }
+    # For student role, default to their own ID
+    role <- auth$role %||% ""
+    default_sid <- if (role == "student" && !is.null(input$student_filter) && input$student_filter != "__all__") {
+      input$student_filter
+    } else if (length(choices) > 0) {
+      choices[[1]]
+    } else {
+      ""
+    }
+    updateSelectInput(session, "sv_student_pick",
+                      choices  = c("Select student" = "", choices),
+                      selected = default_sid)
+  })
+
+  sv_df_r <- reactive({
+    req(nzchar(input$sv_student_pick %||% ""))
+    data_r() |> filter(student_id == input$sv_student_pick)
+  })
+
+  sv_class_df_r <- reactive({
+    data_r()
+  })
+
+  output$sv_enrolled <- renderValueBox({
+    n <- length(unique(sv_class_df_r()$lecture_id))
+    valueBox(n, "Total lectures", icon = icon("chalkboard"), color = "purple")
+  })
+  output$sv_attended <- renderValueBox({
+    n <- length(unique(sv_df_r()$lecture_id))
+    valueBox(n, "Attended", icon = icon("clipboard-check"), color = "green")
+  })
+  output$sv_att_rate <- renderValueBox({
+    total <- length(unique(sv_class_df_r()$lecture_id))
+    attended <- length(unique(sv_df_r()$lecture_id))
+    rate <- if (total > 0) attended / total else 0
+    valueBox(sprintf("%.1f%%", rate * 100), "Attendance rate",
+             icon = icon("percent"),
+             color = if (rate >= 0.8) "green" else if (rate >= 0.6) "yellow" else "red")
+  })
+  output$sv_avg_engagement <- renderValueBox({
+    e <- mean(sv_df_r()$engagement_score, na.rm = TRUE)
+    if (!is.finite(e)) e <- 0
+    valueBox(sprintf("%.2f", e), "Avg engagement", icon = icon("bolt"),
+             color = if (e >= 0.5) "green" else if (e >= 0.3) "yellow" else "red")
+  })
+  output$sv_avg_attention <- renderValueBox({
+    a <- mean(suppressWarnings(as.numeric(sv_df_r()$attention_score)), na.rm = TRUE)
+    if (!is.finite(a)) a <- 0
+    valueBox(sprintf("%.1f", a), "Avg attention", icon = icon("eye"),
+             color = if (a >= 70) "green" else if (a >= 50) "yellow" else "red")
+  })
+
+  output$sv_compare_bar <- renderPlotly({
+    s_eng  <- mean(sv_df_r()$engagement_score, na.rm = TRUE)
+    s_att  <- mean(suppressWarnings(as.numeric(sv_df_r()$attention_score)), na.rm = TRUE)
+    c_eng  <- mean(sv_class_df_r()$engagement_score, na.rm = TRUE)
+    c_att  <- mean(suppressWarnings(as.numeric(sv_class_df_r()$attention_score)), na.rm = TRUE)
+    if (!is.finite(s_eng)) s_eng <- 0
+    if (!is.finite(c_eng)) c_eng <- 0
+    if (!is.finite(s_att)) s_att <- 0
+    if (!is.finite(c_att)) c_att <- 0
+    df <- data.frame(
+      Metric = rep(c("Engagement", "Attention"), each = 2),
+      Who    = rep(c("You", "Class Avg"), 2),
+      Value  = c(s_eng, c_eng, s_att / 100, c_att / 100)
+    )
+    plot_ly(df, x = ~Metric, y = ~Value, color = ~Who,
+            colors = c("You" = PALETTE$primary, "Class Avg" = PALETTE$accent),
+            type = "bar") |>
+      plotly::layout(barmode = "group",
+                     yaxis = list(title = "Score", range = c(0, 1)),
+                     xaxis = list(title = "")) |>
+      style_plotly()
+  })
+
+  output$sv_lecture_trend <- renderPlotly({
+    df <- sv_df_r()
+    if (nrow(df) == 0) return(plotly_empty())
+    b <- df |>
+      group_by(lecture_id) |>
+      summarise(engagement = mean(engagement_score, na.rm = TRUE), .groups = "drop")
+    plot_ly(b, x = ~lecture_id, y = ~engagement, type = "bar",
+            marker = list(color = PALETTE$primary, line = list(width = 0))) |>
+      plotly::layout(xaxis = list(title = "Lecture", tickangle = -30),
+                     yaxis = list(title = "Avg engagement", range = c(0, 1))) |>
+      style_plotly()
+  })
+
+  output$sv_recommendations <- renderUI({
+    df     <- sv_df_r()
+    grades <- grades_r()
+    sid    <- input$sv_student_pick %||% ""
+    attention <- mean(suppressWarnings(as.numeric(df$attention_score)), na.rm = TRUE)
+    g_df  <- if (nrow(grades) > 0) grades |> filter(student_id == sid) else dplyr::tibble()
+    mark  <- if (nrow(g_df) > 0) mean(suppressWarnings(as.numeric(g_df$mark)), na.rm = TRUE) else NA_real_
+    grade <- if (nrow(g_df) > 0 && "grade" %in% names(g_df)) as.character(g_df$grade[[1]]) else NA_character_
+    total <- length(unique(data_r()$lecture_id))
+    attended <- length(unique(df$lecture_id))
+    att_rate <- if (total > 0) attended / total else NA_real_
+    recs <- recommendation_text_r(attention = attention, mark = mark, grade = grade, attendance_rate = att_rate)
+    tagList(lapply(seq_along(recs), function(i) {
+      cls <- if (!is.finite(attention)) "" else if (attention < 45) "danger" else if (attention < 70) "warn" else "good"
+      div(class = paste("rec-card", cls), recs[[i]])
+    }))
+  })
+
+  output$sv_warnings_table <- renderDT({
+    warns <- fs_data$warnings
+    sid   <- input$sv_student_pick %||% ""
+    if (nrow(warns) == 0 || !nzchar(sid)) {
+      return(datatable(data.frame(Message = "No warnings data."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    w <- warns[!is.na(warns$student_id) & as.character(warns$student_id) == sid, ]
+    if (nrow(w) == 0) {
+      return(datatable(data.frame(Message = "No warnings for this student."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    cols <- intersect(c("type","message","timestamp","lecture_id"), names(w))
+    datatable(w[, cols, drop = FALSE], rownames = FALSE,
+              class = "stripe hover row-border",
+              options = list(pageLength = 10, dom = "tp"))
+  })
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # Parent View
+  # ══════════════════════════════════════════════════════════════════════════════
+
+  observe({
+    dir <- students_directory_r()
+    df  <- data_r()
+    if (nrow(dir) > 0) {
+      sid <- as.character(dir$id %||% dir$student_id)
+      nm  <- as.character(dir$name %||% sid)
+      choices <- stats::setNames(sid, nm)
+    } else if (nrow(df) > 0) {
+      sid <- sort(unique(df$student_id))
+      choices <- stats::setNames(sid, sid)
+    } else {
+      choices <- character(0)
+    }
+    updateSelectInput(session, "pv_child_pick",
+                      choices  = c("Select child" = "", choices),
+                      selected = if (length(choices) > 0) choices[[1]] else "")
+  })
+
+  pv_df_r <- reactive({
+    req(nzchar(input$pv_child_pick %||% ""))
+    data_r() |> filter(student_id == input$pv_child_pick)
+  })
+
+  output$pv_lectures <- renderValueBox({
+    valueBox(length(unique(pv_df_r()$lecture_id)),
+             "Lectures attended", icon = icon("chalkboard"), color = "purple")
+  })
+  output$pv_engagement <- renderValueBox({
+    e <- mean(pv_df_r()$engagement_score, na.rm = TRUE)
+    if (!is.finite(e)) e <- 0
+    valueBox(sprintf("%.2f", e), "Avg engagement", icon = icon("bolt"),
+             color = if (e >= 0.5) "green" else if (e >= 0.3) "yellow" else "red")
+  })
+  output$pv_attention <- renderValueBox({
+    a <- mean(suppressWarnings(as.numeric(pv_df_r()$attention_score)), na.rm = TRUE)
+    if (!is.finite(a)) a <- 0
+    valueBox(sprintf("%.1f", a), "Avg attention", icon = icon("eye"),
+             color = if (a >= 70) "green" else if (a >= 50) "yellow" else "red")
+  })
+  output$pv_warnings <- renderValueBox({
+    warns <- fs_data$warnings
+    sid   <- input$pv_child_pick %||% ""
+    n <- if (nrow(warns) > 0 && nzchar(sid)) {
+      sum(!is.na(warns$student_id) & as.character(warns$student_id) == sid, na.rm = TRUE)
+    } else 0
+    valueBox(n, "Warnings", icon = icon("triangle-exclamation"),
+             color = if (n == 0) "green" else "red")
+  })
+
+  output$pv_lecture_trend <- renderPlotly({
+    df <- pv_df_r()
+    if (nrow(df) == 0) return(plotly_empty())
+    b <- df |>
+      group_by(lecture_id) |>
+      summarise(engagement = mean(engagement_score, na.rm = TRUE), .groups = "drop")
+    plot_ly(b, x = ~lecture_id, y = ~engagement, type = "bar",
+            marker = list(color = PALETTE$accent, line = list(width = 0))) |>
+      plotly::layout(xaxis = list(title = "Lecture", tickangle = -30),
+                     yaxis = list(title = "Avg engagement", range = c(0, 1))) |>
+      style_plotly()
+  })
+
+  output$pv_recommendation <- renderUI({
+    df  <- pv_df_r()
+    sid <- input$pv_child_pick %||% ""
+    attention <- mean(suppressWarnings(as.numeric(df$attention_score)), na.rm = TRUE)
+    grades <- grades_r()
+    g_df <- if (nrow(grades) > 0) grades |> filter(student_id == sid) else dplyr::tibble()
+    mark  <- if (nrow(g_df) > 0) mean(suppressWarnings(as.numeric(g_df$mark)), na.rm = TRUE) else NA_real_
+    grade <- if (nrow(g_df) > 0 && "grade" %in% names(g_df)) as.character(g_df$grade[[1]]) else NA_character_
+    total <- length(unique(data_r()$lecture_id))
+    att_rate <- if (total > 0) length(unique(df$lecture_id)) / total else NA_real_
+    recs <- recommendation_text_r(attention = attention, mark = mark, grade = grade, attendance_rate = att_rate)
+    tagList(lapply(recs, function(r) {
+      cls <- if (!is.finite(attention)) "" else if (attention < 45) "danger" else if (attention < 70) "warn" else "good"
+      div(class = paste("rec-card", cls), r)
+    }))
+  })
+
+  output$pv_grades_table <- renderDT({
+    sid <- input$pv_child_pick %||% ""
+    grades <- grades_r()
+    if (!nzchar(sid) || nrow(grades) == 0) {
+      return(datatable(data.frame(Message = "No grades data."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    df <- grades |> filter(student_id == sid)
+    if (nrow(df) == 0) {
+      return(datatable(data.frame(Message = "No grades for this student."),
+                       rownames = FALSE, options = list(dom = "t", paging = FALSE)))
+    }
+    cols <- intersect(c("subject_name","doctor_name","mark","grade","observations"), names(df))
+    datatable(df[, cols, drop = FALSE], rownames = FALSE,
+              class = "stripe hover row-border",
+              options = list(pageLength = 15, dom = "tp"))
   })
 }
 

@@ -18,6 +18,7 @@ import {
   X,
   Bell,
   ChevronRight,
+  FileText,
 } from "lucide-react";
 
 /* ── Nav structure ─────────────────────────────────── */
@@ -27,8 +28,8 @@ const NAV_SECTIONS = [
     items: [
       { to: "/",           label: "Dashboard",     icon: LayoutDashboard, end: true },
       { to: "/lectures",   label: "My Lectures",   icon: Play },
-      { to: "/live",       label: "Live Lecture",  icon: Radio,  live: true },
-      { to: "/engagement", label: "Engagement",    icon: BarChart2 },
+      { to: "/transcripts", label: "Transcripts",   icon: FileText },
+      { to: "/engagement",  label: "Engagement",   icon: BarChart2 },
     ],
   },
   {
