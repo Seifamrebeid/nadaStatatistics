@@ -241,7 +241,15 @@ export default function AdminAttendance() {
                   const detectedAt  = isAuto ? formatDetectedAt(attMap[s.id]?.detected_at) : null;
                   return (
                     <tr key={s.id} className="border-t border-slate-100">
-                      <td className="px-4 py-3 font-medium text-slate-900">{s.name || s.id}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900">
+                        <div className="flex items-center gap-3">
+                          <StudentAvatar src={s.face_photo_url} name={s.name || s.id} />
+                          <div className="leading-tight">
+                            <div>{s.name || s.id}</div>
+                            <div className="text-xs text-slate-400 font-mono">{s.id}</div>
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-center">
                         <select value={current}
                           onChange={(e) => setEdits((p) => ({ ...p, [s.id]: e.target.value }))}
@@ -279,6 +287,27 @@ export default function AdminAttendance() {
           Select a subject and class to view attendance.
         </div>
       )}
+    </div>
+  );
+}
+
+function StudentAvatar({ src, name }) {
+  const [errored, setErrored] = useState(false);
+  if (src && !errored) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        onError={() => setErrored(true)}
+        className="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow-sm bg-slate-100"
+      />
+    );
+  }
+  const initials = (name || "?")
+    .split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
+  return (
+    <div className="h-10 w-10 rounded-full bg-indigo-100 text-indigo-700 ring-2 ring-white shadow-sm flex items-center justify-center text-xs font-semibold">
+      {initials}
     </div>
   );
 }

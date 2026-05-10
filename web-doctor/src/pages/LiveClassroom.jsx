@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { db } from "../firebase";
 import {
@@ -8,6 +8,7 @@ import {
   onSnapshot,
   where,
   limit,
+  getDocs,
 } from "firebase/firestore";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -36,7 +37,7 @@ function scoreBg(score) {
 export default function LiveClassroom() {
   const { lectureId } = useParams();
 
-  // stats derived from emotions
+  // "Right now" stats — derived from latest doc per student
   const [stats, setStats] = useState({
     awakeCount: 0,
     sleepingCount: 0,
@@ -47,8 +48,25 @@ export default function LiveClassroom() {
     cameraDetected: 0,
   });
 
+  // Cumulative totals across the whole lecture (transition-counted: each
+  // distinct event = 1, not every frame).
+  const [totals, setTotals] = useState({
+    totalObservations: 0,
+    uniqueStudents: 0,
+    handRaiseEvents: 0,
+    toiletRequestEvents: 0,
+    sleepEvents: 0,
+    yawnEvents: 0,
+    attentionWarnings: 0,
+    cheatWarnings: 0,
+    phoneEvents: 0,
+  });
+
   // latest emotion doc per student
   const [studentRows, setStudentRows] = useState([]);
+
+  // student id -> { name, face_photo_url }
+  const [studentsLookup, setStudentsLookup] = useState({});
 
   // attendance from the attendance collection
   const [confirmedPresent, setConfirmedPresent] = useState(0);
@@ -60,6 +78,26 @@ export default function LiveClassroom() {
   const [transcriptSegments, setTranscriptSegments] = useState([]);
 
   const [err, setErr] = useState(null);
+
+  // ── students lookup (loaded once for name + photo) ───────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, "students"));
+        if (cancelled) return;
+        const map = {};
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          map[d.id] = { name: data.name, face_photo_url: data.face_photo_url };
+        });
+        setStudentsLookup(map);
+      } catch (e) {
+        console.error("students lookup:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ── emotions subscription ────────────────────────────────────────────────
   useEffect(() => {
@@ -125,6 +163,77 @@ export default function LiveClassroom() {
         console.error("Error subscribing to emotions:", error);
         setErr(error.message);
       },
+    );
+
+    return unsub;
+  }, [lectureId]);
+
+  // ── totals subscription (whole-lecture cumulative counts) ────────────
+  // Counts transitions, not raw frames: a 30-second toilet request at 1 obs/s
+  // counts as 1 event, not 30. Capped at 5000 docs to stay performant for a
+  // 90-min lecture with up to 50 students at 1 obs/sec.
+  useEffect(() => {
+    if (!lectureId) return;
+
+    const q = query(
+      collection(db, "emotions"),
+      where("lecture_id", "==", lectureId),
+      orderBy("timestamp", "asc"),
+      limit(5000),
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const docs = snap.docs.map((d) => d.data());
+        const lastByStudent = new Map(); // student_id -> { gesture, state, yawning, attention, cheat, phone }
+        const t = {
+          totalObservations: docs.length,
+          uniqueStudents: 0,
+          handRaiseEvents: 0,
+          toiletRequestEvents: 0,
+          sleepEvents: 0,
+          yawnEvents: 0,
+          attentionWarnings: 0,
+          cheatWarnings: 0,
+          phoneEvents: 0,
+        };
+        const seen = new Set();
+        for (const e of docs) {
+          if (!e.student_id) continue;
+          seen.add(e.student_id);
+          const prev = lastByStudent.get(e.student_id) || {};
+
+          // Gesture transitions: count when entering hand_raised / toilet_request
+          if (e.gesture === "hand_raised" && prev.gesture !== "hand_raised") t.handRaiseEvents++;
+          if (e.gesture === "toilet_request" && prev.gesture !== "toilet_request") t.toiletRequestEvents++;
+
+          // Sleep transitions: count when going from awake -> sleeping
+          if (e.state === "sleeping" && prev.state !== "sleeping") t.sleepEvents++;
+
+          // Yawn transitions: count when yawning becomes true
+          if (e.yawning === true && prev.yawning !== true) t.yawnEvents++;
+
+          // Warning transitions: count when warning flips from false/unset -> true
+          if (e.attention_warning === true && prev.attention_warning !== true) t.attentionWarnings++;
+          if (e.cheat_warning === true && prev.cheat_warning !== true) t.cheatWarnings++;
+
+          // Phone transitions
+          if (e.on_phone === true && prev.on_phone !== true) t.phoneEvents++;
+
+          lastByStudent.set(e.student_id, {
+            gesture: e.gesture,
+            state: e.state,
+            yawning: e.yawning,
+            attention_warning: e.attention_warning,
+            cheat_warning: e.cheat_warning,
+            on_phone: e.on_phone,
+          });
+        }
+        t.uniqueStudents = seen.size;
+        setTotals(t);
+      },
+      (error) => console.error("totals subscription:", error),
     );
 
     return unsub;
@@ -205,19 +314,41 @@ export default function LiveClassroom() {
         </div>
       )}
 
-      {/* ── state overview ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard value={stats.awakeCount} label="Awake" color="green" />
-        <StatCard value={stats.sleepingCount} label="Sleeping" color="red" />
-        <StatCard value={stats.handRaisedCount} label="Hands Raised" color="blue" />
-        <StatCard value={stats.toiletRequestCount} label="Toilet Requests" color="yellow" />
-      </div>
+      {/* ── RIGHT NOW ── */}
+      <section>
+        <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">
+          Right now
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard value={stats.awakeCount} label="Awake now" color="green" />
+          <StatCard value={stats.sleepingCount} label="Sleeping now" color="red" />
+          <StatCard value={stats.handRaisedCount} label="Hands raised now" color="blue" />
+          <StatCard value={stats.toiletRequestCount} label="Toilet requests now" color="yellow" />
+        </div>
+        <div className="grid grid-cols-2 gap-4 mt-4">
+          <StatCard value={stats.attentionAlertsCount} label="Attention alerts now" color="amber" />
+          <StatCard value={stats.cheatAlertsCount} label="Cheat alerts now" color="red" />
+        </div>
+      </section>
 
-      {/* ── alerts ── */}
-      <div className="grid grid-cols-2 gap-4">
-        <StatCard value={stats.attentionAlertsCount} label="Attention Alerts" color="amber" />
-        <StatCard value={stats.cheatAlertsCount} label="Cheat Alerts" color="red" />
-      </div>
+      {/* ── TOTALS DURING THIS LECTURE ── */}
+      <section>
+        <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-2">
+          Total during this lecture
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard value={totals.handRaiseEvents}      label="Total hand raises"      color="blue" />
+          <StatCard value={totals.toiletRequestEvents}  label="Total toilet requests"  color="yellow" />
+          <StatCard value={totals.sleepEvents}          label="Total sleep events"     color="red" />
+          <StatCard value={totals.yawnEvents}           label="Total yawns"            color="amber" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+          <StatCard value={totals.attentionWarnings}    label="Total attention warnings" color="amber" />
+          <StatCard value={totals.cheatWarnings}        label="Total cheat warnings"     color="red" />
+          <StatCard value={totals.phoneEvents}          label="Total phone events"       color="amber" />
+          <StatCard value={totals.totalObservations}    label="Total observations"       color="green" />
+        </div>
+      </section>
 
       {/* ── attendance ── */}
       <div className="grid grid-cols-2 gap-4">
@@ -243,7 +374,7 @@ export default function LiveClassroom() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                  <th className="px-4 py-3">Student ID</th>
+                  <th className="px-4 py-3">Student</th>
                   <th className="px-4 py-3">State</th>
                   <th className="px-4 py-3">Emotion</th>
                   <th className="px-4 py-3">Attention</th>
@@ -256,9 +387,18 @@ export default function LiveClassroom() {
                 {studentRows.map((e) => {
                   const cheatScore = Number(e.cheat_risk_score) || 0;
                   const gesture = e.gesture && e.gesture !== "none" ? e.gesture : null;
+                  const sInfo = studentsLookup[e.student_id] || {};
                   return (
                     <tr key={e.student_id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 font-mono text-slate-700">{e.student_id}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <StudentAvatar src={sInfo.face_photo_url} name={sInfo.name || e.student_id} />
+                          <div className="leading-tight">
+                            <div className="font-medium text-slate-800">{sInfo.name || e.student_id}</div>
+                            <div className="text-xs text-slate-400 font-mono">{e.student_id}</div>
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-4 py-3">
                         {e.state === "sleeping" ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
@@ -380,6 +520,27 @@ function StatCard({ value, label, color }) {
     <div className={`${c.card} border rounded-2xl p-5 shadow-sm`}>
       <div className={`text-3xl font-bold ${c.value}`}>{value}</div>
       <div className={`text-sm mt-1 ${c.label}`}>{label}</div>
+    </div>
+  );
+}
+
+function StudentAvatar({ src, name }) {
+  const [errored, setErrored] = useState(false);
+  if (src && !errored) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        onError={() => setErrored(true)}
+        className="h-10 w-10 rounded-full object-cover ring-2 ring-white shadow-sm bg-slate-100"
+      />
+    );
+  }
+  const initials = (name || "?")
+    .split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
+  return (
+    <div className="h-10 w-10 rounded-full bg-indigo-100 text-indigo-700 ring-2 ring-white shadow-sm flex items-center justify-center text-xs font-semibold">
+      {initials}
     </div>
   );
 }

@@ -135,7 +135,11 @@ build_choices <- function(df, id_col, label_cols, fallback = "(unnamed)") {
 # UI
 # ═══════════════════════════════════════════════════════════════════════════
 
-ui <- dashboardPage(
+ui <- function(request) {
+  # Re-source theme.R per session so PALETTE / CUSTOM_CSS pick up
+  # any UI_THEME env var change made via the toggle button.
+  source(file.path(ROOT, "r-analysis", "shiny", "shared", "theme.R"), local = FALSE)
+dashboardPage(
   skin = "blue",
   dashboardHeader(title = "Classroom Analytics"),
   dashboardSidebar(
@@ -143,6 +147,8 @@ ui <- dashboardPage(
     sidebarMenu(
       id = "sidebar",
       menuItem("Overview",          tabName = "overview",      icon = icon("gauge-high")),
+      menuItem("Live Lecture",      tabName = "live",          icon = icon("circle-dot"),
+               badgeLabel = "live", badgeColor = "red"),
       menuItem("Students",          tabName = "students",      icon = icon("user-graduate")),
       menuItem("Doctors",           tabName = "doctors",       icon = icon("user-tie")),
       menuItem("Parents",           tabName = "parents",       icon = icon("people-roof")),
@@ -206,6 +212,56 @@ ui <- dashboardPage(
         fluidRow(
           box(title = "Recent lectures", width = 12, status = "primary",
               DTOutput("ov_recent_lectures"))
+        )
+      ),
+
+      # ───────────────────────────── LIVE LECTURE ────────────────────────
+      tabItem(tabName = "live",
+        h2("Live lecture monitor"),
+        fluidRow(
+          column(5,
+            selectizeInput("live_pick",
+                           "Active lecture (status = recording)",
+                           choices = NULL,
+                           options = list(placeholder = "No active lectures…"))),
+          column(3,
+            div(style = "padding-top: 28px;",
+                checkboxInput("live_auto", "Auto-refresh every 5s", value = TRUE))),
+          column(4,
+            div(style = "padding-top: 28px; text-align: right;",
+                actionButton("live_refresh", "Refresh now",
+                             icon = icon("rotate"),
+                             style = "background:#a78bfa;color:white;border:none;"),
+                tags$small(textOutput("live_clock"),
+                           style = "margin-left:10px;color:#94a3b8;")))
+        ),
+        fluidRow(
+          valueBoxOutput("live_present", width = 3),
+          valueBoxOutput("live_engagement", width = 3),
+          valueBoxOutput("live_sleeping", width = 3),
+          valueBoxOutput("live_handraised", width = 3)
+        ),
+        fluidRow(
+          valueBoxOutput("live_yawning", width = 3),
+          valueBoxOutput("live_alerts", width = 3),
+          valueBoxOutput("live_observations", width = 3),
+          valueBoxOutput("live_duration", width = 3)
+        ),
+        fluidRow(
+          box(title = "Engagement timeline (last 30 minutes)", width = 8, status = "danger",
+              plotlyOutput("live_timeline", height = 320)),
+          box(title = "Current emotion mix", width = 4, status = "warning",
+              plotlyOutput("live_emotion_pie", height = 320))
+        ),
+        fluidRow(
+          box(title = "Per-student engagement (latest)", width = 12, status = "primary",
+              DTOutput("live_students_table"))
+        ),
+        fluidRow(
+          box(title = "Sleep alerts (most recent)", width = 6, status = "danger",
+              DTOutput("live_sleep_alerts")),
+          box(title = "Hand-raise events (most recent)", width = 6, status = "info",
+              DTOutput("live_hand_events"))
         )
       ),
 
@@ -528,6 +584,7 @@ ui <- dashboardPage(
     )
   )
 )
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Server
@@ -653,6 +710,187 @@ server <- function(input, output, session) {
     dt <- lec[, cols, drop = FALSE]
     if ("date" %in% names(dt)) dt <- dt[order(as.character(dt$date), decreasing = TRUE), , drop = FALSE]
     datatable(dt, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE)
+  })
+
+  # ════════════════════════════════════════════════════════════ LIVE LECTURE
+  # Auto-refresh tick (5s when enabled). Tied to the live tab specifically so
+  # it doesn't pull data while the user is on another page.
+  live_tick <- reactive({
+    if (isTRUE(input$live_auto) && identical(input$sidebar, "live")) {
+      invalidateLater(5000, session)
+    }
+    input$live_refresh
+    Sys.time()
+  })
+
+  # Always re-fetch lectures + emotions on the tick, no cache.
+  live_lectures <- reactive({
+    live_tick()
+    tryCatch(load_lectures(), error = function(e) dplyr::tibble())
+  })
+  live_emotions <- reactive({
+    live_tick()
+    tryCatch(load_from_firestore(), error = function(e) {
+      tryCatch(load_emotions(), error = function(e2) dplyr::tibble())
+    })
+  })
+
+  # Build the picker choices from currently-recording lectures.
+  observe({
+    lec <- live_lectures()
+    if (nrow(lec) == 0 || !"status" %in% names(lec)) {
+      updateSelectizeInput(session, "live_pick", choices = character(0)); return()
+    }
+    rec <- lec[lec$status == "recording", , drop = FALSE]
+    if (nrow(rec) == 0) {
+      updateSelectizeInput(session, "live_pick", choices = character(0)); return()
+    }
+    if (!"id" %in% names(rec)) rec$id <- rec$lecture_id %||% NA_character_
+    labels <- ifelse(is.na(rec$title) | !nzchar(rec$title), rec$id, rec$title)
+    updateSelectizeInput(session, "live_pick",
+                         choices = stats::setNames(rec$id, paste0(labels, "  ·  ", rec$id)),
+                         selected = isolate(input$live_pick) %||% rec$id[1])
+  })
+
+  output$live_clock <- renderText({
+    live_tick()
+    paste("Last refresh:", format(Sys.time(), "%H:%M:%S"))
+  })
+
+  live_lec_emo <- reactive({
+    lid <- input$live_pick
+    e <- live_emotions()
+    if (is.null(lid) || !nzchar(lid) || nrow(e) == 0) return(e[0, ])
+    e[e$lecture_id == lid, , drop = FALSE]
+  })
+
+  live_kpi <- reactive(kpi_summary(live_lec_emo()))
+
+  output$live_present <- renderValueBox({
+    v <- live_kpi()$students
+    valueBox(fmt_int(v %||% 0), "Students seen", icon = icon("users"), color = "purple")
+  })
+  output$live_engagement <- renderValueBox({
+    valueBox(fmt_pct(live_kpi()$mean_engagement), "Mean engagement", icon = icon("bolt"), color = "green")
+  })
+  output$live_sleeping <- renderValueBox({
+    valueBox(fmt_pct(live_kpi()$sleep_rate), "Sleeping now", icon = icon("bed"), color = "red")
+  })
+  output$live_handraised <- renderValueBox({
+    valueBox(fmt_pct(live_kpi()$hand_raised_rate), "Hand-raised", icon = icon("hand"), color = "yellow")
+  })
+  output$live_yawning <- renderValueBox({
+    valueBox(fmt_pct(live_kpi()$yawn_rate), "Yawn rate", icon = icon("face-tired"), color = "orange")
+  })
+  output$live_alerts <- renderValueBox({
+    e <- live_lec_emo()
+    n <- if (nrow(e) > 0 && "cheat_warning" %in% names(e))
+      sum(as.logical(e$cheat_warning), na.rm = TRUE) else 0
+    valueBox(fmt_int(n), "Phone-use alerts", icon = icon("triangle-exclamation"), color = "maroon")
+  })
+  output$live_observations <- renderValueBox({
+    valueBox(fmt_int(live_kpi()$observations), "Observations", icon = icon("eye"), color = "blue")
+  })
+  output$live_duration <- renderValueBox({
+    e <- live_lec_emo()
+    txt <- if (nrow(e) == 0) "—" else {
+      span <- as.numeric(difftime(max(e$timestamp, na.rm = TRUE),
+                                  min(e$timestamp, na.rm = TRUE), units = "mins"))
+      sprintf("%.1f min", span)
+    }
+    valueBox(txt, "Lecture span", icon = icon("clock"), color = "teal")
+  })
+
+  output$live_timeline <- renderPlotly({
+    e <- live_lec_emo(); if (nrow(e) == 0) return(empty_plot("Waiting for live data…"))
+    cutoff <- Sys.time() - 30 * 60
+    df <- e[e$timestamp >= cutoff, , drop = FALSE]
+    if (nrow(df) == 0) df <- e
+    df <- df |> dplyr::mutate(t = lubridate::floor_date(timestamp, "20 seconds")) |>
+      dplyr::group_by(t) |>
+      dplyr::summarise(mean_engagement = mean(engagement_score, na.rm = TRUE),
+                       sleep_rate      = mean(state == "sleeping", na.rm = TRUE),
+                       .groups = "drop")
+    plot_ly(df) |>
+      add_lines(x = ~t, y = ~mean_engagement, name = "Engagement",
+                line = list(color = PALETTE$primary, width = 3)) |>
+      add_lines(x = ~t, y = ~sleep_rate, name = "Sleep rate",
+                line = list(color = PALETTE$bad, dash = "dot")) |>
+      plotly::layout(yaxis = list(range = c(0,1)),
+                     xaxis = list(title = NULL)) |> style_plotly()
+  })
+
+  output$live_emotion_pie <- renderPlotly({
+    e <- live_lec_emo(); if (nrow(e) == 0) return(empty_plot("Waiting for live data…"))
+    # Use only the latest 5 minutes for "current" mix
+    cutoff <- max(e$timestamp, na.rm = TRUE) - 5 * 60
+    recent <- e[e$timestamp >= cutoff, , drop = FALSE]
+    if (nrow(recent) == 0) recent <- e
+    df <- emotion_freq(recent)
+    if (nrow(df) == 0) return(empty_plot())
+    .pie(df, "emotion", "n")
+  })
+
+  output$live_students_table <- renderDT({
+    e <- live_lec_emo()
+    if (nrow(e) == 0) return(datatable(data.frame(message = "Waiting for live data…")))
+    # Latest observation per student
+    e <- e[order(e$timestamp, decreasing = TRUE), , drop = FALSE]
+    latest <- e[!duplicated(e$student_id), , drop = FALSE]
+    students_df <- students()
+    if (nrow(students_df) > 0) {
+      if (!"id" %in% names(students_df)) students_df$id <- students_df$student_id %||% NA_character_
+      lk <- stats::setNames(students_df$name %||% rep(NA, nrow(students_df)), students_df$id)
+      latest$name <- unname(lk[latest$student_id])
+    } else latest$name <- NA
+    show <- dplyr::tibble(
+      name        = latest$name,
+      student_id  = latest$student_id,
+      state       = latest$state,
+      emotion     = latest$emotion,
+      gesture     = latest$gesture,
+      engagement  = round(latest$engagement_score, 2),
+      attention   = if ("attention_score" %in% names(latest)) round(latest$attention_score, 2) else NA,
+      yawning     = if ("yawning" %in% names(latest)) latest$yawning else NA,
+      last_seen   = format(latest$timestamp, "%H:%M:%S")
+    )
+    datatable(show,
+      filter = "top",
+      options = list(pageLength = 12, scrollX = TRUE, order = list(list(5, 'asc'))),
+      rownames = FALSE) |>
+    formatStyle("engagement",
+      backgroundColor = styleInterval(c(0.3, 0.6),
+        c("rgba(248,113,113,0.25)","rgba(251,191,36,0.25)","rgba(52,211,153,0.25)"))) |>
+    formatStyle("state",
+      backgroundColor = styleEqual(c("sleeping"), c("rgba(248,113,113,0.4)")))
+  })
+
+  output$live_sleep_alerts <- renderDT({
+    e <- live_lec_emo()
+    if (nrow(e) == 0) return(datatable(data.frame(message = "—")))
+    sl <- e[e$state == "sleeping", , drop = FALSE]
+    if (nrow(sl) == 0) return(datatable(data.frame(message = "No sleep events")))
+    sl <- sl[order(sl$timestamp, decreasing = TRUE), , drop = FALSE]
+    show <- head(dplyr::tibble(
+      time    = format(sl$timestamp, "%H:%M:%S"),
+      student = sl$student_id,
+      reason  = sl$sleep_reason
+    ), 20)
+    datatable(show, options = list(pageLength = 8, dom = 'tip'), rownames = FALSE)
+  })
+
+  output$live_hand_events <- renderDT({
+    e <- live_lec_emo()
+    if (nrow(e) == 0) return(datatable(data.frame(message = "—")))
+    hr <- e[e$gesture == "hand_raised", , drop = FALSE]
+    if (nrow(hr) == 0) return(datatable(data.frame(message = "No hand-raise events")))
+    hr <- hr[order(hr$timestamp, decreasing = TRUE), , drop = FALSE]
+    show <- head(dplyr::tibble(
+      time    = format(hr$timestamp, "%H:%M:%S"),
+      student = hr$student_id,
+      emotion = hr$emotion
+    ), 20)
+    datatable(show, options = list(pageLength = 8, dom = 'tip'), rownames = FALSE)
   })
 
   # ════════════════════════════════════════════════════════════ STUDENT

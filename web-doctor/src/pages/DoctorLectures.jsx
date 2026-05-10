@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   collection, getDocs, addDoc, updateDoc, doc,
   serverTimestamp, query, where,
 } from "firebase/firestore";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Play, Square, Activity } from "lucide-react";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import Modal from "../components/Modal";
@@ -151,6 +152,34 @@ export default function DoctorLectures() {
     finally { setBusy(false); }
   }
 
+  // ── Lecture status transitions (start / stop) ──────────────────────
+  // Mirrors what the Python classroom app would patch on lecture begin / quit.
+  async function setStatus(lec, action) {
+    if (!lec?.id) return;
+    setBusy(true);
+    try {
+      const patch = {};
+      if (action === "start") {
+        patch.status = "recording";
+        patch.started_at = serverTimestamp();
+      } else if (action === "stop") {
+        patch.status = "finished";
+        patch.finalized_at = serverTimestamp();
+      } else if (action === "reset") {
+        patch.status = "scheduled";
+      }
+      await updateDoc(doc(db, "lectures", lec.id), patch);
+      // Optimistic local update
+      setLectures((prev) =>
+        prev.map((l) => (l.id === lec.id ? { ...l, ...patch } : l)),
+      );
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // weeks for the modal select — group nicely
   const modalWeeks = useMemo(
     () => weeks
@@ -268,10 +297,41 @@ export default function DoctorLectures() {
                     <td className="px-4 py-3 text-center text-slate-700">
                       {(lec.enrolled_student_ids || []).length}
                     </td>
-                    <td className="px-4 py-3 text-right space-x-2">
-                      <button onClick={() => openEdit(lec)} className="text-slate-600 hover:underline text-xs">Edit</button>
-                      <button onClick={() => handleDelete(lec.id)} disabled={busy}
-                        className="text-red-600 hover:underline text-xs disabled:opacity-50">Delete</button>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {lec.status !== "recording" && (
+                          <button
+                            onClick={() => setStatus(lec, "start")}
+                            disabled={busy}
+                            title="Start the lecture (status -> recording)"
+                            className="inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-50"
+                          >
+                            <Play className="h-3 w-3" /> Start
+                          </button>
+                        )}
+                        {lec.status === "recording" && (
+                          <button
+                            onClick={() => setStatus(lec, "stop")}
+                            disabled={busy}
+                            title="Finish the lecture (status -> finished)"
+                            className="inline-flex items-center gap-1 rounded-md bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100 disabled:opacity-50"
+                          >
+                            <Square className="h-3 w-3" /> Stop
+                          </button>
+                        )}
+                        {lec.status === "recording" && (
+                          <Link
+                            to={`/lectures/${lec.id}/live`}
+                            title="Open the live classroom monitor"
+                            className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100"
+                          >
+                            <Activity className="h-3 w-3" /> Live
+                          </Link>
+                        )}
+                        <button onClick={() => openEdit(lec)} className="px-1.5 text-xs text-slate-600 hover:underline">Edit</button>
+                        <button onClick={() => handleDelete(lec.id)} disabled={busy}
+                          className="px-1.5 text-xs text-red-600 hover:underline disabled:opacity-50">Delete</button>
+                      </div>
                     </td>
                   </tr>
                 );
