@@ -66,11 +66,28 @@ function runNode(scriptPath, scriptArgs = []) {
 }
 
 // ---- spawn the emulator ------------------------------------------------
+// --import + --export-on-exit point at firebase-emulator/snapshot/ so every
+// restart picks up the previous state for ALL services (Firestore + Auth +
+// Storage). The legacy JSON backup pipeline below still runs as a fallback
+// and for grep-friendly archives.
+const SNAPSHOT_DIR = resolve(EMU_DIR, "snapshot");
+const haveSnapshot = existsSync(SNAPSHOT_DIR);
 log(`spawning Firebase emulators in ${EMU_DIR} (project=${PROJECT})`);
+log(`snapshot dir: ${SNAPSHOT_DIR}  (${haveSnapshot ? "found, will import" : "missing, fresh start"})`);
 const isWin = process.platform === "win32";
+const emuArgs = ["firebase-tools", "emulators:start", "--project", PROJECT,
+                 "--export-on-exit", SNAPSHOT_DIR];
+if (haveSnapshot) emuArgs.push("--import", SNAPSHOT_DIR);
+if (args.has("--no-restore")) {
+  // Skip both: don't import, don't export. Useful for clean tests.
+  for (const flag of ["--import", "--export-on-exit"]) {
+    const i = emuArgs.indexOf(flag);
+    if (i >= 0) emuArgs.splice(i, 2);
+  }
+}
 const emu = spawn(
   isWin ? "npx.cmd" : "npx",
-  ["firebase-tools", "emulators:start", "--project", PROJECT],
+  emuArgs,
   { cwd: EMU_DIR, stdio: "inherit", shell: isWin }
 );
 
