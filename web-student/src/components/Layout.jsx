@@ -19,6 +19,7 @@ import {
   Bell,
   ChevronRight,
   FileText,
+  FileSpreadsheet,
 } from "lucide-react";
 
 /* ── Nav structure ─────────────────────────────────── */
@@ -38,6 +39,7 @@ const NAV_SECTIONS = [
       { to: "/attendance", label: "My Attendance", icon: CalendarCheck },
       { to: "/grades",     label: "Grades",        icon: GraduationCap },
       { to: "/history",    label: "History",       icon: Clock },
+      { to: "/reports",    label: "Reports",       icon: FileSpreadsheet },
     ],
   },
   {

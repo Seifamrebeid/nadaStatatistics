@@ -53,6 +53,7 @@ const NAV_SECTIONS = [
       { to: "/analytics",     label: "Live Analytics", icon: "analytics"  },
       { to: "/lectures",      label: "Lectures",       icon: "lectures"   },
       { to: "/grades",        label: "Grades",         icon: "grades"     },
+      { to: "/reports",       label: "Reports",        icon: "reports"    },
     ],
   },
   {

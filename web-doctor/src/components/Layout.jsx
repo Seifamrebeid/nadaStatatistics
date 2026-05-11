@@ -117,6 +117,7 @@ const NAV_SECTIONS = [
     items: [
       { to: "/lectures",        label: "Live Classroom", icon: "Live",      live: true },
       { to: "/analytics",       label: "Analytics",      icon: "Analytics" },
+      { to: "/reports",         label: "Reports",        icon: "Reports" },
     ],
   },
   {

@@ -11,6 +11,7 @@ import DoctorHierarchy from "./pages/DoctorHierarchy";
 import DoctorLectures from "./pages/DoctorLectures";
 import LiveClassroom from "./pages/LiveClassroom";
 import DoctorAnalytics from "./pages/DoctorAnalytics";
+import DoctorReports from "./pages/DoctorReports";
 import DoctorNotifications from "./pages/DoctorNotifications";
 import DoctorStudentSearch from "./pages/DoctorStudentSearch";
 import DoctorGrades from "./pages/DoctorGrades";
@@ -35,6 +36,7 @@ function Gate() {
         <Route path="lectures" element={<DoctorLectures />} />
         <Route path="lectures/:lectureId/live" element={<LiveClassroom />} />
         <Route path="analytics" element={<DoctorAnalytics />} />
+        <Route path="reports" element={<DoctorReports />} />
         <Route path="grades" element={<DoctorGrades />} />
         <Route path="attendance" element={<DoctorAttendance />} />
         <Route path="student-search" element={<DoctorStudentSearch />} />

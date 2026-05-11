@@ -13,6 +13,7 @@ import StudentDoctorSearch from "./pages/StudentDoctorSearch";
 import StudentGrades from "./pages/StudentGrades";
 import StudentAttendance from "./pages/StudentAttendance";
 import StudentHierarchy from "./pages/StudentHierarchy";
+import StudentReports from "./pages/StudentReports";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
@@ -35,6 +36,7 @@ function Gate() {
         <Route path="attendance" element={<StudentAttendance />} />
         <Route path="history" element={<StudentHistory />} />
         <Route path="hierarchy" element={<StudentHierarchy />} />
+        <Route path="reports" element={<StudentReports />} />
         <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="login" element={<Navigate to="/" replace />} />
