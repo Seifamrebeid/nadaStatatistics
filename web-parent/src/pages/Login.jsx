@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import Spinner from "../components/Spinner";
 
-const QUICK = { email: "parent@classroom.local", password: "Parent@123" };
+const QUICK = { email: "seif.amr.ebeid05@gmail.com", password: "123456789" };
 
 export default function Login() {
   const { mismatchError, setMismatchError } = useAuth();
