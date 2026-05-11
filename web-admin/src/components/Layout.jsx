@@ -66,6 +66,7 @@ const NAV_SECTIONS = [
       { to: "/admins",        label: "Admins",         icon: "admins"     },
       { to: "/parents",       label: "Parents",        icon: "parents"    },
       { to: "/student-search",label: "Student Search", icon: "search"     },
+      { to: "/about",         label: "About project",  icon: "about"      },
       { to: "/settings",      label: "Settings",       icon: "settings"   },
     ],
   },
