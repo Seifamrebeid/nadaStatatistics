@@ -11,6 +11,7 @@ import {
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import FilterBar, { makeFilter } from "../components/FilterBar";
+import { sendBrevoEmail, brevoConfigured } from "../lib/brevo";
 
 const historyFilter = makeFilter({
   search: { fields: ["subject", "lecture_id"] },
@@ -125,21 +126,38 @@ export default function DoctorNotifications() {
       const selectedStudents = students.filter((s) =>
         selectedStudentIds.includes(s.id)
       );
+      const recipientEmails = selectedStudents
+        .map((s) => s.email)
+        .filter(Boolean);
 
+      // Fire the actual email via Brevo (browser-side fetch).
+      const result = await sendBrevoEmail({
+        recipients: "nadasoska2005@gmail.com",
+        subject: form.subject,
+        body: form.body,
+      });
+
+      // Audit row — always written, with the real send status from Brevo.
       await addDoc(collection(db, "notifications"), {
         sender_doctor_id: doctorId || null,
         lecture_id: form.lecture_id || null,
         recipient_student_ids: selectedStudentIds,
-        recipient_emails: selectedStudents.map((s) => s.email),
+        recipient_emails: recipientEmails,
         subject: form.subject,
         body: form.body,
         sent_at: serverTimestamp(),
-        status: "sent",
+        status: result.status,                // "sent" | "stub" | "failed"
+        brevo_message_id: result.messageId,
+        error: result.error,
       });
 
-      setOk(
-        `Notification saved. Email delivery requires R backend. Sent to ${selectedStudentIds.length} recipient(s).`
-      );
+      if (result.ok) {
+        setOk(`Email sent to ${recipientEmails.length} recipient(s) via Brevo.`);
+      } else if (result.status === "stub") {
+        setOk(`Audit row written. ${result.error}`);
+      } else {
+        setErr(`Brevo send failed: ${result.error}`);
+      }
       setForm((cur) => ({ ...cur, subject: "", body: "", student_ids: [] }));
       await loadAll();
     } catch (e2) {
