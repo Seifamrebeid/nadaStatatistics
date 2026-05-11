@@ -4,6 +4,8 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "web": "npm --prefix web run dev",
+    "web:build": "npm --prefix web run build",
     "emu:start": "node scripts/start-emulators.mjs",
     "emu:start:fresh": "node scripts/start-emulators.mjs --no-restore",
     "emu:save": "node scripts/emu-snapshot.mjs",

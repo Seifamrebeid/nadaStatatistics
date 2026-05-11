@@ -6,7 +6,7 @@ running" — closing the terminal kills the service.
 
 > **TL;DR for the demo (3 terminals):**
 > 1. `npm run emu:start`
-> 2. `cd web-doctor; npm run dev`
+> 2. `npm run web`         (unified web app — http://127.0.0.1:5180)
 > 3. `node scripts/simulate-live-stream.mjs <lecture_id> 300 10`
 
 ---
@@ -84,20 +84,23 @@ Expect `200`. If you see `404 page not found` (plain text), something else
 
 ---
 
-## 2. Start the web portals
+## 2. Start the unified web app
 
-Each portal is a separate Vite app on its own port. Start whichever ones you
-need; they don't depend on each other.
+All 4 role views (admin / doctor / student / parent) now live in **one Vite
+app** at `web/`. The sidebar and routes switch automatically based on the
+signed-in user's role.
 
-| Portal | Terminal | Command | URL |
-|---|---|---|---|
-| Doctor | 2 | `cd web-doctor ; npm run dev` | http://localhost:5174 |
-| Admin | 3 | `cd web-admin ; npm run dev` | http://localhost:5175 |
-| Student | 4 | `cd web-student ; npm run dev` | http://localhost:5173 |
-| Parent | 5 | `cd web-parent ; npm run dev` | http://localhost:5176 |
+**Terminal 2 — leave running.**
 
-Each one prints "Local: http://localhost:..." when ready. **Leave the
-terminals running**; closing them kills the dev server.
+```powershell
+npm run web
+# OR
+cd web ; npm run dev
+```
+
+Opens at **http://127.0.0.1:5180**. The user signs in once; the app
+redirects them to `/admin`, `/doctor`, `/student`, or `/parent` based on
+their role in the `users/{uid}` Firestore doc.
 
 ### Login
 
@@ -303,11 +306,17 @@ EMULATOR ───────────────────────�
   Storage:    http://127.0.0.1:9199
   UI:         http://127.0.0.1:4000
 
-PORTALS ───────────────────────────────────────────────────────
-  Student:    http://localhost:5173
-  Doctor:     http://localhost:5174
-  Admin:      http://localhost:5175
-  Parent:     http://localhost:5176
+UNIFIED WEB APP (4 roles, one URL) ────────────────────────────
+  http://127.0.0.1:5180
+
+  Routes (after login the user is redirected to their role's home):
+    /admin/*    admin features
+    /doctor/*   doctor features (incl. Live Classroom)
+    /student/*  student features
+    /parent/*   parent features
+
+LEGACY (still in repo, will be removed once new app is validated)
+  web-admin/, web-doctor/, web-student/, web-parent/
 
 DASHBOARDS ────────────────────────────────────────────────────
   Shiny:      http://127.0.0.1:3838

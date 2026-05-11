@@ -12,12 +12,15 @@ Scannable list of every feature — for the advisor briefing. No deep dives.
 - **Cumulative event totals** — Total hand-raises / toilet requests / sleep events / yawns / cheat alerts per lecture
 - **K-means clustering** — auto-groups doctors and students by engagement profile
 
-## 🖥️ Web portals (4)
+## 🖥️ Unified web app (4 role-aware views)
 
-- **web-admin** — full CRUD on the whole system
-- **web-doctor** — lectures, live monitor, analytics, attendance, grades, notifications
-- **web-student** — personal dashboard, live engagement feedback, grades, transcripts
-- **web-parent** — multi-child comparison view
+- **One Vite + React app** at `web/` — single URL, single deployment
+- **Role-gated routing** — `/admin/*`, `/doctor/*`, `/student/*`, `/parent/*`
+- After login, redirected to the right home based on `users/{uid}.role`
+- Admin view — full CRUD on the whole system
+- Doctor view — lectures, live monitor, analytics, attendance, grades, notifications
+- Student view — personal dashboard, live engagement feedback, grades, transcripts
+- Parent view — multi-child comparison view
 
 ## 📱 Mobile apps (3)
 
