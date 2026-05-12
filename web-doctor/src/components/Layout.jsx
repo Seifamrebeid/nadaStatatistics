@@ -84,6 +84,17 @@ const Icon = {
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" />
     </svg>
   ),
+  Trophy: () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M8 21h8M12 17v4M17 4h3a1 1 0 0 1 1 1c0 4-2 6-4 6M7 4H4a1 1 0 0 0-1 1c0 4 2 6 4 6" />
+      <path d="M17 4H7v6a5 5 0 0 0 10 0V4z" />
+    </svg>
+  ),
+  Folder: () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
   Settings: () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-[18px] w-[18px]">
       <circle cx="12" cy="12" r="3" />
@@ -127,6 +138,8 @@ const NAV_SECTIONS = [
       { to: "/weeks",           label: "Weeks",          icon: "Weeks" },
       { to: "/lectures",        label: "Lectures",       icon: "Lectures" },
       { to: "/grades",          label: "Grades",         icon: "Grades" },
+      { to: "/leaderboard",     label: "Leaderboard",    icon: "Trophy" },
+      { to: "/materials",       label: "Materials",      icon: "Folder" },
       { to: "/student-search",  label: "Student Search", icon: "Search" },
       { to: "/notifications",   label: "Notifications",  icon: "Bell" },
       { to: "/hierarchy",       label: "Hierarchy",      icon: "Hierarchy" },

@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "NadaStatistics",
+    "slug": "nada-statistics",
+    "version": "1.0.0",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nadastats.app"
+    },
+    "android": {
+      "package": "com.nadastats.app"
+    },
+    "web": {},
+    "scheme": "nadastats",
+    "plugins": [["expo-router"]]
+  }
+}

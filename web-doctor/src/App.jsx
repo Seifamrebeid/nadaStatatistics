@@ -16,6 +16,8 @@ import DoctorNotifications from "./pages/DoctorNotifications";
 import DoctorStudentSearch from "./pages/DoctorStudentSearch";
 import DoctorGrades from "./pages/DoctorGrades";
 import DoctorAttendance from "./pages/DoctorAttendance";
+import DoctorLeaderboard from "./pages/DoctorLeaderboard";
+import DoctorMaterials from "./pages/DoctorMaterials";
 import Profile from "./pages/Profile";
 import NotFound from "./pages/NotFound";
 
@@ -39,6 +41,8 @@ function Gate() {
         <Route path="reports" element={<DoctorReports />} />
         <Route path="grades" element={<DoctorGrades />} />
         <Route path="attendance" element={<DoctorAttendance />} />
+        <Route path="leaderboard" element={<DoctorLeaderboard />} />
+        <Route path="materials" element={<DoctorMaterials />} />
         <Route path="student-search" element={<DoctorStudentSearch />} />
         <Route path="notifications" element={<DoctorNotifications />} />
         <Route path="profile" element={<Profile />} />
