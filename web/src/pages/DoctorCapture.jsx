@@ -48,6 +48,8 @@ export default function DoctorCapture() {
   const [capturing,   setCapturing]     = useState(false);
   const [lecture,     setLecture]       = useState(null);
   const [stats,       setStats]         = useState({ fps: 0, facesNow: 0, written: 0, identified: 0 });
+  const [faces,       setFaces]         = useState([]);     // current API response, drives the right-side panel
+  const [detectionLog, setDetectionLog] = useState([]);     // rolling history of identified detections
   const [audioStatus, setAudioStatus]   = useState("off");
   const [audioError,  setAudioError]    = useState(null);
   const [segmentCount, setSegmentCount] = useState(0);
@@ -183,7 +185,8 @@ export default function DoctorCapture() {
         };
       });
       lastFacesRef.current = faces;
-      if (capturingRef.current) writtenRef.current += faces.filter((f) => f.student_id !== "unknown").length;
+      const identified = faces.filter((f) => f.student_id !== "unknown");
+      if (capturingRef.current) writtenRef.current += identified.length;
 
       // FPS = successful round-trips per second
       const now = performance.now();
@@ -197,8 +200,14 @@ export default function DoctorCapture() {
         fps: fpsRef.current.fps,
         facesNow: faces.length,
         written: writtenRef.current,
-        identified: faces.filter((f) => f.student_id !== "unknown").length,
+        identified: identified.length,
       });
+      // Drive the right-side panel + a rolling log of identified detections.
+      setFaces(faces);
+      if (identified.length) {
+        const stamped = identified.map((f) => ({ ...f, _at: Date.now() }));
+        setDetectionLog((prev) => [...stamped, ...prev].slice(0, 50));
+      }
     } catch (e) {
       console.error("[capture] /detect failed:", e);
       // Don't spam the UI banner with transient errors during preview.
@@ -441,31 +450,94 @@ export default function DoctorCapture() {
         </div>
       )}
 
-      {/* Camera + overlay */}
-      <div className="card overflow-hidden">
-        <div className="relative bg-slate-900" style={{ aspectRatio: "16/9" }}>
-          <video
-            ref={videoRef}
-            playsInline
-            muted
-            className="absolute inset-0 w-full h-full object-cover"
-          />
-          <canvas
-            ref={canvasRef}
-            className="absolute inset-0 w-full h-full pointer-events-none"
-          />
-          {!cameraReady && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70">
-              <Camera className="h-16 w-16 opacity-30 mb-3" />
-              <div className="text-sm">Click <b>Open camera</b> to begin.</div>
+      {/* Camera + side panel */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Camera + overlay — 2/3 width on desktop */}
+        <div className="lg:col-span-2 card overflow-hidden">
+          <div className="relative bg-slate-900" style={{ aspectRatio: "16/9" }}>
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+            <canvas
+              ref={canvasRef}
+              className="absolute inset-0 w-full h-full pointer-events-none"
+            />
+            {!cameraReady && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70">
+                <Camera className="h-16 w-16 opacity-30 mb-3" />
+                <div className="text-sm">Click <b>Open camera</b> to begin.</div>
+              </div>
+            )}
+            {capturing && (
+              <div className="absolute top-3 right-3 inline-flex items-center gap-2 bg-red-600/90 text-white px-3 py-1.5 rounded-full text-xs font-bold backdrop-blur-sm shadow-lg">
+                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                REC
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Live detection panel — 1/3 width */}
+        <div className="card overflow-hidden flex flex-col">
+          <div className="px-4 py-3 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-500">Currently in frame</div>
+              <div className="text-sm font-semibold text-slate-800">{faces.length} face{faces.length === 1 ? "" : "s"}</div>
             </div>
-          )}
-          {capturing && (
-            <div className="absolute top-3 right-3 inline-flex items-center gap-2 bg-red-600/90 text-white px-3 py-1.5 rounded-full text-xs font-bold backdrop-blur-sm shadow-lg">
-              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-              REC
+            <span className="text-[10px] font-mono text-slate-400">{stats.fps} fps</span>
+          </div>
+
+          {/* Live faces */}
+          <div className="p-2 max-h-64 overflow-y-auto divide-y divide-slate-100">
+            {faces.length === 0 ? (
+              <div className="text-center text-xs text-slate-400 py-6">
+                {cameraReady ? "No faces detected" : "Camera off"}
+              </div>
+            ) : faces.map((f, i) => {
+              const known = f.student_id && f.student_id !== "unknown";
+              const color = EMOTION_COLOR[f.emotion] || "#a3a3a3";
+              return (
+                <div key={`${f.student_id}_${i}`} className="flex items-center gap-2 px-2 py-2">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full flex-shrink-0"
+                    style={{ background: known ? color : "#cbd5e1" }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-900 truncate">
+                      {f.name || (known ? f.student_id : "Unknown")}
+                    </div>
+                    <div className="text-[11px] text-slate-500 truncate">
+                      {f.emotion} · {Math.round(f.engagement_score)}%
+                      {!known && f.distance != null ? ` · dist ${f.distance.toFixed(2)}` : ""}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Rolling history log */}
+          <div className="border-t border-slate-100">
+            <div className="px-4 py-2 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Recent log
             </div>
-          )}
+            <div className="max-h-64 overflow-y-auto text-[11px] divide-y divide-slate-100">
+              {detectionLog.length === 0 ? (
+                <div className="text-center text-slate-400 py-4">No detections yet</div>
+              ) : detectionLog.map((d, i) => (
+                <div key={`${d._at}_${i}`} className="px-3 py-1.5 flex items-center justify-between gap-2">
+                  <span className="font-medium text-slate-800 truncate">{d.name || d.student_id}</span>
+                  <span className="text-slate-500 flex-shrink-0">{d.emotion}</span>
+                  <span className="font-mono text-slate-400 flex-shrink-0">
+                    {new Date(d._at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 

@@ -28,7 +28,11 @@ load_dotenv()
 
 from emotion import detect_emotion
 from engagement import engagement_score
-from face_id import detect_and_identify, load_enrolled_encodings
+from face_id import (
+    face_locations_only,
+    identify_locations,
+    load_enrolled_encodings,
+)
 from firebase_writer import init_firebase
 
 app = FastAPI(title="Classroom Capture API")
@@ -51,7 +55,42 @@ _enrollments: Dict[str, tuple] = {}
 # so we only recompute every EMOTION_EVERY_N requests and reuse otherwise.
 _last_emotion: Dict[str, dict] = {}
 _request_counter = 0
-EMOTION_EVERY_N = 3
+EMOTION_EVERY_N = 3        # FER (emotion) — every 3rd request
+IDENTIFY_EVERY_N = 3       # face encoding + match — every 3rd request (~200ms saved on the others)
+
+# Last identified faces per lecture: lecture_id -> list[{"box":..., "student_id":..., "distance":...}]
+_last_identified: Dict[str, list] = {}
+
+
+def _iou(a, b) -> float:
+    """IoU of two boxes in (top, right, bottom, left) order."""
+    at, ar, ab, al = a
+    bt, br, bb, bl = b
+    inter_t = max(at, bt); inter_l = max(al, bl)
+    inter_b = min(ab, bb); inter_r = min(ar, br)
+    iw = max(0, inter_r - inter_l); ih = max(0, inter_b - inter_t)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0, ar - al) * max(0, ab - at)
+    area_b = max(0, br - bl) * max(0, bb - bt)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _reuse_identity(box, prev: list, iou_thresh: float = 0.35):
+    """Find the previous identified box with highest IoU; return its identity
+    if it clears the threshold, else (unknown, None)."""
+    best = None
+    best_iou = 0.0
+    for p in prev:
+        i = _iou(box, p["box"])
+        if i > best_iou:
+            best_iou = i
+            best = p
+    if best and best_iou >= iou_thresh:
+        return best["student_id"], best.get("distance")
+    return "unknown", None
 
 
 @app.on_event("startup")
@@ -132,11 +171,24 @@ def detect(req: DetectRequest) -> DetectResponse:
 
     encs, names = _get_enrollment(req.lecture_id)
 
-    # Face detection + identification (cheap — upsample=0, num_jitters=0)
-    detections = detect_and_identify(frame, encs)
-
     _request_counter += 1
-    run_emotion = (_request_counter % EMOTION_EVERY_N) == 0
+    run_emotion  = (_request_counter % EMOTION_EVERY_N) == 0
+    run_identify = (_request_counter % IDENTIFY_EVERY_N) == 0
+
+    # Step 1 — face_locations every frame (HOG, ~30-60 ms on 480px).
+    locations = face_locations_only(frame, upsample=0)
+
+    # Step 2 — identity. Either recompute (encoding + match, slow) or reuse
+    # the last identified set by IoU (cheap).
+    prev_identified = _last_identified.get(req.lecture_id, [])
+    if run_identify or not prev_identified:
+        detections = identify_locations(frame, locations, encs)
+        _last_identified[req.lecture_id] = detections
+    else:
+        detections = []
+        for box in locations:
+            sid, distance = _reuse_identity(box, prev_identified)
+            detections.append({"box": box, "student_id": sid, "distance": distance})
 
     faces: List[FaceResult] = []
     batch = []

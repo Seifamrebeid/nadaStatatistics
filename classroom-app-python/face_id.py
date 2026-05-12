@@ -38,6 +38,44 @@ def load_enrolled_encodings(db, lecture_id: str) -> Tuple[Dict[str, np.ndarray],
     return encodings, names
 
 
+def face_locations_only(frame, upsample: int = 0) -> List[Tuple[int, int, int, int]]:
+    """Just the HOG box pass — no encoding, no matching. ~3-5x cheaper than
+    detect_and_identify when you only need overlay boxes between identity
+    refreshes.
+    """
+    return face_recognition.face_locations(frame, number_of_times_to_upsample=upsample)
+
+
+def identify_locations(frame, locations, enrolled: Dict[str, np.ndarray],
+                       tolerance: float = 0.6,
+                       num_jitters: int = 0) -> List[dict]:
+    """Compute encodings for the given locations and match against enrolled.
+
+    Same shape as `detect_and_identify` so callers can be uniform. Pull this
+    apart from face_locations so a fast inner loop can detect every frame
+    but only identify every Nth.
+    """
+    out: List[dict] = []
+    if not locations:
+        return out
+    encodings = face_recognition.face_encodings(
+        frame, known_face_locations=locations, num_jitters=num_jitters
+    )
+    ids = list(enrolled.keys())
+    known = np.array([enrolled[i] for i in ids]) if ids else np.zeros((0, 128))
+    for box, enc in zip(locations, encodings):
+        student_id = "unknown"
+        distance: Optional[float] = None
+        if known.shape[0] > 0:
+            dists = face_recognition.face_distance(known, enc)
+            j = int(np.argmin(dists))
+            distance = float(dists[j])
+            if distance < tolerance:
+                student_id = ids[j]
+        out.append({"box": box, "student_id": student_id, "distance": distance})
+    return out
+
+
 def detect_and_identify(frame, enrolled: Dict[str, np.ndarray],
                         tolerance: float = 0.6,
                         upsample: int = 0,
