@@ -6,6 +6,7 @@ import { PageLoader } from "./components/Spinner";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 import Profile from "./pages/Profile";
+import Chat from "./pages/Chat";
 
 // ─── Admin pages ──────────────────────────────────────────────
 import AdminDashboard      from "./pages/AdminDashboard";
@@ -33,6 +34,7 @@ import DoctorWeeks           from "./pages/DoctorWeeks";
 import DoctorHierarchy       from "./pages/DoctorHierarchy";
 import DoctorLectures        from "./pages/DoctorLectures";
 import LiveClassroom         from "./pages/LiveClassroom";
+import DoctorCapture         from "./pages/DoctorCapture";
 import DoctorAnalytics       from "./pages/DoctorAnalytics";
 import DoctorReports         from "./pages/DoctorReports";
 import DoctorNotifications   from "./pages/DoctorNotifications";
@@ -113,6 +115,7 @@ function Gate() {
         <Route path="admin/reports"        element={<RequireRole role="admin"><AdminReports /></RequireRole>} />
         <Route path="admin/about"          element={<RequireRole role="admin"><AdminAbout /></RequireRole>} />
         <Route path="admin/settings"       element={<RequireRole role="admin"><AdminSettings /></RequireRole>} />
+        <Route path="admin/chat"           element={<RequireRole role="admin"><Chat /></RequireRole>} />
 
         {/* ── Doctor ── */}
         <Route path="doctor" element={<RequireRole role="doctor"><DoctorDashboard /></RequireRole>} />
@@ -121,13 +124,15 @@ function Gate() {
         <Route path="doctor/weeks"                    element={<RequireRole role="doctor"><DoctorWeeks /></RequireRole>} />
         <Route path="doctor/hierarchy"                element={<RequireRole role="doctor"><DoctorHierarchy /></RequireRole>} />
         <Route path="doctor/lectures"                 element={<RequireRole role="doctor"><DoctorLectures /></RequireRole>} />
-        <Route path="doctor/lectures/:lectureId/live" element={<RequireRole role="doctor"><LiveClassroom /></RequireRole>} />
+        <Route path="doctor/lectures/:lectureId/live"    element={<RequireRole role="doctor"><LiveClassroom /></RequireRole>} />
+        <Route path="doctor/lectures/:lectureId/capture" element={<RequireRole role="doctor"><DoctorCapture /></RequireRole>} />
         <Route path="doctor/analytics"                element={<RequireRole role="doctor"><DoctorAnalytics /></RequireRole>} />
         <Route path="doctor/reports"                  element={<RequireRole role="doctor"><DoctorReports /></RequireRole>} />
         <Route path="doctor/grades"                   element={<RequireRole role="doctor"><DoctorGrades /></RequireRole>} />
         <Route path="doctor/attendance"               element={<RequireRole role="doctor"><DoctorAttendance /></RequireRole>} />
         <Route path="doctor/student-search"           element={<RequireRole role="doctor"><DoctorStudentSearch /></RequireRole>} />
         <Route path="doctor/notifications"            element={<RequireRole role="doctor"><DoctorNotifications /></RequireRole>} />
+        <Route path="doctor/chat"                     element={<RequireRole role="doctor"><Chat /></RequireRole>} />
 
         {/* ── Student ── */}
         <Route path="student" element={<RequireRole role="student"><StudentDashboard /></RequireRole>} />
@@ -141,6 +146,7 @@ function Gate() {
         <Route path="student/history"           element={<RequireRole role="student"><StudentHistory /></RequireRole>} />
         <Route path="student/hierarchy"         element={<RequireRole role="student"><StudentHierarchy /></RequireRole>} />
         <Route path="student/reports"           element={<RequireRole role="student"><StudentReports /></RequireRole>} />
+        <Route path="student/chat"              element={<RequireRole role="student"><Chat /></RequireRole>} />
 
         {/* ── Parent ── */}
         <Route path="parent"            element={<RequireRole role="parent"><ParentDashboard /></RequireRole>} />
@@ -151,6 +157,7 @@ function Gate() {
         <Route path="parent/child/:childId/lectures" element={<RequireRole role="parent"><ChildLectures /></RequireRole>} />
         <Route path="parent/child/:childId/subjects" element={<RequireRole role="parent"><ChildSubjects /></RequireRole>} />
         <Route path="parent/child/:childId/weeks"    element={<RequireRole role="parent"><ChildWeeks /></RequireRole>} />
+        <Route path="parent/chat"                    element={<RequireRole role="parent"><Chat /></RequireRole>} />
 
         <Route path="profile" element={<Profile />} />
         <Route path="*" element={<NotFound />} />

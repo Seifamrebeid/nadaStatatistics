@@ -4,7 +4,7 @@ import {
   collection, getDocs, addDoc, updateDoc, doc,
   serverTimestamp, query, where,
 } from "firebase/firestore";
-import { RefreshCw, Play, Square, Activity } from "lucide-react";
+import { RefreshCw, Play, Square, Activity, Camera } from "lucide-react";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import Modal from "../components/Modal";
@@ -321,13 +321,20 @@ export default function DoctorLectures() {
                         )}
                         {lec.status === "recording" && (
                           <Link
-                            to={`/lectures/${lec.id}/live`}
+                            to={`/doctor/lectures/${lec.id}/live`}
                             title="Open the live classroom monitor"
                             className="inline-flex items-center gap-1 rounded-md bg-purple-50 px-2 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100"
                           >
                             <Activity className="h-3 w-3" /> Live
                           </Link>
                         )}
+                        <Link
+                          to={`/doctor/lectures/${lec.id}/capture`}
+                          title="Start in-browser classroom capture (camera + emotion)"
+                          className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        >
+                          <Camera className="h-3 w-3" /> Capture
+                        </Link>
                         <button onClick={() => openEdit(lec)} className="px-1.5 text-xs text-slate-600 hover:underline">Edit</button>
                         <button onClick={() => handleDelete(lec.id)} disabled={busy}
                           className="px-1.5 text-xs text-red-600 hover:underline disabled:opacity-50">Delete</button>

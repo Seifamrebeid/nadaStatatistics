@@ -2,6 +2,9 @@
   "buckets": [
     {
       "id": "fridgechef-jt50c.appspot.com"
+    },
+    {
+      "id": "fridgechef-jt50c.firebasestorage.app"
     }
   ]
 }

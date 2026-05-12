@@ -63,28 +63,32 @@ export default function Login() {
         <div className="absolute -bottom-32 -left-10 h-96 w-96 rounded-full bg-emerald-400/10 blur-3xl" />
 
         <div className="relative z-10 flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-white/10 backdrop-blur flex items-center justify-center ring-1 ring-white/20">
-            <LayoutDashboard className="h-5 w-5" />
-          </div>
+          <img
+            src="/logo.png"
+            alt="EDU Link"
+            className="h-12 w-12 rounded-xl ring-1 ring-white/20 bg-white/5 object-cover"
+          />
           <div>
-            <div className="font-semibold">Classroom Emotions</div>
-            <div className="text-xs text-white/60">Admin Console</div>
+            <div className="font-bold text-lg tracking-tight">
+              EDU <span className="text-white/70">Link</span>
+            </div>
+            <div className="text-xs text-white/60">Connect · Learn · Grow · Succeed</div>
           </div>
         </div>
 
         <div className="relative z-10 max-w-md">
           <h2 className="text-3xl font-semibold leading-tight">
-            Operate the platform with confidence.
+            One platform. Four roles. Real-time insight.
           </h2>
           <p className="mt-3 text-white/70 text-sm leading-relaxed">
-            Manage doctors, students, and classes; monitor engagement signals; and review
-            system-wide analytics — all from a single secure workspace.
+            EDU Link brings admins, doctors, students and parents into a single workspace —
+            face-aware attendance, live engagement, and shared analytics.
           </p>
 
           <ul className="mt-8 space-y-3 text-sm">
             <li className="flex items-center gap-3">
               <ShieldCheck className="h-4 w-4 text-emerald-300" />
-              <span className="text-white/80">Role-gated access for admins only</span>
+              <span className="text-white/80">Role-gated portal — admin, doctor, student, parent</span>
             </li>
             <li className="flex items-center gap-3">
               <BarChart3 className="h-4 w-4 text-emerald-300" />
@@ -92,13 +96,13 @@ export default function Login() {
             </li>
             <li className="flex items-center gap-3">
               <Sparkles className="h-4 w-4 text-emerald-300" />
-              <span className="text-white/80">Built for fast, daily admin workflows</span>
+              <span className="text-white/80">Built for fast, daily classroom workflows</span>
             </li>
           </ul>
         </div>
 
         <div className="relative z-10 text-xs text-white/40">
-          © {new Date().getFullYear()} Classroom Emotions
+          © {new Date().getFullYear()} EDU Link
         </div>
       </div>
 
@@ -106,10 +110,10 @@ export default function Login() {
       <div className="flex-1 flex items-center justify-center p-6">
         <form onSubmit={submit} className="w-full max-w-sm">
           <div className="lg:hidden mb-8 flex items-center gap-2.5">
-            <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-white">
-              <LayoutDashboard className="h-4 w-4" />
+            <img src="/logo.png" alt="EDU Link" className="h-10 w-10 rounded-lg object-cover" />
+            <div className="font-bold text-slate-900 text-lg tracking-tight">
+              EDU <span className="text-slate-500">Link</span>
             </div>
-            <div className="font-semibold text-slate-900">Classroom Emotions</div>
           </div>
 
           <h1 className="text-2xl font-semibold text-slate-900">Welcome back</h1>

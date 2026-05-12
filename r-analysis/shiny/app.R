@@ -63,6 +63,7 @@ source(file.path(ROOT, "r-analysis", "load_data.R"))
 source(file.path(ROOT, "r-analysis", "shiny", "shared", "theme.R"))
 source(file.path(ROOT, "r-analysis", "shiny", "shared", "helpers.R"))
 source(file.path(ROOT, "r-analysis", "shiny", "shared", "metrics.R"))
+source(file.path(ROOT, "r-analysis", "shiny", "shared", "firebase_auth.R"))
 
 # ── Cached loaders (refresh button below resets these) ────────────────────
 .cache <- new.env(parent = emptyenv())
@@ -76,7 +77,11 @@ cached <- function(key, expr) {
   get(key, envir = .cache)
 }
 
-emo_data        <- function() cached("emo",       load_emotions())
+emo_data        <- function() cached("emo",       {
+  if (requireNamespace("shiny", quietly = TRUE) && !is.null(shiny::getDefaultReactiveDomain()))
+    shiny::withProgress(message = "Loading emotions…", value = NULL, load_emotions())
+  else load_emotions()
+})
 students_data   <- function() cached("students",  load_students())
 doctors_data    <- function() cached("doctors",   load_doctors())
 parents_data    <- function() cached("parents",   load_parents())
@@ -141,40 +146,378 @@ ui <- function(request) {
   source(file.path(ROOT, "r-analysis", "shiny", "shared", "theme.R"), local = FALSE)
 dashboardPage(
   skin = "blue",
-  dashboardHeader(title = "Classroom Analytics"),
+  dashboardHeader(
+    title = tags$div(class = "app-brand",
+      tags$img(src = "logo.png", alt = "EDU Link", class = "app-brand-logo-img"),
+      tags$div(class = "app-brand-text",
+        tags$div(class = "app-brand-name",
+                 HTML('EDU <span style="opacity:.7;font-weight:500;">Link</span>')),
+        tags$div(class = "app-brand-sub", "Multi-role analytics")
+      )
+    ),
+    titleWidth = 260
+  ),
   dashboardSidebar(
     width = 260,
-    sidebarMenu(
-      id = "sidebar",
-      menuItem("Overview",          tabName = "overview",      icon = icon("gauge-high")),
-      menuItem("Live Lecture",      tabName = "live",          icon = icon("circle-dot"),
-               badgeLabel = "live", badgeColor = "red"),
-      menuItem("Students",          tabName = "students",      icon = icon("user-graduate")),
-      menuItem("Doctors",           tabName = "doctors",       icon = icon("user-tie")),
-      menuItem("Parents",           tabName = "parents",       icon = icon("people-roof")),
-      menuItem("Lectures",          tabName = "lectures",      icon = icon("chalkboard-user")),
-      menuItem("Subjects & Classes",tabName = "curriculum",    icon = icon("book")),
-      menuItem("Trends & Clusters", tabName = "trends",        icon = icon("chart-line")),
-      menuItem("Transcripts",       tabName = "transcripts",   icon = icon("file-lines")),
-      menuItem("Notifications",     tabName = "notifications", icon = icon("envelope")),
-      menuItem("Data Quality",      tabName = "data_quality",  icon = icon("database"))
-    ),
-    div(style = "padding: 12px 16px;",
+    # The actual menu items are rendered server-side based on the
+    # signed-in user's role — see output$dyn_menu below.
+    sidebarMenuOutput("dyn_menu"),
+    div(class = "sidebar-actions",
         actionButton("refresh", "Reload data",
                      icon = icon("rotate"),
-                     class = "btn-block",
-                     style = "background:#7c3aed;color:white;border:none;width:100%;"),
+                     class = "sb-btn sb-btn-primary"),
         actionButton("theme_toggle",
                      label = if (is_light_mode()) "Dark mode" else "Light mode",
                      icon  = icon(if (is_light_mode()) "moon" else "sun"),
-                     class = "btn-block",
-                     style = "width:100%;margin-top:8px;"),
-        tags$small(textOutput("env_info"),
-                   style = "color:#94a3b8;display:block;margin-top:8px;")
+                     class = "sb-btn sb-btn-ghost"),
+        actionButton("sign_out", "Sign out",
+                     icon = icon("right-from-bracket"),
+                     class = "sb-btn sb-btn-danger"),
+        tags$div(class = "sb-foot",
+          tags$small(class = "sb-foot-line", textOutput("auth_who", inline = TRUE)),
+          tags$small(class = "sb-foot-line sb-foot-dim", textOutput("env_info", inline = TRUE))
+        )
     )
   ),
   dashboardBody(
-    tags$head(tags$style(HTML(CUSTOM_CSS))),
+    tags$head(
+      tags$script(HTML("
+        Shiny.addCustomMessageHandler('toggleLock', function(m) {
+          document.body.classList.toggle('signed-in', !!m.signed_in);
+          document.body.classList.toggle('locked',  !m.signed_in);
+        });
+        Shiny.addCustomMessageHandler('dataLoading', function(m) {
+          document.body.classList.toggle('data-loading', !!m.loading);
+        });
+      ")),
+      tags$style(HTML(CUSTOM_CSS)),
+      tags$style(HTML("
+        /* ── Auth gating ─────────────────────────────────────────────
+         * Hide the dashboard chrome BY DEFAULT until the server
+         * confirms the user is signed in. This prevents the dashboard
+         * from flashing on screen during the brief window between page
+         * load and the websocket auth handshake. */
+        .wrapper > .main-header,
+        .wrapper > .main-sidebar,
+        .wrapper > .content-wrapper {
+          visibility: hidden;
+        }
+        body.signed-in .wrapper > .main-header,
+        body.signed-in .wrapper > .main-sidebar,
+        body.signed-in .wrapper > .content-wrapper {
+          visibility: visible;
+        }
+        /* The login overlay AND the loading curtain must show regardless
+         * of their ancestors' visibility — `visibility: visible` on a
+         * descendant overrides an inherited `hidden`. */
+        .login-screen, .login-screen *,
+        .loading-curtain, .loading-curtain * { visibility: visible !important; }
+
+        /* The moment the user signs in (body gets .signed-in class), the
+         * login overlay is force-hidden BEFORE Shiny's renderUI gets a
+         * chance to clear it — avoids a faded ghost over the dashboard. */
+        body.signed-in .login-screen { display: none !important; }
+
+        body.locked { overflow: hidden; }
+
+        /* ── Header brand ────────────────────────────────────────── */
+        .skin-blue .main-header .logo {
+          background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 60%, #4c1d95 100%) !important;
+          padding: 0 14px !important;
+          border-right: 1px solid rgba(255,255,255,0.08) !important;
+          height: 56px !important; line-height: 56px !important;
+        }
+        .skin-blue .main-header .logo:hover {
+          background: linear-gradient(135deg, #0f172a 0%, #312e81 60%, #5b21b6 100%) !important;
+        }
+        .skin-blue .main-header .navbar {
+          background: #0f172a !important;
+          min-height: 56px !important;
+          border-bottom: 1px solid rgba(255,255,255,0.06) !important;
+        }
+        .skin-blue .main-header .navbar .sidebar-toggle {
+          color: #cbd5e1 !important;
+          height: 56px !important; line-height: 56px !important;
+          padding: 0 18px !important;
+        }
+        .skin-blue .main-header .navbar .sidebar-toggle:hover {
+          background: rgba(255,255,255,0.06) !important; color: #fff !important;
+        }
+
+        .app-brand {
+          display: inline-flex; align-items: center; gap: 12px;
+          line-height: 1; height: 56px;
+          color: #f8fafc; letter-spacing: -0.01em;
+        }
+        .app-brand-logo, .app-brand-logo-img {
+          width: 38px; height: 38px;
+          border-radius: 10px;
+          background: rgba(255,255,255,0.06);
+          flex-shrink: 0;
+          object-fit: cover;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+          padding: 2px;
+        }
+        .app-brand-text { display: flex; flex-direction: column; gap: 1px; text-align: left; }
+        .app-brand-name { font-size: 15px; font-weight: 700; line-height: 1.1; color: #f8fafc; }
+        .app-brand-sub  { font-size: 10px; font-weight: 500; color: rgba(241,245,249,0.55);
+                          text-transform: uppercase; letter-spacing: 0.06em; }
+        .skin-blue .main-header .logo > .app-brand { width: 100%; justify-content: flex-start; }
+
+        /* ── Sidebar action buttons ───────────────────────────────── */
+        .sidebar-actions {
+          padding: 16px 14px 14px;
+          margin-top: 12px;
+          border-top: 1px solid rgba(255,255,255,0.06);
+          display: flex; flex-direction: column; gap: 8px;
+        }
+        .sb-btn {
+          width: 100% !important;
+          display: inline-flex !important; align-items: center; justify-content: center;
+          gap: 8px;
+          padding: 9px 12px !important;
+          font-size: 13px !important; font-weight: 600 !important;
+          border-radius: 10px !important;
+          border: 1px solid transparent !important;
+          cursor: pointer;
+          transition: transform .12s ease, box-shadow .12s ease,
+                      background .12s ease, border-color .12s ease;
+          letter-spacing: 0.01em;
+          line-height: 1.2;
+          margin: 0 !important;
+        }
+        .sb-btn:hover { transform: translateY(-1px); }
+        .sb-btn .fa { font-size: 13px; }
+
+        .sb-btn-primary {
+          background: linear-gradient(135deg, #7c3aed 0%, #6366f1 100%) !important;
+          color: #ffffff !important;
+          box-shadow: 0 4px 12px rgba(124,58,237,0.35) !important;
+        }
+        .sb-btn-primary:hover {
+          box-shadow: 0 8px 20px rgba(124,58,237,0.5) !important;
+        }
+
+        .sb-btn-ghost {
+          background: rgba(255,255,255,0.05) !important;
+          color: #cbd5e1 !important;
+          border-color: rgba(255,255,255,0.1) !important;
+        }
+        .sb-btn-ghost:hover {
+          background: rgba(255,255,255,0.1) !important;
+          color: #f8fafc !important;
+          border-color: rgba(255,255,255,0.2) !important;
+        }
+
+        .sb-btn-danger {
+          background: rgba(239,68,68,0.12) !important;
+          color: #fca5a5 !important;
+          border-color: rgba(239,68,68,0.25) !important;
+        }
+        .sb-btn-danger:hover {
+          background: rgba(239,68,68,0.22) !important;
+          color: #fff !important;
+          border-color: rgba(239,68,68,0.5) !important;
+        }
+
+        /* Sidebar footer (signed-in / emulator info) */
+        .sb-foot {
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px solid rgba(255,255,255,0.06);
+          display: flex; flex-direction: column; gap: 3px;
+        }
+        .sb-foot-line {
+          display: block;
+          font-size: 10.5px;
+          color: #94a3b8;
+          line-height: 1.4;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .sb-foot-dim { color: #64748b; }
+
+        .login-screen {
+          position: fixed; inset: 0; z-index: 9999;
+          background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #4c1d95 100%);
+          display: flex; align-items: center; justify-content: center;
+          padding: 24px;
+          font-family: 'Inter', system-ui, sans-serif;
+        }
+        .login-screen::before {
+          content: ''; position: absolute; inset: 0;
+          background: radial-gradient(ellipse at top, rgba(124,58,237,0.35), transparent 60%),
+                      radial-gradient(ellipse at bottom right, rgba(34,211,238,0.25), transparent 60%);
+          pointer-events: none;
+        }
+        .login-card {
+          position: relative; z-index: 1;
+          width: 100%; max-width: 440px;
+          background: rgba(255,255,255,0.97);
+          border-radius: 24px;
+          box-shadow: 0 24px 70px rgba(0,0,0,0.45), 0 4px 12px rgba(0,0,0,0.2);
+          padding: 36px 32px;
+        }
+        .login-brand {
+          display: flex; align-items: center; gap: 10px;
+          margin-bottom: 22px;
+        }
+        .login-brand-logo, .login-brand-logo-img {
+          width: 48px; height: 48px; border-radius: 12px;
+          background: #f8fafc;
+          display: flex; align-items: center; justify-content: center;
+          object-fit: cover;
+          box-shadow: 0 6px 16px rgba(15,23,42,0.18);
+          padding: 2px;
+        }
+        .login-brand-title { font-weight: 700; color: #0f172a; font-size: 16px; }
+        .login-brand-sub   { color: #64748b; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; }
+
+        .login-title { font-size: 26px; font-weight: 700; color: #0f172a; margin: 0 0 6px; letter-spacing: -0.02em; }
+        .login-lead  { color: #64748b; font-size: 14px; margin: 0 0 24px; }
+
+        .login-card .form-group label { color: #334155 !important; font-weight: 600; font-size: 13px; }
+        .login-card input[type='text'],
+        .login-card input[type='email'],
+        .login-card input[type='password'] {
+          width: 100% !important; padding: 11px 14px !important;
+          border-radius: 10px !important;
+          border: 1px solid #e2e8f0 !important;
+          background: #f8fafc !important; color: #0f172a !important;
+          font-size: 14px !important; transition: border .15s, box-shadow .15s;
+          box-shadow: none !important;
+        }
+        .login-card input:focus {
+          outline: none !important;
+          border-color: #7c3aed !important;
+          background: #fff !important;
+          box-shadow: 0 0 0 3px rgba(124,58,237,0.15) !important;
+        }
+        .login-error {
+          margin-top: 14px;
+          background: #fef2f2; color: #b91c1c;
+          border: 1px solid #fecaca;
+          padding: 10px 12px; border-radius: 10px;
+          font-size: 13px;
+          display: flex; gap: 8px; align-items: flex-start;
+        }
+        .login-hint {
+          margin-top: 16px;
+          background: #f1f5f9; color: #475569;
+          border-radius: 10px;
+          padding: 10px 12px; font-size: 12px;
+        }
+        .login-hint b { color: #0f172a; }
+        .login-submit {
+          width: 100%; margin-top: 18px;
+          padding: 12px 16px !important;
+          background: linear-gradient(135deg, #7c3aed, #6366f1) !important;
+          color: white !important;
+          border: none !important; border-radius: 10px !important;
+          font-weight: 700 !important; font-size: 14px !important;
+          letter-spacing: 0.01em;
+          box-shadow: 0 8px 22px rgba(124,58,237,0.35) !important;
+          cursor: pointer;
+          transition: transform .15s, box-shadow .15s;
+        }
+        .login-submit:hover { transform: translateY(-1px); box-shadow: 0 10px 26px rgba(124,58,237,0.45) !important; }
+        .login-foot { margin-top: 20px; text-align: center; color: #94a3b8; font-size: 11px; }
+
+        /* ── Quick sign-in cards ───────────────────────────────────── */
+        .quick-grid {
+          display: grid; grid-template-columns: 1fr 1fr;
+          gap: 10px; margin: 6px 0 18px;
+        }
+        .quick-card {
+          display: grid !important;
+          grid-template-columns: 28px 1fr;
+          grid-template-rows: auto auto;
+          column-gap: 10px; row-gap: 2px;
+          padding: 12px 14px !important;
+          border-radius: 12px !important;
+          border: 1px solid transparent !important;
+          cursor: pointer; text-align: left;
+          font-weight: 600;
+          transition: transform .14s ease, box-shadow .14s ease, border-color .14s ease;
+          align-items: center;
+          min-height: 56px;
+        }
+        .quick-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 20px rgba(15,23,42,.12);
+        }
+        .quick-card .qicon {
+          grid-row: 1 / span 2;
+          grid-column: 1;
+          font-size: 22px !important; line-height: 1; opacity: .9;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .quick-card .qrole {
+          grid-column: 2; grid-row: 1;
+          font-size: 14px; font-weight: 700; line-height: 1.15;
+        }
+        .quick-card .qmail {
+          grid-column: 2; grid-row: 2;
+          font-size: 11px; font-weight: 500; opacity: .8;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+          max-width: 100%; line-height: 1.2;
+        }
+        .quick-admin   { background: #fee2e2 !important; color: #991b1b !important; border-color: #fecaca !important; }
+        .quick-admin:hover  { background: #fecaca !important; border-color: #fca5a5 !important; }
+        .quick-doctor  { background: #e0e7ff !important; color: #3730a3 !important; border-color: #c7d2fe !important; }
+        .quick-doctor:hover { background: #c7d2fe !important; border-color: #a5b4fc !important; }
+        .quick-student { background: #d1fae5 !important; color: #065f46 !important; border-color: #a7f3d0 !important; }
+        .quick-student:hover{ background: #a7f3d0 !important; border-color: #6ee7b7 !important; }
+        .quick-parent  { background: #fef3c7 !important; color: #92400e !important; border-color: #fde68a !important; }
+        .quick-parent:hover { background: #fde68a !important; border-color: #fcd34d !important; }
+
+        .quick-sep { display: flex; align-items: center; gap: 10px;
+          color: #94a3b8; font-size: 10px; text-transform: uppercase;
+          letter-spacing: .12em; margin: 4px 0 14px; font-weight: 600; }
+        .quick-sep::before, .quick-sep::after { content: ''; flex: 1; height: 1px; background: #e2e8f0; }
+
+        /* ── Loading curtain ───────────────────────────────────────
+         * Full-screen overlay shown over the entire window after
+         * sign-in, covering header + sidebar + content. Lifts when
+         * the data warm-up completes. */
+        .loading-curtain {
+          position: fixed; inset: 0;
+          z-index: 9998;          /* above AdminLTE header (1030) */
+          background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #4c1d95 100%);
+          display: flex; flex-direction: column;
+          align-items: center; justify-content: center;
+          gap: 18px;
+        }
+        .loading-curtain::before {
+          content: ''; position: absolute; inset: 0;
+          background: radial-gradient(ellipse at top, rgba(124,58,237,0.35), transparent 60%),
+                      radial-gradient(ellipse at bottom right, rgba(34,211,238,0.25), transparent 60%);
+          pointer-events: none;
+        }
+        .loading-curtain > * { position: relative; z-index: 1; }
+        .loading-spinner {
+          width: 64px; height: 64px;
+          border: 4px solid rgba(255,255,255,0.18);
+          border-top-color: #a78bfa;
+          border-radius: 50%;
+          animation: spinrot 0.7s linear infinite;
+        }
+        @keyframes spinrot { to { transform: rotate(360deg); } }
+        .loading-text { color: #f1f5f9; font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
+        .loading-sub  { color: rgba(241,245,249,0.65); font-size: 12px; }
+        .loading-logo {
+          width: 84px; height: 84px;
+          border-radius: 18px;
+          background: rgba(255,255,255,0.96);
+          padding: 4px;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+          margin-bottom: 4px;
+        }
+      "))
+    ),
+    uiOutput("login_overlay"),
+    uiOutput("loading_curtain"),
     tabItems(
       # ───────────────────────────── OVERVIEW ────────────────────────────
       tabItem(tabName = "overview",
@@ -592,6 +935,482 @@ dashboardPage(
 
 server <- function(input, output, session) {
 
+  # ════════════════════════════════════════════════════════════ AUTH
+  # Admin-only login. Until the user signs in as admin, every data
+  # reactive returns empty and a non-dismissable modal blocks the UI.
+  auth_state <- reactiveValues(
+    signed_in = FALSE,
+    uid       = NULL,
+    email     = NULL,
+    role      = NULL,
+    linked_id = NULL,
+    error     = NULL,
+    busy      = FALSE
+  )
+
+  # Render the full-screen login overlay when NOT signed in.
+  output$login_overlay <- renderUI({
+    if (isTRUE(auth_state$signed_in)) return(NULL)
+    tags$div(class = "login-screen",
+      tags$div(class = "login-card",
+        tags$div(class = "login-brand",
+          tags$img(src = "logo.png", alt = "EDU Link", class = "login-brand-logo-img"),
+          tags$div(
+            tags$div(class = "login-brand-title",
+                     HTML('EDU <span style="color:#64748b;font-weight:500;">Link</span>')),
+            tags$div(class = "login-brand-sub", "Connect · Learn · Grow · Succeed")
+          )
+        ),
+        tags$h1(class = "login-title", "Welcome back"),
+        tags$p(class = "login-lead",
+               "Pick a role for instant sign-in, or enter your own credentials."),
+
+        # ── Quick sign-in cards (one per role) ──
+        tags$div(class = "quick-grid",
+          actionButton("login_quick_admin",
+            label = tagList(
+              icon("user-shield", class = "qicon"),
+              tags$span(class = "qrole", "Admin"),
+              tags$span(class = "qmail", "admin")
+            ),
+            class = "quick-card quick-admin"),
+          actionButton("login_quick_doctor",
+            label = tagList(
+              icon("user-doctor", class = "qicon"),
+              tags$span(class = "qrole", "Doctor"),
+              tags$span(class = "qmail", "ahmed hassan")
+            ),
+            class = "quick-card quick-doctor"),
+          actionButton("login_quick_student",
+            label = tagList(
+              icon("user-graduate", class = "qicon"),
+              tags$span(class = "qrole", "Student"),
+              tags$span(class = "qmail", "nada Awad")
+            ),
+            class = "quick-card quick-student"),
+          actionButton("login_quick_parent",
+            label = tagList(
+              icon("people-roof", class = "qicon"),
+              tags$span(class = "qrole", "Parent"),
+              tags$span(class = "qmail", "khaled")
+            ),
+            class = "quick-card quick-parent")
+        ),
+
+        tags$div(class = "quick-sep", tags$span("or sign in manually")),
+
+        textInput("login_email", "Email",
+                  value = isolate(input$login_email) %||% "admin@classroom.local",
+                  width = "100%"),
+        passwordInput("login_password", "Password",
+                      value = "123456789",
+                      placeholder = "••••••••", width = "100%"),
+        if (!is.null(auth_state$error) && nzchar(auth_state$error))
+          tags$div(class = "login-error",
+            icon("triangle-exclamation"),
+            tags$span(auth_state$error))
+        else NULL,
+        actionButton("login_submit",
+                     label = tagList(icon("right-to-bracket"), " Sign in"),
+                     class = "login-submit"),
+        tags$div(class = "login-foot",
+          sprintf("Auth: %s",
+            if (nzchar(Sys.getenv("FIREBASE_AUTH_EMULATOR_HOST", unset = ""))
+                || nzchar(Sys.getenv("FIRESTORE_EMULATOR_HOST", unset = "")))
+              "Firebase emulator (localhost)"
+            else "Production Firebase"
+          )
+        )
+      )
+    )
+  })
+
+  # Quick-sign-in account map (mirrors web/src/pages/Login.jsx)
+  QUICK_ACCOUNTS <- list(
+    admin   = list(email = "admin@classroom.local",      password = "123456789"),
+    doctor  = list(email = "ahmed.hassan@nada.edu",      password = "Doctor@123"),
+    student = list(email = "nadasoska2005@gmail.com",    password = "123456789"),
+    parent  = list(email = "seif.amr.ebeid05@gmail.com", password = "123456789")
+  )
+
+  quick_signin <- function(role_key) {
+    acc <- QUICK_ACCOUNTS[[role_key]]
+    if (is.null(acc)) return()
+    res <- firebase_signin(acc$email, acc$password)
+    if (!isTRUE(res$ok)) {
+      auth_state$error <- res$error %||% "Sign-in failed."
+      return()
+    }
+    prof <- firebase_user_profile(res$uid)
+    if (is.null(prof) || is.null(prof$role) || !nzchar(prof$role)) {
+      auth_state$error <- "Account has no role configured."
+      return()
+    }
+    auth_state$signed_in <- TRUE
+    auth_state$uid       <- res$uid
+    auth_state$email     <- res$email
+    auth_state$role      <- prof$role
+    auth_state$linked_id <- prof$linked_id
+    auth_state$error     <- NULL
+  }
+
+  observeEvent(input$login_quick_admin,   quick_signin("admin"),   ignoreInit = TRUE)
+  observeEvent(input$login_quick_doctor,  quick_signin("doctor"),  ignoreInit = TRUE)
+  observeEvent(input$login_quick_student, quick_signin("student"), ignoreInit = TRUE)
+  observeEvent(input$login_quick_parent,  quick_signin("parent"),  ignoreInit = TRUE)
+
+  # Tell the client whether to reveal the dashboard. The chrome is shown
+  # ONLY when both conditions hold:
+  #   1. user is signed in
+  #   2. initial data warm-up has completed
+  # While data is loading we keep the chrome hidden and let the loading
+  # curtain cover the page — so the user never sees a brief flash of
+  # the wrong role's tabs.
+  observe({
+    show_chrome <- isTRUE(auth_state$signed_in) && isTRUE(data_loaded())
+    session$sendCustomMessage("toggleLock", list(signed_in = show_chrome))
+  })
+
+  observeEvent(input$login_submit, {
+    auth_state$error <- NULL
+    email <- trimws(input$login_email %||% "")
+    pwd   <- input$login_password %||% ""
+    if (!nzchar(email) || !nzchar(pwd)) {
+      auth_state$error <- "Email and password are required."
+      return()
+    }
+    res <- firebase_signin(email, pwd)
+    if (!isTRUE(res$ok)) {
+      auth_state$error <- res$error %||% "Sign-in failed."
+      return()
+    }
+    prof <- firebase_user_profile(res$uid)
+    if (is.null(prof) || is.null(prof$role) || !nzchar(prof$role)) {
+      auth_state$error <- "Account has no role configured."
+      return()
+    }
+    if (!(prof$role %in% c("admin","doctor","student","parent"))) {
+      auth_state$error <- sprintf("Unknown role '%s'.", prof$role)
+      return()
+    }
+    auth_state$signed_in <- TRUE
+    auth_state$uid       <- res$uid
+    auth_state$email     <- res$email
+    auth_state$role      <- prof$role
+    auth_state$linked_id <- prof$linked_id
+    auth_state$error     <- NULL
+  })
+
+  observeEvent(input$sign_out, {
+    auth_state$signed_in <- FALSE
+    auth_state$uid <- NULL
+    auth_state$email <- NULL
+    auth_state$role <- NULL
+    bust_cache()
+  }, ignoreInit = TRUE)
+
+  output$auth_who <- renderText({
+    if (auth_state$signed_in) sprintf("Signed in: %s", auth_state$email) else "Not signed in"
+  })
+
+  # Gate every data load behind auth.
+  require_auth <- reactive({
+    req(auth_state$signed_in)
+    TRUE
+  })
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Role-specific sidebar. Each role only sees the tabs that matter to them.
+  #   admin   → full org view (all 11 tabs)
+  #   doctor  → their teaching dashboard
+  #   student → personal engagement view
+  #   parent  → children-only view
+  output$dyn_menu <- renderMenu({
+    role <- auth_state$role %||% "admin"
+    mi <- function(label, tabName, icon_name, ...) {
+      menuItem(label, tabName = tabName, icon = icon(icon_name), ...)
+    }
+    items <- switch(role,
+      admin = list(
+        mi("Overview",            "overview",      "gauge-high"),
+        mi("Live Lecture",        "live",          "circle-dot",
+           badgeLabel = "live", badgeColor = "red"),
+        mi("Students",            "students",      "user-graduate"),
+        mi("Doctors",             "doctors",       "user-tie"),
+        mi("Parents",             "parents",       "people-roof"),
+        mi("Lectures",            "lectures",      "chalkboard-user"),
+        mi("Subjects & Classes",  "curriculum",    "book"),
+        mi("Trends & Clusters",   "trends",        "chart-line"),
+        mi("Transcripts",         "transcripts",   "file-lines"),
+        mi("Notifications",       "notifications", "envelope"),
+        mi("Data Quality",        "data_quality",  "database")
+      ),
+      doctor = list(
+        mi("My Overview",         "overview",      "gauge-high"),
+        mi("Live Lecture",        "live",          "circle-dot",
+           badgeLabel = "live", badgeColor = "red"),
+        mi("My Students",         "students",      "user-graduate"),
+        mi("My Lectures",         "lectures",      "chalkboard-user"),
+        mi("Trends",              "trends",        "chart-line"),
+        mi("Transcripts",         "transcripts",   "file-lines"),
+        mi("Notifications",       "notifications", "envelope")
+      ),
+      student = list(
+        mi("My Engagement",       "overview",      "gauge-high"),
+        mi("My Lectures",         "lectures",      "chalkboard-user"),
+        mi("Transcripts",         "transcripts",   "file-lines"),
+        mi("Engagement Trends",   "trends",        "chart-line")
+      ),
+      parent = list(
+        mi("Overview",            "overview",      "gauge-high"),
+        mi("My Children",         "students",      "user-graduate"),
+        mi("Their Lectures",      "lectures",      "chalkboard-user"),
+        mi("Engagement Trends",   "trends",        "chart-line")
+      ),
+      list(mi("Overview", "overview", "gauge-high"))
+    )
+    do.call(sidebarMenu, c(list(id = "sidebar"), items))
+  })
+
+  # When the role changes, snap the active tab back to "overview" so the
+  # user doesn't get stuck on a tab their new role can't see.
+  observeEvent(auth_state$role, {
+    if (isTRUE(auth_state$signed_in)) {
+      updateTabItems(session, "sidebar", "overview")
+    }
+  }, ignoreInit = TRUE)
+
+  # ── Loading curtain — shown over the content while initial data loads.
+  data_loaded <- reactiveVal(FALSE)
+
+  output$loading_curtain <- renderUI({
+    if (!isTRUE(auth_state$signed_in) || isTRUE(data_loaded())) return(NULL)
+    tags$div(class = "loading-curtain",
+      tags$img(src = "logo.png", alt = "EDU Link", class = "loading-logo"),
+      tags$div(class = "loading-spinner"),
+      tags$div(class = "loading-text", sprintf("Loading your %s dashboard…",
+        auth_state$role %||% "")),
+      tags$div(class = "loading-sub", "Fetching students, lectures and engagement data…")
+    )
+  })
+
+  # On sign-in: flip the curtain on, then defer the heavy load by a tick
+  # via shiny::invalidateLater so the curtain actually paints first. After
+  # the load completes, flip the curtain off.
+  observeEvent(auth_state$signed_in, {
+    if (!isTRUE(auth_state$signed_in)) {
+      data_loaded(FALSE)
+      return()
+    }
+    data_loaded(FALSE)
+    # Use `later` to defer the synchronous load to the next tick so the
+    # client gets a chance to paint the spinner first.
+    if (requireNamespace("later", quietly = TRUE)) {
+      later::later(function() {
+        isolate({
+          tryCatch({
+            # Warm up every collection so subsequent renders are cache hits.
+            students_data();  doctors_data();  parents_data()
+            lectures_data(); subjects_data(); classes_data(); weeks_data()
+            emo_data()
+            data_loaded(TRUE)
+          }, error = function(e) {
+            message(sprintf("[warm-up] %s", conditionMessage(e)))
+            data_loaded(TRUE)  # let the dashboard render even on errors
+          })
+        })
+      }, delay = 0.1)
+    } else {
+      # Fallback: no `later` available, load synchronously.
+      isolate({
+        students_data(); doctors_data(); parents_data()
+        lectures_data(); subjects_data(); classes_data(); weeks_data()
+        emo_data()
+      })
+      data_loaded(TRUE)
+    }
+  }, ignoreInit = TRUE)
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Role-scoped data filters.
+  #   admin   -> full dataset (no filtering)
+  #   doctor  -> ONLY their lectures, their enrolled students, their subjects,
+  #              their classes, the emotions inside their lectures
+  #   student -> ONLY their own student record, their own emotion rows,
+  #              ONLY the lectures they're enrolled in, ONLY the doctors
+  #              teaching those lectures
+  #   parent  -> linked children only — children's lectures, children's
+  #              emotions, doctors teaching those lectures, etc.
+  # Every collection's wrapper reactive routes through one of these so
+  # nothing leaks across roles.
+
+  # Cache the parent's linked_student_ids for the session (recomputed if
+  # parents_data changes).
+  .parent_children <- function() {
+    if (auth_state$role != "parent") return(character(0))
+    p <- parents_data()
+    if (nrow(p) == 0) return(character(0))
+    if (!"id" %in% names(p)) p$id <- p$parent_id %||% NA_character_
+    pdoc <- p[p$id == auth_state$linked_id, , drop = FALSE]
+    if (nrow(pdoc) == 0 || !"linked_student_ids" %in% names(pdoc)) return(character(0))
+    raw <- pdoc$linked_student_ids[[1]]
+    if (is.null(raw)) return(character(0))
+    if (is.list(raw)) return(unlist(raw, use.names = FALSE))
+    if (is.character(raw) && length(raw) == 1 && grepl(",", raw, fixed = TRUE))
+      return(trimws(unlist(strsplit(raw, ",", fixed = TRUE))))
+    as.character(raw)
+  }
+
+  scope_lectures_for <- function(lec) {
+    role <- auth_state$role; lid <- auth_state$linked_id
+    if (is.null(role) || nrow(lec) == 0) return(lec)
+    if (role == "admin")  return(lec)
+    if (role == "doctor" && "doctor_id" %in% names(lec))
+      return(dplyr::filter(lec, doctor_id == lid))
+    if (role == "student" && "enrolled_student_ids" %in% names(lec))
+      return(dplyr::filter(lec, vapply(enrolled_student_ids, function(x)
+        lid %in% unlist(x %||% character(0), use.names = FALSE), logical(1))))
+    if (role == "parent") {
+      child_ids <- .parent_children()
+      if (!length(child_ids)) return(lec[0, ])
+      return(dplyr::filter(lec, vapply(enrolled_student_ids, function(x)
+        any(unlist(x %||% character(0), use.names = FALSE) %in% child_ids),
+        logical(1))))
+    }
+    lec
+  }
+  scope_emo_for <- function(emo) {
+    role <- auth_state$role; lid <- auth_state$linked_id
+    if (is.null(role) || nrow(emo) == 0) return(emo)
+    if (role == "admin")  return(emo)
+    if (role == "doctor") {
+      lec_ids <- scope_lectures_for(lectures_data())$id
+      return(dplyr::filter(emo, lecture_id %in% lec_ids))
+    }
+    if (role == "student") return(dplyr::filter(emo, student_id == lid))
+    if (role == "parent") {
+      child_ids <- .parent_children()
+      if (!length(child_ids)) return(emo[0, ])
+      return(dplyr::filter(emo, student_id %in% child_ids))
+    }
+    emo
+  }
+  scope_students_for <- function(s) {
+    role <- auth_state$role; lid <- auth_state$linked_id
+    if (is.null(role) || nrow(s) == 0) return(s)
+    if (role == "admin")  return(s)
+    if (!"id" %in% names(s)) s$id <- s$student_id %||% NA_character_
+    if (role == "student") return(dplyr::filter(s, id == lid))
+    if (role == "parent")  return(dplyr::filter(s, id %in% .parent_children()))
+    if (role == "doctor") {
+      lec <- scope_lectures_for(lectures_data())
+      ids <- if (nrow(lec) > 0 && "enrolled_student_ids" %in% names(lec))
+               unique(unlist(lec$enrolled_student_ids, use.names = FALSE)) else character(0)
+      return(dplyr::filter(s, id %in% ids))
+    }
+    s
+  }
+  scope_doctors_for <- function(d) {
+    role <- auth_state$role; lid <- auth_state$linked_id
+    if (is.null(role) || nrow(d) == 0) return(d)
+    if (role == "admin")  return(d)
+    if (!"id" %in% names(d)) d$id <- d$doctor_id %||% NA_character_
+    if (role == "doctor")  return(dplyr::filter(d, id == lid))
+    # For student/parent: doctors teaching their lectures
+    lec <- scope_lectures_for(lectures_data())
+    doc_ids <- if (nrow(lec) > 0 && "doctor_id" %in% names(lec))
+                 unique(lec$doctor_id) else character(0)
+    dplyr::filter(d, id %in% doc_ids)
+  }
+  scope_parents_for <- function(p) {
+    role <- auth_state$role; lid <- auth_state$linked_id
+    if (is.null(role) || nrow(p) == 0) return(p)
+    if (role == "admin")  return(p)
+    if (!"id" %in% names(p)) p$id <- p$parent_id %||% NA_character_
+    if (role == "parent")  return(dplyr::filter(p, id == lid))
+    # Doctor: parents of their enrolled students
+    if (role == "doctor") {
+      stud_ids <- scope_students_for(students_data())$id
+      keep <- vapply(p$linked_student_ids %||% list(), function(x)
+        any(unlist(x %||% character(0), use.names = FALSE) %in% stud_ids),
+        logical(1))
+      return(p[keep, , drop = FALSE])
+    }
+    # Student: their own parents (if any)
+    if (role == "student") {
+      keep <- vapply(p$linked_student_ids %||% list(), function(x)
+        lid %in% unlist(x %||% character(0), use.names = FALSE), logical(1))
+      return(p[keep, , drop = FALSE])
+    }
+    p
+  }
+  scope_subjects_for <- function(s) {
+    role <- auth_state$role; lid <- auth_state$linked_id
+    if (is.null(role) || nrow(s) == 0) return(s)
+    if (role == "admin")  return(s)
+    if (!"id" %in% names(s)) s$id <- s$subject_id %||% NA_character_
+    if (role == "doctor" && "doctor_id" %in% names(s))
+      return(dplyr::filter(s, doctor_id == lid))
+    # student/parent: subjects of their lectures
+    lec <- scope_lectures_for(lectures_data())
+    if (nrow(lec) == 0) return(s[0, ])
+    if ("subject_id" %in% names(lec))
+      return(dplyr::filter(s, id %in% unique(lec$subject_id)))
+    s
+  }
+  scope_classes_for <- function(c) {
+    role <- auth_state$role
+    if (is.null(role) || nrow(c) == 0) return(c)
+    if (role == "admin")  return(c)
+    if (!"id" %in% names(c)) c$id <- c$class_id %||% NA_character_
+    lec <- scope_lectures_for(lectures_data())
+    if (nrow(lec) == 0 || !"class_id" %in% names(lec)) return(c[0, ])
+    dplyr::filter(c, id %in% unique(lec$class_id))
+  }
+  scope_weeks_for <- function(w) {
+    role <- auth_state$role
+    if (is.null(role) || nrow(w) == 0) return(w)
+    if (role == "admin")  return(w)
+    lec <- scope_lectures_for(lectures_data())
+    if (nrow(lec) == 0 || !"week_id" %in% names(lec)) return(w[0, ])
+    if (!"id" %in% names(w)) w$id <- w$week_id %||% NA_character_
+    dplyr::filter(w, id %in% unique(lec$week_id))
+  }
+  scope_grades_for <- function(g) {
+    role <- auth_state$role; lid <- auth_state$linked_id
+    if (is.null(role) || nrow(g) == 0) return(g)
+    if (role == "admin")  return(g)
+    if (role == "doctor" && "doctor_id" %in% names(g))
+      return(dplyr::filter(g, doctor_id == lid))
+    if (role == "student" && "student_id" %in% names(g))
+      return(dplyr::filter(g, student_id == lid))
+    if (role == "parent" && "student_id" %in% names(g))
+      return(dplyr::filter(g, student_id %in% .parent_children()))
+    g
+  }
+  scope_notifications_for <- function(n) {
+    role <- auth_state$role; lid <- auth_state$linked_id
+    if (is.null(role) || nrow(n) == 0) return(n)
+    if (role == "admin")  return(n)
+    if (role == "doctor" && "sender_doctor_id" %in% names(n))
+      return(dplyr::filter(n, sender_doctor_id == lid))
+    # student/parent: notifications they were a recipient of
+    ids_to_check <- if (role == "student") lid else .parent_children()
+    if (!length(ids_to_check) || !"recipient_student_ids" %in% names(n)) return(n[0, ])
+    keep <- vapply(n$recipient_student_ids, function(x)
+      any(unlist(x %||% character(0), use.names = FALSE) %in% ids_to_check),
+      logical(1))
+    n[keep, , drop = FALSE]
+  }
+  scope_transcripts_for <- function(t) {
+    role <- auth_state$role
+    if (is.null(role) || nrow(t) == 0) return(t)
+    if (role == "admin")  return(t)
+    lec_ids <- scope_lectures_for(lectures_data())$id
+    if (!length(lec_ids) || !"lecture_id" %in% names(t)) return(t[0, ])
+    dplyr::filter(t, lecture_id %in% lec_ids)
+  }
+
   observeEvent(input$refresh, { bust_cache(); session$reload() }, ignoreInit = TRUE)
 
   observeEvent(input$theme_toggle, {
@@ -612,18 +1431,24 @@ server <- function(input, output, session) {
   })
 
   # ── Reactives so we don't re-fetch every render ─────────────────────
-  emo       <- reactive({ input$refresh; emo_data() })
-  students  <- reactive({ input$refresh; students_data() })
-  doctors   <- reactive({ input$refresh; doctors_data() })
-  parents   <- reactive({ input$refresh; parents_data() })
-  subjects  <- reactive({ input$refresh; subjects_data() })
-  classes   <- reactive({ input$refresh; classes_data() })
-  weeks     <- reactive({ input$refresh; weeks_data() })
-  lectures  <- reactive({ input$refresh; lectures_data() })
-  grades    <- reactive({ input$refresh; grades_data() })
-  notifications <- reactive({ input$refresh; notifications_data() })
-  transcripts   <- reactive({ input$refresh; transcripts_data() })
-  segments      <- reactive({ input$refresh; segments_data() })
+  # All gated behind require_auth() — no Firestore traffic until signed in.
+  # emo() and lectures() are also role-scoped so a doctor sees only their
+  # lectures, a student only their own observations, a parent only their
+  # children's. Admin sees everything.
+  # Every wrapper is gated on require_auth() (no data before sign-in) AND
+  # role-scoped (each role sees only their slice of every collection).
+  emo       <- reactive({ require_auth(); input$refresh; scope_emo_for(emo_data()) })
+  students  <- reactive({ require_auth(); input$refresh; scope_students_for(students_data()) })
+  doctors   <- reactive({ require_auth(); input$refresh; scope_doctors_for(doctors_data()) })
+  parents   <- reactive({ require_auth(); input$refresh; scope_parents_for(parents_data()) })
+  subjects  <- reactive({ require_auth(); input$refresh; scope_subjects_for(subjects_data()) })
+  classes   <- reactive({ require_auth(); input$refresh; scope_classes_for(classes_data()) })
+  weeks     <- reactive({ require_auth(); input$refresh; scope_weeks_for(weeks_data()) })
+  lectures  <- reactive({ require_auth(); input$refresh; scope_lectures_for(lectures_data()) })
+  grades    <- reactive({ require_auth(); input$refresh; scope_grades_for(grades_data()) })
+  notifications <- reactive({ require_auth(); input$refresh; scope_notifications_for(notifications_data()) })
+  transcripts   <- reactive({ require_auth(); input$refresh; scope_transcripts_for(transcripts_data()) })
+  segments      <- reactive({ require_auth(); input$refresh; segments_data() })
 
   # Choices
   observe({

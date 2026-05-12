@@ -175,11 +175,14 @@ export default function LiveClassroom() {
   useEffect(() => {
     if (!lectureId) return;
 
+    // Cap at 2000 to keep the back-channel snappy. With 1 obs/sec/face
+    // and up to ~30 faces that's still ~60 s of complete history; older
+    // data is in Firestore and visible in the Shiny dashboard.
     const q = query(
       collection(db, "emotions"),
       where("lecture_id", "==", lectureId),
       orderBy("timestamp", "asc"),
-      limit(5000),
+      limit(2000),
     );
 
     const unsub = onSnapshot(

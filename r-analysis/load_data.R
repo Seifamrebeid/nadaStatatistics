@@ -129,9 +129,9 @@ load_from_csv <- function(path = CSV_PATH) {
   .normalise_emotions(df)
 }
 
-load_from_firestore <- function() {
+load_from_firestore <- function(max_docs = NULL) {
   .source_firestore()
-  docs <- fs_list("emotions")
+  docs <- fs_list("emotions", max_docs = max_docs)
   if (length(docs) == 0) return(.empty_emotions_tibble())
   rows <- lapply(docs, function(d) {
     flat <- fs_unwrap_fields(d$fields)
@@ -141,13 +141,21 @@ load_from_firestore <- function() {
   dplyr::bind_rows(rows) |> .normalise_emotions()
 }
 
-# Smart dispatcher: emulator first when available, CSV otherwise.
+# Smart dispatcher.
+# Set DATA_SOURCE=csv to force the much faster CSV path (good for demos when
+# the seeded data is enough). Set EMOTIONS_MAX_DOCS=2000 to cap Firestore
+# pagination — at ~300 docs/page that's ~7 round-trips instead of 24, cutting
+# initial dashboard load time meaningfully without losing visualization variety.
 load_emotions <- function() {
   src <- tolower(Sys.getenv("DATA_SOURCE", unset = "auto"))
+  max_docs <- {
+    v <- suppressWarnings(as.integer(Sys.getenv("EMOTIONS_MAX_DOCS", unset = "")))
+    if (is.na(v) || v <= 0) NULL else v
+  }
   if (src == "csv")       return(load_from_csv())
-  if (src == "firestore") return(load_from_firestore())
+  if (src == "firestore") return(load_from_firestore(max_docs))
   if (!.have_fs()) return(load_from_csv())
-  tryCatch(load_from_firestore(),
+  tryCatch(load_from_firestore(max_docs),
     error = function(e) {
       message(sprintf("load_emotions: Firestore unreachable (%s); CSV fallback.",
                       conditionMessage(e)))

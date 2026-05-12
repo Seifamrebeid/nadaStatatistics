@@ -5,7 +5,7 @@ import {
   Library, Calendar, BarChart3, FileSpreadsheet, Info,
   Settings as SettingsIcon, Search, Bell, Network, Clock, CalendarCheck,
   Play, FileText, ScrollText, Activity, ShieldCheck, LogOut, Menu, X,
-  ChevronRight, Sparkles,
+  ChevronRight, Sparkles, MessageSquare,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
@@ -31,6 +31,7 @@ const NAV_BY_ROLE = {
       { to: "/admin/admins",         label: "Admins",         icon: ShieldCheck },
       { to: "/admin/parents",        label: "Parents",        icon: UserRound },
       { to: "/admin/student-search", label: "Student Search", icon: Search },
+      { to: "/admin/chat",           label: "Messages",       icon: MessageSquare },
       { to: "/admin/about",          label: "About project",  icon: Info },
       { to: "/admin/settings",       label: "Settings",       icon: SettingsIcon },
     ]},
@@ -52,6 +53,7 @@ const NAV_BY_ROLE = {
       { to: "/doctor/grades",          label: "Grades",         icon: FileText },
       { to: "/doctor/student-search",  label: "Student Search", icon: Search },
       { to: "/doctor/notifications",   label: "Notifications",  icon: Bell },
+      { to: "/doctor/chat",            label: "Messages",       icon: MessageSquare },
       { to: "/doctor/hierarchy",       label: "Hierarchy",      icon: Network },
     ]},
   ],
@@ -71,6 +73,7 @@ const NAV_BY_ROLE = {
     { section: "Explore", items: [
       { to: "/student/doctor-search", label: "Doctor Search", icon: Search },
       { to: "/student/hierarchy",     label: "My Classes",    icon: Network },
+      { to: "/student/chat",          label: "Messages",      icon: MessageSquare },
     ]},
   ],
   parent: [
@@ -81,6 +84,7 @@ const NAV_BY_ROLE = {
     { section: "Progress", items: [
       { to: "/parent/attendance", label: "Attendance",  icon: CalendarCheck },
       { to: "/parent/grades",     label: "Grades",      icon: GraduationCap },
+      { to: "/parent/chat",       label: "Messages",    icon: MessageSquare },
     ]},
   ],
 };
@@ -144,14 +148,15 @@ function SidebarContent({ profile, sections, onClose, onLogout }) {
       {/* Logo */}
       <div className="relative z-10 px-4 pt-5 pb-4 flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
-          <div
-            className="h-9 w-9 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0"
-            style={{ background: "linear-gradient(135deg, rgb(var(--brand-grad-from)) 0%, rgb(var(--brand-grad-to)) 100%)" }}
-          >
-            <Sparkles className="h-4 w-4 text-white" />
-          </div>
+          <img
+            src="/logo.png"
+            alt="EDU Link"
+            className="h-10 w-10 rounded-xl flex-shrink-0 object-cover bg-white/5 ring-1 ring-white/10"
+          />
           <div className="min-w-0">
-            <div className="text-white font-bold text-sm leading-tight truncate">Classroom AI</div>
+            <div className="text-white font-bold text-base leading-tight tracking-tight truncate">
+              EDU <span className="text-white/70">Link</span>
+            </div>
             <div className="text-white/40 text-[10px] font-medium tracking-wide">{meta.subtitle}</div>
           </div>
         </div>
