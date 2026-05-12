@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { db } from "../firebase";
+import DoctorCapture from "../components/DoctorCapture";
 import {
   collection,
   query,
@@ -313,6 +314,9 @@ export default function LiveClassroom() {
           {err}
         </div>
       )}
+
+      {/* ── Live Face Detection & Logs ── */}
+      <DoctorCapture lectureId={lectureId} />
 
       {/* ── RIGHT NOW ── */}
       <section>

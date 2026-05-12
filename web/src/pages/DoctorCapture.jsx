@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
-  Camera, CameraOff, Play, Square, Activity, AlertCircle, ArrowLeft,
-  ScrollText, User, RefreshCw,
+  Camera, CameraOff, Play, Square, AlertCircle, ArrowLeft,
+  ScrollText, User, Mic, MicOff,
 } from "lucide-react";
 import {
   doc, getDoc, updateDoc, serverTimestamp,
@@ -10,25 +10,13 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../context/AuthContext";
-
-import { ensureModelsLoaded, detectorOptions, faceapi } from "../lib/capture/faceapi-loader";
-import { dominantEmotion, engagementScore } from "../lib/capture/engagement";
-import { CaptureWriter } from "../lib/capture/writer";
-import { loadEnrolledEmbeddings, buildMatcher, resetEmbeddings } from "../lib/capture/enrollment";
-import { TrackStateBuffer, classifyFrame } from "../lib/capture/metrics";
-import { FaceTracker } from "../lib/capture/tracker";
-import { ensureHandLandmarker, detectHandsForVideo } from "../lib/capture/mediapipe-loader";
-import { attachGesturesToFaces } from "../lib/capture/gestures";
 import { LiveTranscriber } from "../lib/capture/transcription";
-import { ensurePhoneDetector, detectPhones, attachPhonesToFaces } from "../lib/capture/phone-detector";
-import { Mic, MicOff } from "lucide-react";
 
-// Phase 1 MVP:
-//   - Camera preview at 30 fps
-//   - face-api.js: TinyFaceDetector + FaceExpressionNet on every frame
-//   - Overlay shows boxes + emotion labels
-//   - Per-second batched write to Firestore `emotions`
-// Phase 2 will add face identification + state/gesture/yawn detection.
+// Python API host — same machine, port 8001 by default. Override via env.
+const API_BASE = import.meta.env.VITE_CAPTURE_API_URL || "http://127.0.0.1:8001";
+const FRAME_INTERVAL_MS = 100;   // target 10 FPS — inflight check skips ticks when API is busy
+const JPEG_QUALITY = 0.6;        // smaller payload, still good enough for 480px faces
+const SEND_WIDTH = 480;          // downscale before encode — bandwidth + CPU
 
 const EMOTION_COLOR = {
   happy:    "#10b981",
@@ -47,58 +35,45 @@ export default function DoctorCapture() {
   const videoRef    = useRef(null);
   const canvasRef   = useRef(null);
   const streamRef   = useRef(null);
-  const rafRef      = useRef(null);
-  const writerRef   = useRef(null);
-  const trackerRef  = useRef(new FaceTracker());
-  const stateBufRef = useRef(new TrackStateBuffer());
-  const matcherRef  = useRef(null);     // face-api FaceMatcher, set after enroll
-  const studentsRef = useRef({});       // { sid -> {name, email} } for labels
+  const sendCanvasRef = useRef(null);   // hidden canvas used to encode JPEG
+  const intervalRef = useRef(null);
+  const inflightRef = useRef(false);    // skip a tick if the previous request is still in-flight
+  const lastFacesRef = useRef([]);      // last API response — kept so the overlay survives between ticks
   const fpsRef      = useRef({ count: 0, last: performance.now(), fps: 0 });
-  const frameNoRef  = useRef(0);
-  const handsReadyRef = useRef(false);
-  const lastGesturesRef = useRef({});   // trackKey -> last gesture (sticky across non-hand frames)
+  const writtenRef  = useRef(0);
   const transcriberRef = useRef(null);
-  const phoneReadyRef  = useRef(false);
-  const lastPhonesRef  = useRef({});    // trackKey -> { on_phone, phone_box, ... } (sticky)
-  const lastPhoneBoxesRef = useRef([]); // raw boxes for the overlay
-  const lastMatchesRef = useRef({});    // trackKey -> { label, distance } for the overlay debug pip
+  const transcriptScrollRef = useRef(null);
 
-  const [modelsReady, setModelsReady]   = useState(false);
-  const [modelsError, setModelsError]   = useState(null);
   const [cameraReady, setCameraReady]   = useState(false);
   const [capturing,   setCapturing]     = useState(false);
   const [lecture,     setLecture]       = useState(null);
   const [stats,       setStats]         = useState({ fps: 0, facesNow: 0, written: 0, identified: 0 });
-  const [enroll,      setEnroll]        = useState({ status: "idle", done: 0, total: 0, count: 0 });
-  const [audioStatus, setAudioStatus]   = useState("off");    // off | connecting | live | error
+  const [audioStatus, setAudioStatus]   = useState("off");
   const [audioError,  setAudioError]    = useState(null);
   const [segmentCount, setSegmentCount] = useState(0);
   const [transcriptId, setTranscriptId] = useState(null);
   const [segments,    setSegments]      = useState([]);
+  const [apiOk,       setApiOk]         = useState(null);   // null = unknown, true/false after probe
   const [err,         setErr]           = useState(null);
-  const transcriptScrollRef = useRef(null);
 
-  // ── Load models on mount ────────────────────────────────────────
+  // ── Probe the Python API on mount ──────────────────────────────
   useEffect(() => {
     let alive = true;
-    ensureModelsLoaded()
-      .then(() => alive && setModelsReady(true))
-      .catch((e) => alive && setModelsError(e.message));
-    // Parallel: warm up MediaPipe HandLandmarker. Not blocking — if it
-    // hasn't finished by the time recording starts, gestures stay "none"
-    // until it lands.
-    ensureHandLandmarker()
-      .then(() => { if (alive) handsReadyRef.current = true; })
-      .catch((e) => console.warn("[capture] hand landmarker:", e?.message));
-    ensurePhoneDetector()
-      .then(() => { if (alive) phoneReadyRef.current = true; })
-      .catch((e) => console.warn("[capture] phone detector:", e?.message));
+    fetch(`${API_BASE}/health`, { method: "GET" })
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(() => alive && setApiOk(true))
+      .catch((e) => {
+        if (!alive) return;
+        setApiOk(false);
+        setErr(`Cannot reach detection API at ${API_BASE} — start it with: uvicorn api_server:app --port 8001`);
+        console.error("[capture] API probe failed:", e);
+      });
     return () => { alive = false; };
   }, []);
 
-  // ── Fetch lecture + enroll students ────────────────────────────
+  // ── Fetch lecture + refresh server-side enrollment cache ───────
   useEffect(() => {
-    if (!lectureId) return;
+    if (!lectureId || !apiOk) return;
     let alive = true;
     (async () => {
       try {
@@ -106,45 +81,14 @@ export default function DoctorCapture() {
         if (!alive) return;
         const lec = snap.exists() ? { id: snap.id, ...snap.data() } : null;
         setLecture(lec);
-        const enrolled = lec?.enrolled_student_ids || [];
-        if (!enrolled.length) return;
-
-        // Wait for face-api recognition net before starting enrollment.
-        await ensureModelsLoaded();
-        if (!alive) return;
-
-        setEnroll({ status: "loading", done: 0, total: enrolled.length, count: 0 });
-        const labeled = await loadEnrolledEmbeddings(enrolled, {
-          onProgress: ({ done, total }) => alive && setEnroll((s) => ({ ...s, done, total })),
-        });
-        if (!alive) return;
-        matcherRef.current = buildMatcher(labeled, 0.65);
-
-        // Fetch display names so the overlay shows student names, not ids.
-        const studentMap = {};
-        // chunk into 30 to fit Firestore's `in` limit
-        for (let i = 0; i < enrolled.length; i += 30) {
-          const chunk = enrolled.slice(i, i + 30);
-          const qs = await import("firebase/firestore").then(({ collection: c, getDocs: g,
-            query: q, where: w, documentId: did }) =>
-            g(q(c(db, "students"), w(did(), "in", chunk))));
-          qs.docs.forEach((d) => {
-            const data = d.data() || {};
-            studentMap[d.id] = { name: data.name, email: data.email };
-          });
-        }
-        studentsRef.current = studentMap;
-
-        setEnroll({ status: "ready", done: labeled.length, total: enrolled.length, count: labeled.length });
+        // Ask the Python API to load (or refresh) the enrolled face encodings.
+        await fetch(`${API_BASE}/enrollment/refresh/${lectureId}`, { method: "POST" });
       } catch (e) {
-        if (alive) {
-          setEnroll((s) => ({ ...s, status: "error" }));
-          setErr(`Enrollment failed: ${e.message}`);
-        }
+        if (alive) setErr(`Couldn't load lecture: ${e.message}`);
       }
     })();
     return () => { alive = false; };
-  }, [lectureId]);
+  }, [lectureId, apiOk]);
 
   // ── Camera control ─────────────────────────────────────────────
   async function openCamera() {
@@ -159,20 +103,8 @@ export default function DoctorCapture() {
       v.srcObject = stream;
       await v.play();
       setCameraReady(true);
-
-      // Kick off the detection loop immediately so the user sees boxes
-      // during the preview phase. The loop is idempotent — calling
-      // startCapture() later just attaches the Firestore writer.
-      if (!rafRef.current) {
-        if (modelsReady) {
-          tick();
-        } else {
-          // Wait for models, then start ticking.
-          ensureModelsLoaded()
-            .then(() => { if (streamRef.current) tick(); })
-            .catch(() => {});
-        }
-      }
+      // Start the send loop immediately so the user sees overlays during preview.
+      startSendLoop();
     } catch (e) {
       setErr(`Couldn't open camera: ${e.message}`);
     }
@@ -180,190 +112,110 @@ export default function DoctorCapture() {
 
   function closeCamera() {
     stopCapture();
-    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    stopSendLoop();
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-      const c = canvasRef.current;
-      if (c) c.getContext("2d").clearRect(0, 0, c.width, c.height);
-    }
+    if (videoRef.current) videoRef.current.srcObject = null;
+    const c = canvasRef.current;
+    if (c) c.getContext("2d").clearRect(0, 0, c.width, c.height);
     setCameraReady(false);
+    lastFacesRef.current = [];
   }
 
-  useEffect(() => () => { closeCamera(); }, []);  // cleanup on unmount
+  useEffect(() => () => { closeCamera(); }, []);
 
-  // ── Per-frame loop ─────────────────────────────────────────────
-  async function tick() {
+  // ── Send loop: capture → encode → POST /detect → draw ─────────
+  function startSendLoop() {
+    if (intervalRef.current) return;
+    intervalRef.current = setInterval(sendOneFrame, FRAME_INTERVAL_MS);
+  }
+
+  function stopSendLoop() {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }
+
+  async function sendOneFrame() {
     const video = videoRef.current;
-    if (!video || video.readyState < 2) {
-      rafRef.current = requestAnimationFrame(tick);
-      return;
-    }
-    if (!modelsReady) {
-      // Models haven't finished loading yet — retry next frame.
-      rafRef.current = requestAnimationFrame(tick);
-      return;
-    }
+    if (!video || video.readyState < 2 || inflightRef.current) return;
 
-    // FPS counter
-    const now = performance.now();
-    fpsRef.current.count++;
-    if (now - fpsRef.current.last > 1000) {
-      fpsRef.current.fps = fpsRef.current.count;
-      fpsRef.current.count = 0;
-      fpsRef.current.last = now;
-    }
+    // Lazy-create the hidden encode canvas
+    if (!sendCanvasRef.current) sendCanvasRef.current = document.createElement("canvas");
+    const sc = sendCanvasRef.current;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return;
+    const w = SEND_WIDTH;
+    const h = Math.round(vh * (w / vw));
+    if (sc.width !== w || sc.height !== h) { sc.width = w; sc.height = h; }
+    sc.getContext("2d").drawImage(video, 0, 0, w, h);
+    const jpeg = sc.toDataURL("image/jpeg", JPEG_QUALITY);
 
-    frameNoRef.current++;
-    const frameNo = frameNoRef.current;
-
-    let results = [];
+    inflightRef.current = true;
+    const t0 = performance.now();
     try {
-      // Heavy detection chain — landmarks + expressions every frame; descriptor
-      // every 3rd frame (recognition is ~40ms; identity is stable so we don't
-      // need it per-frame). On non-descriptor frames the IoU tracker
-      // preserves the previously-assigned label.
-      const includeDescriptor = frameNo % 3 === 0;
-      let detector = faceapi.detectAllFaces(video, detectorOptions).withFaceLandmarks().withFaceExpressions();
-      if (includeDescriptor) detector = detector.withFaceDescriptors();
-      results = await detector;
-    } catch (e) {
-      // Surface detection errors instead of swallowing them.
-      if (!err) setErr(`Detection error: ${e.message}`);
-      console.error("[capture] detection chain:", e);
-      rafRef.current = requestAnimationFrame(tick);
-      return;
-    }
-    try {
+      const r = await fetch(`${API_BASE}/detect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lecture_id: lectureId,
+          frame: jpeg,
+          write_to_firestore: capturingRef.current,
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      // Scale boxes from API frame size back to the source video size for the overlay.
+      const sx = vw / w, sy = vh / h;
+      const faces = (data.faces || []).map((f) => {
+        const [top, right, bottom, left] = f.box;
+        return {
+          ...f,
+          drawBox: {
+            x: left * sx,
+            y: top * sy,
+            width:  (right - left) * sx,
+            height: (bottom - top) * sy,
+          },
+        };
+      });
+      lastFacesRef.current = faces;
+      if (capturingRef.current) writtenRef.current += faces.filter((f) => f.student_id !== "unknown").length;
 
-      // Run them through the IoU tracker so each face gets a stable _trackKey.
-      trackerRef.current.update(results);
-
-      // Identify on the frames that have descriptors.
-      let identifiedThisTick = 0;
-      if (includeDescriptor && matcherRef.current) {
-        for (const r of results) {
-          if (!r.descriptor) continue;
-          const m = matcherRef.current.findBestMatch(r.descriptor);
-          if (m) {
-            // Store closest match info regardless of threshold so the
-            // overlay can show "no match — closest was X at 0.72".
-            lastMatchesRef.current[r._trackKey] = { label: m.label, distance: m.distance };
-            if (m.label !== "unknown") {
-              trackerRef.current.setLabel(r._trackKey, m.label);
-              identifiedThisTick++;
-            }
-          }
-        }
+      // FPS = successful round-trips per second
+      const now = performance.now();
+      fpsRef.current.count++;
+      if (now - fpsRef.current.last > 1000) {
+        fpsRef.current.fps = fpsRef.current.count;
+        fpsRef.current.count = 0;
+        fpsRef.current.last = now;
       }
-
-      // Phone / cheat detection — every 10 frames (~3 Hz). COCO-SSD is
-      // the heaviest of the lot; running it less keeps the preview fast.
-      if (phoneReadyRef.current && frameNo % 10 === 0 && results.length > 0) {
-        const phones = await detectPhones(video);
-        lastPhoneBoxesRef.current = phones;
-        const map = attachPhonesToFaces({ phones, faceResults: results });
-        // Refresh sticky cache: drop tracks that no longer have a phone
-        const newCache = {};
-        for (const r of results) {
-          if (map[r._trackKey]) newCache[r._trackKey] = map[r._trackKey];
-        }
-        lastPhonesRef.current = newCache;
-      }
-
-      // Hand gestures — every 3 frames (~10 Hz) to balance accuracy vs cost.
-      if (handsReadyRef.current && frameNo % 3 === 0 && results.length > 0) {
-        const handRes = detectHandsForVideo(video, performance.now());
-        if (handRes) {
-          const map = attachGesturesToFaces({
-            handResult: handRes,
-            faceResults: results,
-            videoW: video.videoWidth,
-            videoH: video.videoHeight,
-          });
-          // Merge into the sticky cache so the gesture persists until the
-          // next hand pass (otherwise we'd report "none" on the 2/3 frames
-          // when hands aren't run).
-          for (const [k, g] of Object.entries(map)) lastGesturesRef.current[k] = g;
-          // Decay: drop entries whose tracks no longer exist
-          const liveKeys = new Set(results.map((r) => r._trackKey));
-          for (const k of Object.keys(lastGesturesRef.current)) {
-            if (!liveKeys.has(k)) delete lastGesturesRef.current[k];
-          }
-        }
-      }
-
-      // Push observations + draw labels
-      if (writerRef.current && results.length > 0) {
-        for (const r of results) {
-          const { emotion, confidence } = dominantEmotion(r.expressions);
-          const sid = trackerRef.current.getLabel(r._trackKey) || `cam_${r._trackKey}`;
-          const cls = classifyFrame(r._trackKey, r.landmarks, stateBufRef.current);
-          const gesture = lastGesturesRef.current[r._trackKey] || "none";
-          const phoneInfo = lastPhonesRef.current[r._trackKey];
-          const onPhone = !!phoneInfo?.on_phone;
-          // Cheat scoring mirrors the Python heuristic:
-          //   base 10
-          //   + 55 on_phone
-          //   + 18 low_attention (sleeping → attention 0.1 < 0.45 threshold)
-          //   + 12 per extra_face (face_count > 1)
-          let cheat_score = 10;
-          if (onPhone)                cheat_score += 55;
-          if (cls.state === "sleeping") cheat_score += 18;
-          if (results.length > 1)     cheat_score += 12 * Math.max(0, results.length - 1);
-          cheat_score = Math.min(100, cheat_score);
-          const cheat_warning = cheat_score >= 60;
-          writerRef.current.push({
-            student_id:        sid,
-            emotion,
-            confidence,
-            state:             cls.state,
-            sleep_reason:      cls.sleep_reason,
-            gesture,
-            engagement_score:  engagementScore({ emotion, state: cls.state, gesture }),
-            yawning:           cls.yawning,
-            yawn_reason:       cls.yawn_reason,
-            attention_score:   cls.state === "sleeping" ? 0.1 : (onPhone ? 0.3 : 1),
-            face_count:        results.length,
-            on_phone:          onPhone,
-            cheat_score,
-            cheat_warning,
-            ear:               cls.ear,
-            mar:               cls.mar,
-            head_pitch:        cls.head_pitch,
-          });
-        }
-      }
-      stateBufRef.current.prune();
-
-      drawOverlay(results);
-
-      const identifiedTotal = results.reduce((acc, r) => {
-        const lbl = trackerRef.current.getLabel(r._trackKey);
-        return acc + (lbl ? 1 : 0);
-      }, 0);
-
       setStats({
-        fps:        fpsRef.current.fps,
-        facesNow:   results.length,
-        written:    writerRef.current?.stats?.written ?? 0,
-        identified: identifiedTotal,
+        fps: fpsRef.current.fps,
+        facesNow: faces.length,
+        written: writtenRef.current,
+        identified: faces.filter((f) => f.student_id !== "unknown").length,
       });
     } catch (e) {
-      console.error("[capture] tick:", e);
+      console.error("[capture] /detect failed:", e);
+      // Don't spam the UI banner with transient errors during preview.
+    } finally {
+      inflightRef.current = false;
+      drawOverlay();
     }
-
-    rafRef.current = requestAnimationFrame(tick);
   }
 
-  function drawOverlay(results) {
+  // Keep a ref of `capturing` so the interval closure sees current value
+  const capturingRef = useRef(false);
+  useEffect(() => { capturingRef.current = capturing; }, [capturing]);
+
+  function drawOverlay() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!canvas || !video) return;
-    // Size canvas to the video element
     const vw = video.videoWidth, vh = video.videoHeight;
     if (vw && vh && (canvas.width !== vw || canvas.height !== vh)) {
       canvas.width = vw; canvas.height = vh;
@@ -371,36 +223,17 @@ export default function DoctorCapture() {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Phone detections — red boxes so the doctor can see what triggered the alert.
-    for (const ph of lastPhoneBoxesRef.current || []) {
-      ctx.lineWidth = 2;
-      ctx.setLineDash([4, 3]);
-      ctx.strokeStyle = "#dc2626";
-      ctx.strokeRect(ph.box.x, ph.box.y, ph.box.width, ph.box.height);
-      ctx.setLineDash([]);
-      ctx.font = "600 11px Inter, sans-serif";
-      ctx.fillStyle = "rgba(220,38,38,0.92)";
-      ctx.fillRect(ph.box.x, ph.box.y - 16, 56, 14);
-      ctx.fillStyle = "white";
-      ctx.fillText("phone", ph.box.x + 5, ph.box.y - 5);
-    }
-
-    for (const r of results) {
-      const { box } = r.detection;
-      const { emotion, confidence } = dominantEmotion(r.expressions);
-      const color = EMOTION_COLOR[emotion] || "#a3a3a3";
-
-      const trackKey = r._trackKey;
-      const sid = trackerRef.current.getLabel(trackKey);
-      const known = !!sid;
-      const stu = sid ? studentsRef.current[sid] : null;
-      const displayName = stu?.name || sid || "Unknown face";
+    for (const f of lastFacesRef.current) {
+      const { x, y, width, height } = f.drawBox;
+      const known = f.student_id && f.student_id !== "unknown";
+      const color = EMOTION_COLOR[f.emotion] || "#a3a3a3";
+      const displayName = f.name || f.student_id || "Unknown face";
 
       // Bold colored box for known students; dashed gray for unknown.
       ctx.lineWidth = known ? 3 : 2;
       ctx.strokeStyle = known ? color : "#94a3b8";
       ctx.setLineDash(known ? [] : [6, 4]);
-      ctx.strokeRect(box.x, box.y, box.width, box.height);
+      ctx.strokeRect(x, y, width, height);
       ctx.setLineDash([]);
 
       // Name label above the box
@@ -408,116 +241,64 @@ export default function DoctorCapture() {
       const nameLabel = displayName.length > 22 ? displayName.slice(0, 22) + "…" : displayName;
       const nameW = ctx.measureText(nameLabel).width + 14;
       ctx.fillStyle = known ? color : "#475569";
-      ctx.fillRect(box.x, box.y - 22, nameW, 20);
+      ctx.fillRect(x, y - 22, nameW, 20);
       ctx.fillStyle = "white";
-      ctx.fillText(nameLabel, box.x + 7, box.y - 7);
+      ctx.fillText(nameLabel, x + 7, y - 7);
 
-      // Diagnostic pip — show closest-match distance for unmatched faces.
-      // Helps you see whether matching is a threshold issue (distance
-      // close to threshold) or a model issue (all distances huge).
-      const matchInfo = lastMatchesRef.current[trackKey];
-      if (!known && matchInfo && matchInfo.distance != null) {
-        const closestName = studentsRef.current[matchInfo.label]?.name || matchInfo.label;
-        const txt = `closest: ${closestName} (${matchInfo.distance.toFixed(2)})`;
+      // Closest-match distance for unknowns — diagnostic
+      if (!known && f.distance != null) {
+        const txt = `closest dist: ${f.distance.toFixed(2)}`;
         ctx.font = "600 10px Inter, sans-serif";
         const dw = ctx.measureText(txt).width + 10;
         ctx.fillStyle = "rgba(15,23,42,0.78)";
-        ctx.fillRect(box.x, box.y - 44, dw, 16);
-        ctx.fillStyle = "#fde68a";   // amber — diagnostic color
-        ctx.fillText(txt, box.x + 5, box.y - 32);
+        ctx.fillRect(x, y - 44, dw, 16);
+        ctx.fillStyle = "#fde68a";
+        ctx.fillText(txt, x + 5, y - 32);
       }
 
-      // Emotion + state badge inside, top-right of the box
-      const cls = classifyFrame(trackKey, r.landmarks, stateBufRef.current);
-      const isSleep = cls.state === "sleeping";
-      const tag = isSleep ? "💤 sleeping" : `${emotion} ${(confidence * 100).toFixed(0)}%`;
+      // Emotion + score badge (top-right of the box)
+      const tag = `${f.emotion} ${Math.round(f.engagement_score)}%`;
       ctx.font = "600 12px Inter, sans-serif";
       const tagW = ctx.measureText(tag).width + 12;
-      ctx.fillStyle = isSleep ? "rgba(239,68,68,0.92)" : "rgba(15,23,42,0.75)";
-      ctx.fillRect(box.x + box.width - tagW - 4, box.y + 4, tagW, 20);
+      ctx.fillStyle = "rgba(15,23,42,0.78)";
+      ctx.fillRect(x + width - tagW - 4, y + 4, tagW, 20);
       ctx.fillStyle = "white";
-      ctx.fillText(tag, box.x + box.width - tagW + 2, box.y + 18);
-
-      // Yawn pip
-      if (cls.yawning) {
-        ctx.fillStyle = "rgba(245,158,11,0.92)";
-        ctx.fillRect(box.x + 4, box.y + 4, 64, 20);
-        ctx.fillStyle = "white";
-        ctx.font = "600 11px Inter, sans-serif";
-        ctx.fillText("yawning", box.x + 8, box.y + 18);
-      }
-
-      // Phone-on-face alert pip (top, between name and face). High-priority
-      // — gets a red pulsing chip so the doctor sees it immediately.
-      const phoneInfo = lastPhonesRef.current[trackKey];
-      if (phoneInfo?.on_phone) {
-        const txt = "📱 phone";
-        ctx.font = "700 12px Inter, sans-serif";
-        const pw = ctx.measureText(txt).width + 14;
-        ctx.fillStyle = "rgba(220,38,38,0.95)";
-        ctx.fillRect(box.x + (box.width - pw) / 2, box.y - 46, pw, 20);
-        ctx.fillStyle = "white";
-        ctx.fillText(txt, box.x + (box.width - pw) / 2 + 7, box.y - 32);
-      }
-
-      // Gesture pip (under the box). Bigger pop than the yawn — gestures
-      // are the doctor's primary action signal.
-      const gesture = lastGesturesRef.current[trackKey];
-      if (gesture && gesture !== "none") {
-        const gMap = {
-          hand_raised:    { txt: "🖐 hand raised", bg: "rgba(99,102,241,0.95)" },
-          thumbs_up:      { txt: "👍 thumbs up",   bg: "rgba(34,197,94,0.95)" },
-          thumbs_down:    { txt: "👎 thumbs down", bg: "rgba(239,68,68,0.95)" },
-          pointing:       { txt: "☝ pointing",     bg: "rgba(14,165,233,0.95)" },
-          toilet_request: { txt: "🚻 toilet",       bg: "rgba(245,158,11,0.95)" },
-        };
-        const gi = gMap[gesture] || { txt: gesture, bg: "rgba(100,116,139,0.95)" };
-        ctx.font = "700 12px Inter, sans-serif";
-        const gw = ctx.measureText(gi.txt).width + 14;
-        ctx.fillStyle = gi.bg;
-        ctx.fillRect(box.x, box.y + box.height + 4, gw, 22);
-        ctx.fillStyle = "white";
-        ctx.fillText(gi.txt, box.x + 7, box.y + box.height + 19);
-      }
+      ctx.fillText(tag, x + width - tagW + 2, y + 18);
     }
   }
 
-  // ── Start / Stop ───────────────────────────────────────────────
+  // ── Start / Stop recording ─────────────────────────────────────
   async function startCapture() {
-    if (!modelsReady || !cameraReady || capturing) return;
+    if (!cameraReady || capturing) return;
     setErr(null);
     try {
       await updateDoc(doc(db, "lectures", lectureId), {
         status: "recording",
         started_at: serverTimestamp(),
       });
-      writerRef.current = new CaptureWriter({ lectureId });
-      writerRef.current.start();
       setCapturing(true);
-      // The tick loop is already running (started when camera opened).
-      // Attaching the writer means observations now flow to Firestore.
-
-      // Auto-start transcription if Deepgram is configured.
       const probe = new LiveTranscriber({ lectureId });
-      if (probe.configured()) {
-        await startTranscription();
-      }
+      if (probe.configured()) await startTranscription();
     } catch (e) {
       setErr(`Couldn't start: ${e.message}`);
     }
   }
 
   function stopCapture() {
-    // Don't kill the preview loop — only detach the writer. The user may
-    // want to keep the camera + face boxes visible after stopping the
-    // Firestore stream.
-    if (writerRef.current) {
-      writerRef.current.stop();
-      writerRef.current.flush().catch(()=>{});
-      writerRef.current = null;
-    }
     stopTranscription();
     setCapturing(false);
+  }
+
+  async function stopAndFinalize() {
+    stopCapture();
+    try {
+      await updateDoc(doc(db, "lectures", lectureId), {
+        status: "finished",
+        finalized_at: serverTimestamp(),
+      });
+    } catch (e) {
+      setErr(`Couldn't finalize: ${e.message}`);
+    }
   }
 
   // ── Transcription ──────────────────────────────────────────────
@@ -535,7 +316,6 @@ export default function DoctorCapture() {
     t.onSegment = () => setSegmentCount((n) => n + 1);
     try {
       await t.start();
-      // After start() the LiveTranscriber has minted transcriptId.
       setTranscriptId(t.transcriptId);
     } catch (e) {
       setAudioError(e.message);
@@ -551,27 +331,6 @@ export default function DoctorCapture() {
     t.stop().catch(() => {}).finally(() => setAudioStatus("off"));
   }
 
-  async function reenrollAll() {
-    if (!lecture?.enrolled_student_ids?.length) return;
-    setEnroll({ status: "loading", done: 0, total: lecture.enrolled_student_ids.length, count: 0 });
-    matcherRef.current = null;
-    try {
-      await resetEmbeddings(lecture.enrolled_student_ids);
-      const labeled = await loadEnrolledEmbeddings(lecture.enrolled_student_ids, {
-        onProgress: ({ done, total }) => setEnroll((s) => ({ ...s, done, total })),
-      });
-      matcherRef.current = buildMatcher(labeled, 0.65);
-      setEnroll({ status: "ready", done: labeled.length, total: lecture.enrolled_student_ids.length, count: labeled.length });
-    } catch (e) {
-      setErr(`Re-enrollment failed: ${e.message}`);
-      setEnroll((s) => ({ ...s, status: "error" }));
-    }
-  }
-
-  // Subscribe to the segments subcollection so the doctor sees finalized
-  // text appear here in real time (LiveTranscriber writes to Firestore;
-  // we read it back so the order / timing matches what the LiveClassroom
-  // monitor sees on the other side).
   useEffect(() => {
     if (!transcriptId) { setSegments([]); return; }
     const q = query(
@@ -583,26 +342,13 @@ export default function DoctorCapture() {
     });
   }, [transcriptId]);
 
-  // Auto-scroll the transcript pane on new segments
   useEffect(() => {
     if (transcriptScrollRef.current) {
       transcriptScrollRef.current.scrollTop = transcriptScrollRef.current.scrollHeight;
     }
   }, [segments.length]);
 
-  async function stopAndFinalize() {
-    stopCapture();
-    try {
-      await updateDoc(doc(db, "lectures", lectureId), {
-        status: "finished",
-        finalized_at: serverTimestamp(),
-      });
-    } catch (e) {
-      setErr(`Couldn't finalize: ${e.message}`);
-    }
-  }
-
-  const readyToStart = modelsReady && cameraReady && !capturing;
+  const readyToStart = cameraReady && !capturing && apiOk === true;
 
   return (
     <div className="space-y-4">
@@ -620,7 +366,7 @@ export default function DoctorCapture() {
           <h1 className="text-2xl font-semibold text-slate-900">Classroom Capture</h1>
           <p className="text-sm text-slate-500 truncate">
             {lecture?.title ? `${lecture.title} · ` : ""}
-            face detection + emotion + gesture analysis run in your browser. Observations stream to Firestore live.
+            face detection + emotion analysis run on the Python API at {API_BASE}.
           </p>
         </div>
         <div className="flex gap-2">
@@ -635,15 +381,6 @@ export default function DoctorCapture() {
               <CameraOff className="h-4 w-4" /> Close camera
             </button>
           )}
-          <button
-            onClick={reenrollAll}
-            disabled={enroll.status === "loading"}
-            title="Wipe face_encoding_web for all enrolled students and recompute from their photos"
-            className="inline-flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-          >
-            <RefreshCw className={`h-4 w-4 ${enroll.status === "loading" ? "animate-spin" : ""}`} />
-            Re-enroll
-          </button>
           {audioStatus === "off" ? (
             <button onClick={startTranscription}
               title="Start audio transcription via Deepgram"
@@ -670,25 +407,18 @@ export default function DoctorCapture() {
         </div>
       </div>
 
-      {(modelsError || err) && (
+      {err && (
         <div className="rounded-xl bg-red-50 border border-red-200 text-red-800 px-3 py-2 text-sm flex items-start gap-2">
           <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-          <span>{modelsError || err}</span>
+          <span>{err}</span>
         </div>
       )}
 
       {/* Status strip */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-        <Stat label="Models"   value={modelsReady ? "Loaded" : (modelsError ? "Error" : "Loading…")}
-              tone={modelsReady ? "green" : (modelsError ? "red" : "amber")} />
-        <Stat label="Enrollment"
-              value={enroll.status === "ready"   ? `${enroll.count}/${enroll.total} students`
-                   : enroll.status === "loading" ? `${enroll.done}/${enroll.total}`
-                   : enroll.status === "error"   ? "Error"
-                   : "idle"}
-              tone={enroll.status === "ready" ? "green"
-                  : enroll.status === "loading" ? "amber"
-                  : enroll.status === "error" ? "red" : "slate"} />
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <Stat label="Python API"
+              value={apiOk === true ? "Online" : apiOk === false ? "Offline" : "Checking…"}
+              tone={apiOk === true ? "green" : apiOk === false ? "red" : "amber"} />
         <Stat label="Camera"   value={cameraReady ? "Live" : "Off"}
               tone={cameraReady ? "green" : "slate"} />
         <Stat label="Transcript"
@@ -785,17 +515,13 @@ export default function DoctorCapture() {
 
       {/* Help / phase note */}
       <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 space-y-1">
-        <div className="font-semibold text-slate-800">Phase 4 — full feature parity with the Python capture app</div>
+        <div className="font-semibold text-slate-800">Python-backed detection</div>
         <div>
-          <b>Vision</b>: face detect + emotion + identity (128-D match) + EAR/MAR sleep & yawn + hand gestures (raised, thumbs, pointing, toilet) + phone-on-face cheat detection (COCO-SSD).
-          <br/>
-          <b>Audio</b>: mic → 16-bit PCM @ 16 kHz → Deepgram nova-2 over WebSocket → transcript segments shown live in the panel below and at <Link to={`/doctor/lectures/${lectureId}/live`} className="text-indigo-600 hover:underline">LiveClassroom</Link>.
+          Frames are encoded to JPEG at {SEND_WIDTH}px wide and POSTed to <code>{API_BASE}/detect</code> every {FRAME_INTERVAL_MS}ms (~{Math.round(1000/FRAME_INTERVAL_MS)} fps).
+          The API runs face_recognition + FER and writes one <code>emotions</code> doc per identified face while recording.
         </div>
-        <div className="text-slate-500">
-          Per-face per-second observation includes <code>emotion · state · gesture · yawning · on_phone · cheat_score · engagement_score</code> — same schema as the Python app, so every downstream analytics view keeps working.
-        </div>
-        <div className="mt-2 pt-2 border-t border-slate-200 text-amber-700">
-          <b>Testing tip:</b> your own face won't show a name — you're signed in as a doctor, not a student. To verify identification works, hold a printed (or on-screen) photo of one of the seeded students from <code>طلاب_photos/</code> in front of the camera. Check the browser console for "best dist=" diagnostics if matches aren't firing.
+        <div className="text-amber-700">
+          Start the API first: <code>cd classroom-app-python && uvicorn api_server:app --host 127.0.0.1 --port 8001 --reload</code>
         </div>
       </div>
     </div>

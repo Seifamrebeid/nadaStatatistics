@@ -39,18 +39,27 @@ def load_enrolled_encodings(db, lecture_id: str) -> Tuple[Dict[str, np.ndarray],
 
 
 def detect_and_identify(frame, enrolled: Dict[str, np.ndarray],
-                        tolerance: float = 0.6) -> List[dict]:
+                        tolerance: float = 0.6,
+                        upsample: int = 0,
+                        num_jitters: int = 0) -> List[dict]:
     """Detect every face in the frame and attach a student_id to each.
 
     Returns a list of {"box": (top, right, bottom, left), "student_id": str,
     "distance": float | None}. student_id is "unknown" when no enrolled
     encoding falls within the match tolerance.
+
+    upsample=0 is ~3x faster than the default 1 — fine when faces are
+    already ≥100 px (we feed in 480px frames from the browser).
+    num_jitters=0 skips the encoding's random re-sampling pass; the
+    embedding is slightly noisier but the loop is ~2x faster.
     """
-    locations = face_recognition.face_locations(frame)
+    locations = face_recognition.face_locations(frame, number_of_times_to_upsample=upsample)
     if not locations:
         return []
 
-    encodings = face_recognition.face_encodings(frame, known_face_locations=locations)
+    encodings = face_recognition.face_encodings(
+        frame, known_face_locations=locations, num_jitters=num_jitters
+    )
 
     ids = list(enrolled.keys())
     known = np.array([enrolled[i] for i in ids]) if ids else np.zeros((0, 128))

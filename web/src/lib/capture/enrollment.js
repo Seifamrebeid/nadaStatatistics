@@ -1,19 +1,15 @@
 // Student-identity enrollment for the browser capture pipeline.
 //
-// Each student in Firestore can carry an optional `face_encoding_web` array
+// Each student in Firestore carries a `face_encoding_web` array
 // (128 floats from face-api.js's FaceRecognitionNet) used to match a face
-// in the camera against the right student_id. dlib's `face_encoding` from
-// the Python app is in a different embedding space — incompatible.
-//
-// On first capture for a lecture, we walk the enrolled_student_ids, load
-// each face_photo_url, compute a fresh `face_encoding_web` and patch the
-// student doc. Subsequent captures hit the cache instantly.
+// in the camera against the right student_id. These are pre-computed and
+// loaded directly — no photo processing needed.
 
 import {
-  collection, doc, getDoc, updateDoc, getDocs, query, where, documentId,
+  collection, doc, getDocs, query, where, documentId,
 } from "firebase/firestore";
 import { db } from "../../firebase";
-import { faceapi, detectorOptions } from "./faceapi-loader";
+import { faceapi } from "./faceapi-loader";
 
 // In-memory cache keyed by student_id so we don't re-compute embeddings
 // every time the capture page mounts within a session.
@@ -68,19 +64,6 @@ export async function loadEnrolledEmbeddings(studentIds, { onProgress } = {}) {
 
       if (Array.isArray(data.face_encoding_web) && data.face_encoding_web.length === 128) {
         descriptor = new Float32Array(data.face_encoding_web);
-      } else if (data.face_photo_url) {
-        try {
-          descriptor = await computeFromPhoto(data.face_photo_url);
-          if (descriptor) {
-            await updateDoc(doc(db, "students", sid), {
-              face_encoding_web: Array.from(descriptor),
-            }).catch((e) => console.warn(`[enrollment] couldn't cache ${sid}: ${e.message}`));
-          } else {
-            console.warn(`[enrollment] ${sid}: no face found in photo`);
-          }
-        } catch (e) {
-          console.warn(`[enrollment] ${sid}: ${e.message}`);
-        }
       }
 
       done++;
@@ -98,26 +81,6 @@ export async function loadEnrolledEmbeddings(studentIds, { onProgress } = {}) {
   return labeled;
 }
 
-// Load an image URL → run face-api detection → return its 128-D descriptor.
-// (Used for enrollment only — not on the hot frame loop.)
-async function computeFromPhoto(url) {
-  // CORS: Firebase Storage emulator + cloud both serve with
-  // Access-Control-Allow-Origin: * for public-read URLs. Add crossOrigin
-  // so the <img> can be drawn to a canvas if face-api needs it.
-  const img = new Image();
-  img.crossOrigin = "anonymous";
-  img.src = url;
-  await new Promise((res, rej) => {
-    img.onload = res;
-    img.onerror = () => rej(new Error("photo load failed"));
-  });
-  const det = await faceapi
-    .detectSingleFace(img, detectorOptions)
-    .withFaceLandmarks()
-    .withFaceDescriptor();
-  return det?.descriptor ?? null;
-}
-
 // Convenience: turn a labeled set into a matcher with a sensible threshold.
 // 0.55 is tight (very few false matches); 0.6 is permissive. dlib paper
 // uses 0.6; face-api docs suggest 0.5-0.6 for photos.
@@ -127,9 +90,7 @@ export function buildMatcher(labeled, distanceThreshold = 0.55) {
 }
 
 // Wipe the cached descriptors for these student ids — both the in-memory
-// cache AND the Firestore `face_encoding_web` field — so the next call to
-// loadEnrolledEmbeddings recomputes from the photos. Useful when the
-// descriptors got out of sync with the photos (re-enrollment).
+// cache AND the Firestore `face_encoding_web` field. Useful for re-enrollment.
 export async function resetEmbeddings(studentIds) {
   if (!studentIds?.length) return 0;
   let cleared = 0;
